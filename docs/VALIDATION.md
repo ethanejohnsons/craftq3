@@ -2,9 +2,47 @@
 
 Validated locally through 2026-09-07, macOS arm64, Apple A18 Pro, JetBrains Java 25.0.3. Target remains Minecraft 26.2, Fabric Loader 0.19.3, Fabric API 0.156.0+26.2 and Loom 1.17.20.
 
+## Bridge optimization checkpoint (2026-09-07)
+
+The full build passes **1,312 tests**, zero failures/errors/skips, formatting and
+compilation. The 2,029,478-byte distributable has SHA-256
+`107e6238c0dc15dc6134f7514daddd7b2071a2adbbc7d07f2ef0cb1a2a38cc46`.
+Recursive inspection finds 921 Java 25 classes, nine engine jars and four GLSL
+resources, without original game assets or native binaries. Evidence:
+`/tmp/craftq3-bridge-optimization-build.log` and
+`/tmp/craftq3-bridge-optimization-aggregate-report.json`.
+
+[Bridge performance](BRIDGE_PERFORMANCE.md) records the profiling method,
+measurements and remaining limits. Player commands remain 125 Hz; full Quake
+server updates now use the standalone game's 20 Hz cadence. Damage exchange
+follows original ClientEndFrame, and dead actor names survive until cgame reads
+them. Converted terrain shapes and equal console/cgame textures are reused;
+unchanged mirrored actors avoid redundant updates.
+
+Fresh native Minecraft 26.2 / Java 25 / Vulkan runs completed with explicit PASS
+results and successful process exits:
+
+- `/tmp/craftq3-bridge-profile-20hz.log`: retail chat/console, Visor, original
+  weapons, bindings and rocket; mean simulation 2.842 ms versus 3.918 ms in the
+  comparable baseline. This does not establish a consistent total FPS gain.
+- `/tmp/craftq3-bridge-20hz-combat.log`: cover and live wall removal, 15 hits,
+  named target death; original obituary names the Bridge Guardian.
+- `/tmp/craftq3-bridge-20hz-impulse-modern.log`: modern VM bullet/rocket splash
+  impulses, invulnerability/resistance and duplicate prevention.
+- `/tmp/craftq3-bridge-20hz-incoming.log`: incoming damage, death and respawn.
+- `/tmp/craftq3-bridge-20hz-fluids.log`: swimming, drowning, air/lava edits and
+  Battle Suit, without duplicated native environmental damage.
+- `/tmp/craftq3-bridge-20hz-travel-modern.log`: 399.027-block travel across new
+  chunks, floor/wall collision, rocket and exact unfocused powerup timing.
+
+All native fixtures restored the Minecraft game mode. Only the private QA save
+was used. The new clock regressions check callback ordering, exact update rates,
+frame partitioning and bounded catch-up. Further cgame interpreter profiling,
+long-session checks and consistent frame pacing remain open.
+
 ## Bridge chat entry, console and team-command checkpoint (2026-09-07)
 
-The latest full build passes **1,310 tests**, zero failures/errors/skips, formatting
+That checkpoint's full build passes **1,310 tests**, zero failures/errors/skips, formatting
 and compilation. The 2,023,992-byte distributable has SHA-256
 `c83deb5387f52a0d2a918ff25da2bf24fe569c56f24ee394b7cf5205b39f858a`.
 Recursive inspection finds 918 Java 25 classes, nine engine jars and four GLSL

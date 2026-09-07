@@ -32,7 +32,8 @@ public final class BridgeGame implements AutoCloseable {
   private final MinecraftTerrain terrain;
   private final RenderScene scene;
   private final MaterialLibrary materials;
-  private int time, remaining;
+  private int time;
+  private BridgeSimulationClock simulation;
   private String userInfo;
   private MinecraftCombat combat;
   private BridgeLoadoutStore loadouts;
@@ -100,6 +101,7 @@ public final class BridgeGame implements AutoCloseable {
       client = new Q3Client(fs, server, frame -> {}, audio, this::print, null, server.commands());
       client.initialize(0, width, height);
       time = server.time();
+      simulation = new BridgeSimulationClock(time);
       input = new Q3Input(cvars, server.commands(), time);
       var state = state();
       input.angles(
@@ -199,6 +201,7 @@ public final class BridgeGame implements AutoCloseable {
 
   public void combat(MinecraftCombat combat) {
     this.combat = combat;
+    pumpCombat();
   }
 
   public Q3Input input() {
@@ -242,7 +245,8 @@ public final class BridgeGame implements AutoCloseable {
   }
 
   public PlayerLoadout loadout() {
-    return PlayerLoadout.capture(server.playerState(0), server.time());
+    // Timed powerups use the current input/presentation time between server snapshots.
+    return PlayerLoadout.capture(server.playerState(0), time);
   }
 
   public AudioBackend.Diagnostics audioDiagnostics() {
@@ -272,25 +276,36 @@ public final class BridgeGame implements AutoCloseable {
       server.updateUserInfo(0, dev.bluevista.craftq3.core.cvar.InfoString.parse(nextInfo, 1024));
       userInfo = nextInfo;
     }
-    if (combat != null) {
-      var ps = state();
-      var center =
-          terrain
-              .transform()
-              .toMinecraft(new Vec3(ps.getFloat(20), ps.getFloat(24), ps.getFloat(28)));
-      combat.pump(server, center);
-    }
-    remaining += Math.clamp(elapsed, 0, 200);
-    while (remaining >= 8) {
-      time += 8;
-      remaining -= 8;
-      client.userCommand(
-          input.sample(
-              time, client.selectedWeapon(), client.sensitivityScale(), state().getInt(56)));
-      server.runFrame(time);
-      if (combat != null) combat.afterFrame(server);
-    }
-    return client.frame(time, width, height);
+    simulation.advance(
+        elapsed,
+        commandTime -> {
+          time = commandTime;
+          client.userCommand(
+              input.sample(
+                  time, client.selectedWeapon(), client.sensitivityScale(), state().getInt(56)));
+        },
+        frameTime -> {
+          server.runFrame(frameTime);
+          if (combat != null) {
+            // ClientEndFrame publishes original damage to playerState. Read it before a host
+            // refresh can overwrite a target's health, then synchronize the next host snapshot.
+            combat.afterFrame(server);
+            pumpCombat();
+          }
+        });
+    var result = client.frame(time, width, height);
+    if (combat != null) combat.presented();
+    return result;
+  }
+
+  private void pumpCombat() {
+    if (combat == null) return;
+    var ps = state();
+    var center =
+        terrain
+            .transform()
+            .toMinecraft(new Vec3(ps.getFloat(20), ps.getFloat(24), ps.getFloat(28)));
+    combat.pump(server, center);
   }
 
   private ByteBuffer state() {

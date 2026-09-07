@@ -13,7 +13,7 @@ No scope has been dropped yet. Minecraft 26.2, Java 25 and Vulkan remain the tar
 - [ ] **3. Bot navigation:** elevator integration, failed jump approaches, difficult landings, slopes, low ceilings, remaining routing services and broad stuck-bot checks.
 - [ ] **4. Menu/console completeness:** remaining original actions and command paths. Registered console-command dispatch and team-model userinfo are corrected and covered by original team-match checks.
 - [ ] **5. Collision/movement edges:** capsule traces, curved-surface edges and wider native comparisons.
-- [ ] **6. Long-session reliability/performance:** large bot matches, dense maps, extended sessions and memory/resource behavior.
+- [ ] **6. Long-session reliability/performance:** large bot matches, dense maps, extended sessions and memory/resource behavior. The first [bridge optimization pass](BRIDGE_PERFORMANCE.md) reduces simulation work; consistent frame pacing and broader FPS measurements remain.
 
 ## Quake mechanics in Minecraft
 

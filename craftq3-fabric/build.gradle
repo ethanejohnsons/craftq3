@@ -106,6 +106,7 @@ loom {
             vmArg "-Dcraftq3.bridgeSettingsSmoke=${providers.gradleProperty('q3BridgeSettingsSmoke').getOrElse('')}"
             vmArg "-Dcraftq3.bridgeConsoleSmoke=${providers.gradleProperty('q3BridgeConsoleSmoke').getOrElse('false')}"
             vmArg "-Dcraftq3.bridgeConsoleFresh=${providers.gradleProperty('q3BridgeConsoleFresh').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeProfile=${providers.gradleProperty('q3BridgeProfile').getOrElse('')}"
             vmArg "-Dcraftq3.bridgeDepthSmoke=${providers.gradleProperty('q3DepthSmoke').getOrElse('false')}"
             vmArg "-Dcraftq3.bridgeBlazeSmoke=${providers.gradleProperty('q3BridgeBlazeSmoke').getOrElse('false')}"
             vmArg "-Dcraftq3.bridgeHitboxSmoke=${providers.gradleProperty('q3BridgeHitboxSmoke').getOrElse('false')}"

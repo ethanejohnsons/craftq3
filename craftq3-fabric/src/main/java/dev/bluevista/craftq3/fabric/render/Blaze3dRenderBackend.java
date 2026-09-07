@@ -716,7 +716,9 @@ public final class Blaze3dRenderBackend implements RenderBackend {
 
   private void uploadSubmittedAssets(SceneAssets assets) {
     for (var entry : assets.images().entrySet()) {
-      if (submittedImages.get(entry.getKey()) == entry.getValue()) continue;
+      // Cgame and the console own separate immutable copies of shared images. Compare pixels
+      // so alternating overlays do not regenerate mipmaps and replace GPU textures every frame.
+      if (entry.getValue().equals(submittedImages.get(entry.getKey()))) continue;
       Texture image = uploadImage(entry.getKey(), entry.getValue());
       Texture old = textures.put(entry.getKey(), image);
       if (old != null) old.close();

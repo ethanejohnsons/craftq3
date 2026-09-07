@@ -47,6 +47,9 @@ public final class MinecraftCombat implements AutoCloseable {
   private static final class Actor {
     final int slot;
     int previousHealth;
+    BspMap.Bounds bounds;
+    String name;
+    boolean deathPresented;
     Vec3 previousVelocity = new Vec3(0, 0, 0);
     float maximum;
 
@@ -100,7 +103,7 @@ public final class MinecraftCombat implements AutoCloseable {
     boolean alive = body.alive();
     // Keep obituary names available until original cgame has consumed the damage frame.
     for (var actor : actors.values()) {
-      if (actor.previousHealth <= 0) quake.removeExternalActor(actor.slot);
+      if (actor.previousHealth <= 0 && actor.deathPresented) quake.removeExternalActor(actor.slot);
     }
     if (pending != null && pending.isDone()) {
       var snapshot = pending.join();
@@ -120,7 +123,7 @@ public final class MinecraftCombat implements AutoCloseable {
       for (var target : snapshot.targets()) retained.add(target.id());
       for (var iterator = actors.entrySet().iterator(); iterator.hasNext(); ) {
         var entry = iterator.next();
-        if (!retained.contains(entry.getKey())) {
+        if (!retained.contains(entry.getKey()) && !unpresentedDeath(entry.getValue())) {
           quake.removeExternalActor(entry.getValue().slot);
           iterator.remove();
         }
@@ -131,6 +134,7 @@ public final class MinecraftCombat implements AutoCloseable {
                 Math.ceil(
                     (target.health() - ledger.outstanding(target.id())) * 100 / target.maximum());
         var actor = actors.get(target.id());
+        if (actor != null && unpresentedDeath(actor)) continue;
         if (health <= 0) {
           if (actor != null) {
             quake.removeExternalActor(actor.slot);
@@ -151,9 +155,21 @@ public final class MinecraftCombat implements AutoCloseable {
           actor = new Actor(slot);
           actors.put(target.id(), actor);
         }
-        quake.externalActor(actor.slot, target.bounds(), Math.clamp(health, 1, 100), target.name());
-        actor.previousHealth = Math.clamp(health, 1, 100);
-        actor.previousVelocity = new Vec3(0, 0, 0);
+        int mirroredHealth = Math.clamp(health, 1, 100);
+        // Host snapshots can arrive faster than Minecraft ticks. Original qagame's public
+        // health/velocity, observed after every simulation step, still invalidate this fast path.
+        if (!target.bounds().equals(actor.bounds)
+            || !target.name().equals(actor.name)
+            || mirroredHealth != actor.previousHealth
+            || actor.previousVelocity.x() != 0
+            || actor.previousVelocity.y() != 0
+            || actor.previousVelocity.z() != 0) {
+          quake.externalActor(actor.slot, target.bounds(), mirroredHealth, target.name());
+          actor.bounds = target.bounds();
+          actor.name = target.name();
+          actor.previousHealth = mirroredHealth;
+          actor.previousVelocity = new Vec3(0, 0, 0);
+        }
         actor.maximum = target.maximum();
       }
     }
@@ -178,9 +194,19 @@ public final class MinecraftCombat implements AutoCloseable {
         ledger.add(entry.getKey(), (float) (lost * actor.maximum / 100.0), impulse);
         deliveredHits++;
       }
+      if (current <= 0 && actor.previousHealth > 0) actor.deathPresented = false;
       actor.previousHealth = current;
       actor.previousVelocity = velocity;
     }
+  }
+
+  private static boolean unpresentedDeath(Actor actor) {
+    return actor.previousHealth <= 0 && !actor.deathPresented;
+  }
+
+  /** Original cgame has consumed this snapshot and its obituary names. */
+  public void presented() {
+    for (var actor : actors.values()) if (actor.previousHealth <= 0) actor.deathPresented = true;
   }
 
   private void publishBody(Q3Server quake) {

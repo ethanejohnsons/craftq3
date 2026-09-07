@@ -22,7 +22,7 @@ restart, map replacement, background ticking, dedicated mode and shutdown
 recovery. Native established-client wire operations now pass both game profiles, and
 585 native pure-policy cases cover admission boundaries. Complete native-client
 application coverage and remaining server policies are still ahead. The packaged
-checkpoint passes **1,310 tests**. Hosted per-peer byte pacing, live rate changes,
+checkpoint passes **1,312 tests**. Hosted per-peer byte pacing, live rate changes,
 measured qagame/status ping and 2,400 native timing comparisons now pass. Hosted
 PK3 transfer, packet-loss recovery and pure resumption pass both game profiles;
 automatic client verification, isolated cache installation, pure resumption, cache
@@ -44,6 +44,12 @@ video textures and remaining campaign/movie compatibility remain ahead.
 Before calling standalone Quake complete, finish legacy demo protocols, network
 remaining hosting policies, HTTP downloads/mod switching, menu/cinematic services, broader
 campaign/team/mod coverage and outstanding gameplay/render/audio compatibility.
+
+The first [bridge performance pass](BRIDGE_PERFORMANCE.md) preserves 125 Hz input
+while moving full Quake server updates to 20 Hz, reusing terrain/texture work and
+avoiding unchanged mob updates. Native combat, fluids and 399-block travel pass.
+Average simulation CPU time fell about 27% in one paired scene; consistent FPS
+and tail-latency improvements still require broader measurement.
 
 The user now prioritizes the gameplay bridge. `/q3 bridge` provides the first
 playable local-world slice: original Quake movement/prediction on Minecraft block

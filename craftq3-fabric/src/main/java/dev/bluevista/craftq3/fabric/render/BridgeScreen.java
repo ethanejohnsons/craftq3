@@ -186,8 +186,10 @@ public final class BridgeScreen extends Screen implements QuakeInputView {
           if (smokeFrames == 170) game.input().key('w', false, game.time());
         }
       }
+      long profileStart = BridgePerformanceSmoke.begin(smokeFrames);
       frame =
           game.frame(elapsed, minecraft.getWindow().getWidth(), minecraft.getWindow().getHeight());
+      BridgePerformanceSmoke.end(smokeFrames, profileStart);
       playerShape = game.playerShape();
       if (BridgeConsoleSmoke.enabled()) BridgeConsoleSmoke.observe(frame);
       var view =
@@ -224,33 +226,35 @@ public final class BridgeScreen extends Screen implements QuakeInputView {
         minecraft, game, frame, smokeFrames);
     boolean combatSmoke = dev.bluevista.craftq3.fabric.bridge.BridgeCombatSmoke.enabled();
     if (++smokeFrames
-            == (dev.bluevista.craftq3.fabric.bridge.BridgeHitboxSmoke.enabled()
-                    || dev.bluevista.craftq3.fabric.bridge.BridgeFireballSmoke.enabled()
-                ? 1200
-                : dev.bluevista.craftq3.fabric.bridge.BridgeFireSmoke.enabled()
-                        || dev.bluevista.craftq3.fabric.bridge.BridgeFluidSmoke.enabled()
-                        || dev.bluevista.craftq3.fabric.bridge.BridgeBlazeSmoke.enabled()
-                    ? 2400
-                    : dev.bluevista.craftq3.fabric.bridge.BridgeTravelSmoke.enabled()
-                        ? 3200
-                        : dev.bluevista.craftq3.fabric.bridge.BridgePickupSmoke.enabled()
-                            ? 700
-                            : BridgeDepthSmoke.enabled()
-                                ? 400
-                                : dev.bluevista.craftq3.fabric.bridge.BridgeOutgoingImpulseSmoke
-                                            .enabled()
-                                        || dev.bluevista.craftq3.fabric.bridge.BridgeExplosionSmoke
-                                            .enabled()
-                                        || dev.bluevista.craftq3.fabric.bridge.BridgeRangedSmoke
-                                            .enabled()
-                                    ? 1000
-                                    : BridgeCameraSmoke.enabled()
+            == (BridgePerformanceSmoke.enabled()
+                ? 1600
+                : dev.bluevista.craftq3.fabric.bridge.BridgeHitboxSmoke.enabled()
+                        || dev.bluevista.craftq3.fabric.bridge.BridgeFireballSmoke.enabled()
+                    ? 1200
+                    : dev.bluevista.craftq3.fabric.bridge.BridgeFireSmoke.enabled()
+                            || dev.bluevista.craftq3.fabric.bridge.BridgeFluidSmoke.enabled()
+                            || dev.bluevista.craftq3.fabric.bridge.BridgeBlazeSmoke.enabled()
+                        ? 2400
+                        : dev.bluevista.craftq3.fabric.bridge.BridgeTravelSmoke.enabled()
+                            ? 3200
+                            : dev.bluevista.craftq3.fabric.bridge.BridgePickupSmoke.enabled()
+                                ? 700
+                                : BridgeDepthSmoke.enabled()
+                                    ? 400
+                                    : dev.bluevista.craftq3.fabric.bridge.BridgeOutgoingImpulseSmoke
+                                                .enabled()
                                             || dev.bluevista.craftq3.fabric.bridge
-                                                .BridgeKnockbackSmoke.enabled()
-                                            || dev.bluevista.craftq3.fabric.bridge.BridgeCombatSmoke
-                                                .incoming()
-                                        ? 650
-                                        : combatSmoke ? 260 : 200)
+                                                .BridgeExplosionSmoke.enabled()
+                                            || dev.bluevista.craftq3.fabric.bridge.BridgeRangedSmoke
+                                                .enabled()
+                                        ? 1000
+                                        : BridgeCameraSmoke.enabled()
+                                                || dev.bluevista.craftq3.fabric.bridge
+                                                    .BridgeKnockbackSmoke.enabled()
+                                                || dev.bluevista.craftq3.fabric.bridge
+                                                    .BridgeCombatSmoke.incoming()
+                                            ? 650
+                                            : combatSmoke ? 260 : 200)
         && !smokeCaptured) {
       smokeCaptured = true;
       String combatResult =
@@ -309,6 +313,7 @@ public final class BridgeScreen extends Screen implements QuakeInputView {
 
   @Override
   public void drawFrame() {
+    long drawStart = BridgePerformanceSmoke.beginDraw();
     if (!closed && frame != null)
       backend.render(
           game.scene(),
@@ -328,6 +333,7 @@ public final class BridgeScreen extends Screen implements QuakeInputView {
           minecraft.getWindow().getWidth(),
           minecraft.getWindow().getHeight(),
           false);
+    BridgePerformanceSmoke.endDraw(smokeFrames, drawStart);
   }
 
   @Override

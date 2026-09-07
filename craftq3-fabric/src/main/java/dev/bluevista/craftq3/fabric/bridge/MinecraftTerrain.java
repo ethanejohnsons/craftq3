@@ -15,7 +15,15 @@ public final class MinecraftTerrain implements TraceWorld {
   private final Level level;
   private final BlockPos anchor;
   private final CoordinateTransform transform;
-  private final Map<GridTraceWorld.Cell, List<TraceWorld>> cache = new HashMap<>();
+
+  private record Shapes(
+      net.minecraft.world.phys.shapes.VoxelShape collision,
+      int contents,
+      double fluidHeight,
+      List<TraceWorld> boxes) {}
+
+  private Map<GridTraceWorld.Cell, Shapes> cache = new HashMap<>();
+  private Map<GridTraceWorld.Cell, Shapes> previous = new HashMap<>();
   private final GridTraceWorld grid;
 
   public MinecraftTerrain(Level level, BlockPos anchor, double unitsPerBlock) {
@@ -31,8 +39,11 @@ public final class MinecraftTerrain implements TraceWorld {
     return transform;
   }
 
-  /** Discard cached shapes before each simulation/prediction frame so block edits take effect. */
+  /** Recheck live shapes each frame; retain converted boxes only while their inputs match. */
   public void beginFrame() {
+    var reusable = previous;
+    previous = cache;
+    cache = reusable;
     cache.clear();
   }
 
@@ -47,37 +58,48 @@ public final class MinecraftTerrain implements TraceWorld {
   }
 
   private List<TraceWorld> shapes(GridTraceWorld.Cell cell) {
-    return cache.computeIfAbsent(
-        cell,
-        key -> {
-          if (cache.size() >= 262144)
-            throw new IllegalStateException("Minecraft collision cache budget exceeded");
-          BlockPos pos = anchor.offset(key.x(), key.z(), -key.y() - 1);
-          var result = new ArrayList<TraceWorld>();
-          // An unloaded chunk is a boundary, preventing movement/projectiles into unsimulated
-          // terrain.
-          if (!level.getChunkSource().hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
-            result.add(box(pos, 0, 0, 0, 1, 1, 1, 1));
-            return List.copyOf(result);
-          }
-          var state = level.getBlockState(pos);
-          for (var shape : state.getCollisionShape(level, pos).toAabbs())
-            result.add(
-                box(
-                    pos,
-                    shape.minX,
-                    shape.minY,
-                    shape.minZ,
-                    shape.maxX,
-                    shape.maxY,
-                    shape.maxZ,
-                    1));
-          var fluid = state.getFluidState();
-          int contents = fluid.is(FluidTags.LAVA) ? 8 : fluid.is(FluidTags.WATER) ? 32 : 0;
-          if (contents != 0)
-            result.add(box(pos, 0, 0, 0, 1, fluid.getHeight(level, pos), 1, contents));
-          return List.copyOf(result);
-        });
+    return cache
+        .computeIfAbsent(
+            cell,
+            key -> {
+              if (cache.size() >= 262144)
+                throw new IllegalStateException("Minecraft collision cache budget exceeded");
+              BlockPos pos = anchor.offset(key.x(), key.z(), -key.y() - 1);
+              // Recheck chunk presence, neighbor-dependent collision and fluid height even when
+              // the block state is unchanged. VoxelShapes are immutable once published by the host.
+              boolean loaded = level.getChunkSource().hasChunk(pos.getX() >> 4, pos.getZ() >> 4);
+              var state = loaded ? level.getBlockState(pos) : null;
+              var collision =
+                  loaded
+                      ? state.getCollisionShape(level, pos)
+                      : net.minecraft.world.phys.shapes.Shapes.block();
+              var fluid = loaded ? state.getFluidState() : null;
+              int contents =
+                  fluid == null
+                      ? 0
+                      : fluid.is(FluidTags.LAVA) ? 8 : fluid.is(FluidTags.WATER) ? 32 : 0;
+              double height = contents == 0 ? 0 : fluid.getHeight(level, pos);
+              var old = previous.get(key);
+              if (old != null
+                  && old.collision() == collision
+                  && old.contents() == contents
+                  && old.fluidHeight() == height) return old;
+              var result = new ArrayList<TraceWorld>();
+              for (var shape : collision.toAabbs())
+                result.add(
+                    box(
+                        pos,
+                        shape.minX,
+                        shape.minY,
+                        shape.minZ,
+                        shape.maxX,
+                        shape.maxY,
+                        shape.maxZ,
+                        1));
+              if (contents != 0) result.add(box(pos, 0, 0, 0, 1, height, 1, contents));
+              return new Shapes(collision, contents, height, List.copyOf(result));
+            })
+        .boxes();
   }
 
   private TraceWorld box(

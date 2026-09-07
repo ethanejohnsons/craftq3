@@ -1,0 +1,14 @@
+plugins { id 'java-test-fixtures' }
+dependencies { api project(':craftq3-core') }
+tasks.register('generateDebugFixture', JavaExec) {
+    dependsOn testFixturesClasses
+    classpath = sourceSets.testFixtures.runtimeClasspath
+    mainClass = 'dev.bluevista.craftq3.assets.bsp.BspFixture'
+    args rootProject.file('run/craftq3/games/baseq3/maps/craftq3_fixture.bsp').absolutePath
+}
+tasks.register('generateShaderFixture', JavaExec) {
+    dependsOn testFixturesClasses
+    classpath = sourceSets.testFixtures.runtimeClasspath
+    mainClass = 'dev.bluevista.craftq3.assets.bsp.ShaderFixture'
+    args rootProject.file('run/craftq3/games/baseq3').absolutePath
+}

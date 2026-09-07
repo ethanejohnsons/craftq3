@@ -1,0 +1,35 @@
+dependencies {
+    api project(':craftq3-core')
+    api project(':craftq3-assets')
+    api project(':craftq3-vm')
+    api project(':craftq3-server')
+    api project(':craftq3-render')
+    api project(':craftq3-platform')
+    testImplementation testFixtures(project(':craftq3-assets'))
+}
+
+tasks.register('auditCgame', JavaExec) {
+    group = 'verification'
+    description = 'Runs locally supplied qagame and cgame VMs; requires user-owned PK3s.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditCgame.java').absolutePath
+    systemProperty 'craftq3.auditRestart', providers.gradleProperty('q3AuditRestart').getOrElse('false')
+    args providers.gradleProperty('q3Installation').getOrElse(rootProject.file('run/craftq3/games').absolutePath)
+    args providers.gradleProperty('q3Map').getOrElse('q3dm17')
+    if (providers.gradleProperty('q3AuditVm').isPresent()) args rootProject.file(providers.gradleProperty('q3AuditVm').get()).absolutePath
+    if (providers.gradleProperty('q3AuditCgameVm').isPresent()) {
+        if (!providers.gradleProperty('q3AuditVm').isPresent()) throw new GradleException('q3AuditCgameVm requires q3AuditVm')
+        args rootProject.file(providers.gradleProperty('q3AuditCgameVm').get()).absolutePath
+    }
+}
+
+tasks.register('auditUi', JavaExec) {
+    group = 'verification'
+    description = 'Runs the locally supplied original menu VM; requires user-owned PK3s.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditUi.java').absolutePath
+    args providers.gradleProperty('q3Installation').getOrElse(rootProject.file('run/craftq3/games').absolutePath)
+    if (providers.gradleProperty('q3AuditUiVm').isPresent()) args rootProject.file(providers.gradleProperty('q3AuditUiVm').get()).absolutePath
+}

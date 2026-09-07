@@ -1,0 +1,13 @@
+dependencies {
+    api project(':craftq3-core')
+    api project(':craftq3-assets')
+    api project(':craftq3-collision')
+}
+tasks.register('auditNavigation', JavaExec) {
+    group = 'verification'
+    description = 'Audits AAS queries and routing using a locally supplied, read-only PK3.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditNavigation.java').absolutePath
+    args providers.gradleProperty('q3Pak').getOrElse(rootProject.file('run/craftq3/games/baseq3/pak0.pk3').absolutePath)
+}

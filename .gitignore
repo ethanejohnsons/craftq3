@@ -5,6 +5,8 @@
 .codex/
 logs/
 scripts/.graal/
+__pycache__/
+*.py[cod]
 scripts/*.json
 !scripts/stitch.modules.json
 
@@ -124,3 +126,14 @@ run/
 # Avoid ignoring Gradle wrapper jar file (.jar files are usually ignored)
 !gradle-wrapper.jar
 /src/main/resources/static/music/
+
+# Private local tooling and user-owned Q3 assets
+.tools/
+run/
+**/build/
+*.pk3
+*.bsp
+*.md3
+*.qvm
+*.dm_68
+local-assets/

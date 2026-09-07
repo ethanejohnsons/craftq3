@@ -1,0 +1,200 @@
+plugins { id 'net.fabricmc.fabric-loom' version "${loom_version}" }
+base { archivesName = rootProject.archives_base_name }
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    for (module in ['core', 'assets', 'render', 'collision', 'vm', 'server', 'client', 'platform', 'botlib']) {
+        implementation project(":craftq3-${module}")
+        include project(":craftq3-${module}")
+    }
+}
+loom {
+    runs {
+        smokeClient {
+            client()
+            name 'CraftQ3 Capture Smoke Test'
+            runDir '../run'
+            vmArg "-Dcraftq3.debugMap=${providers.gradleProperty('q3Map').getOrElse('craftq3_shaderlab')}"
+            vmArg '-Dcraftq3.capture=true'
+            vmArg "-Dcraftq3.debugMode=${providers.gradleProperty('q3Mode').getOrElse('MATERIALS')}"
+            vmArg "-Dcraftq3.capturePanel=${providers.gradleProperty('q3Panel').getOrElse('false')}"
+            if (providers.gradleProperty('q3CinematicInstallation').isPresent())
+                vmArg "-Dcraftq3.cinematicInstallation=${rootProject.file(providers.gradleProperty('q3CinematicInstallation').get()).absolutePath}"
+            if (providers.gradleProperty('q3VideoInstallation').isPresent())
+                vmArg "-Dcraftq3.videoInstallation=${rootProject.file(providers.gradleProperty('q3VideoInstallation').get()).absolutePath}"
+            if (providers.gradleProperty('q3AudioMovie').isPresent())
+                vmArg "-Dcraftq3.audioMovie=${rootProject.file(providers.gradleProperty('q3AudioMovie').get()).absolutePath}"
+            vmArg "-Dcraftq3.audioSmoke=${providers.gradleProperty('q3AudioSmoke').getOrElse('false')}"
+        }
+        debugClient {
+            client()
+            name 'CraftQ3 Debug BSP'
+            runDir '../run'
+            ideConfigGenerated true
+            vmArg "-Dcraftq3.debugMap=${providers.gradleProperty('q3Map').getOrElse('craftq3_shaderlab')}"
+        }
+        playSmokeClient {
+            client()
+            name 'CraftQ3 Original VM Gameplay Capture'
+            runDir '../run'
+            vmArg "-Dcraftq3.playMap=${providers.gradleProperty('q3Map').getOrElse('q3dm17')}"
+            vmArg '-Dcraftq3.playCapture=true'
+            vmArg "-Dcraftq3.playInputTest=${providers.gradleProperty('q3InputTest').getOrElse('false')}"
+            vmArg "-Dcraftq3.playBotTest=${providers.gradleProperty('q3BotTest').getOrElse('false')}"
+            if (providers.gradleProperty('q3Installation').isPresent()) {
+                vmArg "-Dcraftq3.developmentInstallation=${rootProject.file(providers.gradleProperty('q3Installation').get()).absolutePath}"
+            }
+            vmArg "-Dcraftq3.playConsoleTest=${providers.gradleProperty('q3ConsoleTest').getOrElse('false')}"
+            vmArg "-Dcraftq3.playMenuTest=${providers.gradleProperty('q3MenuTest').getOrElse('false')}"
+        }
+        playClient {
+            client()
+            name 'CraftQ3 Original VM Gameplay'
+            runDir '../run'
+            ideConfigGenerated true
+            vmArg "-Dcraftq3.playMap=${providers.gradleProperty('q3Map').getOrElse('q3dm17')}"
+        }
+        lifecycleSmokeClient {
+            client()
+            name 'CraftQ3 Original Menu and Game Lifecycle'
+            runDir '../run'
+            vmArg '-Dcraftq3.lifecycleCapture=true'
+            vmArg "-Dcraftq3.systemCinematicSmoke=${providers.gradleProperty('q3SystemCinematicSmoke').getOrElse('false')}"
+        }
+        uiSmokeClient {
+            client()
+            name 'CraftQ3 Original UI Capture'
+            runDir '../run'
+            vmArg '-Dcraftq3.uiPreview=true'
+            vmArg '-Dcraftq3.uiCapture=true'
+            vmArg "-Dcraftq3.uiMainTest=${providers.gradleProperty('q3UiMain').getOrElse('false')}"
+        }
+        bridgeSmokeClient {
+            client()
+            name 'CraftQ3 Minecraft Bridge Smoke'
+            runDir '../run'
+            vmArg '-Dcraftq3.bridgeSmokeWorld=CraftQ3 Bridge QA'
+            vmArg "-Dcraftq3.worldReloadSmoke=${providers.gradleProperty('q3WorldReloadSmoke').getOrElse('')}"
+            vmArg "-Dcraftq3.narrowNavigationSmoke=${providers.gradleProperty('q3NarrowNavigationSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.mobCombatSmoke=${providers.gradleProperty('q3MobCombatSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.lightingSmoke=${providers.gradleProperty('q3LightingSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.decorationSmoke=${providers.gradleProperty('q3DecorationSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.fluidSmoke=${providers.gradleProperty('q3FluidSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.navigationSmoke=${providers.gradleProperty('q3NavigationSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.explosionSmoke=${providers.gradleProperty('q3ExplosionSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.projectileSmoke=${providers.gradleProperty('q3ProjectileSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.buildSupportSmoke=${providers.gradleProperty('q3SupportSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.buildRecoverySmoke=${providers.gradleProperty('q3RecoverySmoke').getOrElse('')}"
+            if (providers.gradleProperty('q3RecoverySmoke').isPresent()) {
+                programArgs '--username', 'Q3RecoveryQA', '--uuid', '63dd3146-7c62-40ee-a630-fb937aa481cb'
+            }
+            vmArg "-Dcraftq3.buildVerifyCell=${providers.gradleProperty('q3BuildVerifyCell').getOrElse('')}"
+            vmArg "-Dcraftq3.buildSmoke=${providers.gradleProperty('q3BuildSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeRecoverySmoke=${providers.gradleProperty('q3BridgeRecoverySmoke').getOrElse('')}"
+            if (providers.gradleProperty('q3BridgeRecoverySmoke').isPresent()) {
+                programArgs '--username', 'Q3BridgeQA', '--uuid', '16dd3146-7c62-40ee-a630-fb937aa481bc'
+            }
+            vmArg "-Dcraftq3.bridgeTravelSmoke=${providers.gradleProperty('q3TravelSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgePickupSmoke=${providers.gradleProperty('q3PickupSmoke').getOrElse('')}"
+            vmArg "-Dcraftq3.bridgeRoundtripSmoke=${providers.gradleProperty('q3BridgeRoundtripSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeTransferSmoke=${providers.gradleProperty('q3BridgeTransferSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeLoadoutSmoke=${providers.gradleProperty('q3BridgeLoadoutSmoke').getOrElse('')}"
+            if (providers.gradleProperty('q3BridgeLoadoutSmoke').isPresent()) {
+                programArgs '--username', 'Q3LoadoutQA', '--uuid', '63d73146-7c62-40ee-a630-fb937aa481be'
+            }
+            vmArg "-Dcraftq3.bridgeSettingsSmoke=${providers.gradleProperty('q3BridgeSettingsSmoke').getOrElse('')}"
+            vmArg "-Dcraftq3.bridgeConsoleSmoke=${providers.gradleProperty('q3BridgeConsoleSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeConsoleFresh=${providers.gradleProperty('q3BridgeConsoleFresh').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeDepthSmoke=${providers.gradleProperty('q3DepthSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeBlazeSmoke=${providers.gradleProperty('q3BridgeBlazeSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeHitboxSmoke=${providers.gradleProperty('q3BridgeHitboxSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeFireballSmoke=${providers.gradleProperty('q3BridgeFireballSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeFireSmoke=${providers.gradleProperty('q3BridgeFireSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeFluidSmoke=${providers.gradleProperty('q3BridgeFluidSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeRangedSmoke=${providers.gradleProperty('q3RangedSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeCameraSmoke=${providers.gradleProperty('q3BridgeCameraSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeOutgoingImpulseSmoke=${providers.gradleProperty('q3OutgoingImpulseSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeExplosionSmoke=${providers.gradleProperty('q3BridgeExplosionSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeKnockbackSmoke=${providers.gradleProperty('q3KnockbackSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeIncomingSmoke=${providers.gradleProperty('q3IncomingSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.bridgeCombatSmoke=${providers.gradleProperty('q3CombatSmoke').getOrElse('false')}"
+            vmArg "-Dcraftq3.developmentInstallation=${rootProject.file(providers.gradleProperty('q3Installation').getOrElse('.tools/pak0-audit/games')).absolutePath}"
+        }
+        client {
+            client()
+            name 'CraftQ3 Client'
+            runDir '../run'
+            ideConfigGenerated true
+        }
+    }
+}
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+jar { from(rootProject.file('LICENSE')) { rename { 'LICENSE_craftq3' } } }
+
+dependencies { testImplementation testFixtures(project(':craftq3-assets')) }
+
+tasks.named('runDebugClient') { dependsOn ':craftq3-assets:generateDebugFixture', ':craftq3-assets:generateShaderFixture' }
+
+tasks.named('runSmokeClient') { dependsOn ':craftq3-assets:generateDebugFixture', ':craftq3-assets:generateShaderFixture' }
+
+// Runtime assertions may stop Minecraft cleanly. Require an explicit completed capture as well.
+['runPlaySmokeClient': 'play', 'runUiSmokeClient': 'ui', 'runLifecycleSmokeClient': 'lifecycle'].each { taskName, scenario ->
+    tasks.named(taskName) {
+        def result = rootProject.file("run/craftq3-smoke/${scenario}.result")
+        doFirst { java.nio.file.Files.deleteIfExists(result.toPath()) }
+        doLast {
+            if (!result.isFile() || !result.getText('UTF-8').startsWith('PASS\n'))
+                throw new GradleException("CraftQ3 ${scenario} smoke did not complete successfully; inspect the client log")
+        }
+    }
+}
+
+tasks.register('auditRemoteApplication', JavaExec) {
+    group = 'verification'
+    description = 'CPU-only original UI/local/remote lifecycle against the private audit server.'
+    systemProperty 'craftq3.audit.loopbackHost', 'true'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file(providers.gradleProperty('q3BridgeTransferAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditBridgeTransfer.java'
+        : providers.gradleProperty('q3TeamAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditTeamApplication.java'
+        : providers.gradleProperty('q3CampaignAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditCampaignApplication.java'
+        : providers.gradleProperty('q3CinematicAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditCinematicApplication.java'
+        : providers.gradleProperty('q3DownloadAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditDownloadApplication.java'
+        : providers.gradleProperty('q3HostAudit').getOrElse('false').toBoolean()
+        ? 'scripts/AuditHostedApplication.java'
+        : providers.gradleProperty('q3RemoteAuditDemo').getOrElse('false').toBoolean()
+        ? 'scripts/AuditDemoApplication.java'
+        : providers.gradleProperty('q3RemoteAuditBrowser').getOrElse('false').toBoolean()
+        ? 'scripts/AuditBrowserApplication.java'
+        : providers.gradleProperty('q3RemoteAuditFailure').getOrElse('false').toBoolean()
+        ? 'scripts/AuditPureConnectionFailure.java' : 'scripts/AuditRemoteApplication.java').absolutePath
+    if (providers.gradleProperty('q3AuditRuntime').isPresent()) {
+        def inspectedRuntime = rootProject.file(providers.gradleProperty('q3AuditRuntime').get())
+        classpath = files(classpath.filter { !it.absolutePath.startsWith(rootProject.projectDir.absolutePath + '/craftq3-') },
+            fileTree(inspectedRuntime) { include '*.jar' })
+        systemProperty 'craftq3.audit.runtime', inspectedRuntime.absolutePath
+    }
+    args providers.gradleProperty('q3RemoteAuditPort').getOrElse('0')
+    args providers.gradleProperty('q3RemoteAuditGames').getOrElse('')
+    args providers.gradleProperty('q3RemoteAuditOutput').getOrElse('')
+    args providers.gradleProperty('q3RemoteAuditPure').getOrElse('false')
+}
+
+// A normal process exit cannot substitute for bridge movement/capture/restoration assertions.
+tasks.named('runBridgeSmokeClient') {
+    def result = rootProject.file('run/craftq3-bridge.result')
+    doFirst { java.nio.file.Files.deleteIfExists(result.toPath()) }
+    doLast {
+        if (!result.exists() || !result.text.startsWith('PASS '))
+            throw new GradleException('Bridge smoke did not complete; inspect its log')
+    }
+}

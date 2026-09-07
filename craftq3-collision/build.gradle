@@ -1,0 +1,13 @@
+dependencies {
+    api project(':craftq3-core')
+    api project(':craftq3-assets')
+    testImplementation testFixtures(project(':craftq3-assets'))
+}
+
+tasks.register('auditCollision', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.bluevista.craftq3.collision.RealMapCollisionAudit'
+    args rootProject.file(providers.gradleProperty('pk3dir').getOrElse('run/craftq3/games')).absolutePath
+    args providers.gradleProperty('collisionMaps').getOrElse('q3dm12,q3dm17').split(',') as List
+}

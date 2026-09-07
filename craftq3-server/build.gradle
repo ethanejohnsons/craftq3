@@ -1,0 +1,58 @@
+dependencies {
+    api project(':craftq3-core')
+    api project(':craftq3-assets')
+    api project(':craftq3-collision')
+    api project(':craftq3-vm')
+    api project(':craftq3-botlib')
+    testImplementation testFixtures(project(':craftq3-assets'))
+}
+tasks.register('auditGameplay', JavaExec) {
+    group = 'verification'
+    description = 'Runs the locally supplied original qagame VM; requires user-owned PK3s.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditGameplay.java').absolutePath
+    args rootProject.file(providers.gradleProperty('q3Installation').getOrElse('run/craftq3/games')).absolutePath
+    args providers.gradleProperty('q3Map').getOrElse('q3dm17')
+    if (providers.gradleProperty('q3AuditVm').isPresent()) args rootProject.file(providers.gradleProperty('q3AuditVm').get()).absolutePath
+}
+tasks.register('auditStartup', JavaExec) {
+    group = 'verification'
+    description = 'Checks original player startup on every supplied AAS map; requires user-owned PK3s.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditStartup.java').absolutePath
+    args rootProject.file(providers.gradleProperty('q3Installation').getOrElse('run/craftq3/games')).absolutePath
+    if (providers.gradleProperty('q3AuditVm').isPresent()) args rootProject.file(providers.gradleProperty('q3AuditVm').get()).absolutePath
+}
+tasks.register('auditCombat', JavaExec) {
+    group = 'verification'
+    description = 'Checks two-client shooting, damage and scoring in locally supplied qagame.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditCombat.java').absolutePath
+    args rootProject.file(providers.gradleProperty('q3Installation').getOrElse('run/craftq3/games')).absolutePath
+}
+tasks.register('auditBots', JavaExec) {
+    group = 'verification'
+    description = 'Explores original qagame bot startup and reports the next unsupported service; requires user-owned assets.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = rootProject.file('scripts/AuditBots.java').absolutePath
+    systemProperty 'craftq3.audit.botMilliseconds', providers.gradleProperty('q3BotMillis').getOrElse('10000')
+    systemProperty 'craftq3.audit.botName', providers.gradleProperty('q3BotName').getOrElse('sarge')
+    if (providers.gradleProperty('q3BotNames').isPresent()) {
+        systemProperty 'craftq3.audit.botNames', providers.gradleProperty('q3BotNames').get()
+    }
+    systemProperty 'craftq3.audit.botSkill', providers.gradleProperty('q3BotSkill').getOrElse('3')
+    systemProperty 'craftq3.audit.seed', providers.gradleProperty('q3Seed').getOrElse('42')
+    systemProperty 'craftq3.audit.gameType', providers.gradleProperty('q3GameType').getOrElse('0')
+    if (providers.gradleProperty('q3BotInventoryHeader').isPresent()) {
+        systemProperty 'craftq3.audit.botInventoryHeader', rootProject.file(providers.gradleProperty('q3BotInventoryHeader').get()).absolutePath
+    }
+    systemProperty 'craftq3.audit.requireBotMovement', providers.gradleProperty('q3RequireBotMovement').getOrElse('false')
+    systemProperty 'craftq3.audit.requireBotCombat', providers.gradleProperty('q3RequireBotCombat').getOrElse('false')
+    args rootProject.file(providers.gradleProperty('q3Installation').getOrElse('run/craftq3/games')).absolutePath
+    args providers.gradleProperty('q3Map').getOrElse('q3dm17')
+    if (providers.gradleProperty('q3AuditVm').isPresent()) args rootProject.file(providers.gradleProperty('q3AuditVm').get()).absolutePath
+}

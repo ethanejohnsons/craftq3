@@ -70,6 +70,10 @@ public final class CraftQ3BridgeGameTests {
     ServerPlayer player;
     BridgeSession session;
     DirectQuakeClient client;
+    ServerPlayer rival;
+    BridgeSession rivalSession;
+    DirectQuakeClient rivalClient;
+    int rivalHealthBefore;
     Zombie target;
     Zombie attacker;
     final List<Zombie> crowd = new ArrayList<>();
@@ -93,6 +97,7 @@ public final class CraftQ3BridgeGameTests {
           .step("pickup placement persists", 5, this::pickup)
           .step("leave saves the loadout", 20, this::leave)
           .step("enter again restores it", 400, this::reenter)
+          .step("two bridged players fight", 200, this::duel)
           .step("tick time with twenty mobs", 120, this::crowd)
           .cleanup(this::cleanup);
     }
@@ -305,6 +310,54 @@ public final class CraftQ3BridgeGameTests {
       return true;
     }
 
+    /** A second player enters the same bridge four blocks ahead and is railed by the first. */
+    private boolean duel(int ticks) {
+      if (ticks == 0) {
+        rival = TestPlayers.join(level, "bridge-rival");
+        rival.snapTo(player.getX() + 4, player.getY(), player.getZ(), 90, 0);
+        level.getChunkSource().move(rival);
+        Optional<BridgeSession> entered =
+            bridge.enterWith(rival, content, Optional.empty(), true, messages::add);
+        check(entered.isPresent(), "the second player could not enter: " + messages);
+        rivalSession = entered.get();
+        check(rivalSession.game() == game(), "the second player got another game");
+        rivalClient =
+            new DirectQuakeClient(game().server(), rivalSession.addressText(), "bridge-rival");
+        return false;
+      }
+      boolean ready =
+          rivalSession.slot() == rivalClient.slot() && rivalClient.active() && ticks >= 40;
+      // One command per client and tick: a second one with the same time would be ignored.
+      client.buttons = ready ? DirectQuakeClient.ATTACK : 0;
+      client.send();
+      rivalClient.send();
+      if (!ready) {
+        rivalHealthBefore = rivalClient.active() ? rivalClient.stat(Loadout.STAT_HEALTH) : 0;
+        return false;
+      }
+      int health = rivalClient.stat(Loadout.STAT_HEALTH);
+      // A rail hit (100), not the spawn bonus counting down.
+      if (health > rivalHealthBefore - 50) return false;
+      client.buttons = 0;
+      scenario.note(
+          "rival Quake health "
+              + rivalHealthBefore
+              + " -> "
+              + health
+              + " (rival at "
+              + rival.position()
+              + ", shooter at "
+              + player.position()
+              + ")");
+      bridge.leave(rival, "test");
+      check(BridgedPlayer.of(rival) == null, "the rival is still bridged");
+      check(
+          game() != null && game().sessions().size() == 1, "the shared game did not keep running");
+      TestPlayers.remove(rival);
+      rival = null;
+      return true;
+    }
+
     private boolean crowd(int ticks) {
       if (ticks == 0) {
         for (int i = 0; i < 20; i++)
@@ -349,6 +402,10 @@ public final class CraftQ3BridgeGameTests {
       crowd.forEach(TestPlayers::discard);
       TestPlayers.discard(target);
       TestPlayers.discard(attacker);
+      if (rival != null) {
+        bridge.leave(rival, "test over");
+        TestPlayers.remove(rival);
+      }
       if (player != null) {
         if (client != null) client.drop();
         bridge.leave(player, "test over");

@@ -167,9 +167,16 @@ public final class BridgeGame implements AutoCloseable {
         new GameServer.Listener() {
           @Override
           public void beforeClientThink(GameServer source, int client, UserCmd command) {
-            // A respawn (and the first spawn) happens at that player's entry point.
+            // A respawn happens during the player's own think: at that player's entry point.
             BridgeSession session = sessionOfSlot(client);
             if (session != null) moveSpawn(session);
+          }
+
+          @Override
+          public void afterClientThink(GameServer source, int client) {
+            // Between thinks a newly connected player may enter the world (outside any think):
+            // the spot then belongs to the newest player still waiting to enter.
+            if (source.state() == GameServer.State.RUNNING) restSpawn();
           }
         });
   }
@@ -235,6 +242,14 @@ public final class BridgeGame implements AutoCloseable {
   /** The Quake spawn point for feet at the Minecraft position (a spot is 24 units above feet). */
   private Vec3f spawnPoint(double x, double y, double z) {
     return new Vec3f(transform.quakeX(x), transform.quakeY(z), transform.quakeZ(y) + 25);
+  }
+
+  /** Puts the spawn point at the newest player not yet in the world (where it will enter). */
+  private void restSpawn() {
+    BridgeSession waiting = null;
+    for (BridgeSession s : sessions.values())
+      if (s.slot() < 0 || server.client(s.slot()).state() != ServerClient.State.ACTIVE) waiting = s;
+    if (waiting != null) moveSpawn(waiting);
   }
 
   private void moveSpawn(BridgeSession session) {
@@ -321,6 +336,7 @@ public final class BridgeGame implements AutoCloseable {
     BridgeSession session =
         new BridgeSession(this, player, transport.addressText(player.getUUID()), loadout, ticks);
     sessions.put(player.getUUID(), session);
+    if (running()) restSpawn();
     return session;
   }
 
@@ -379,13 +395,7 @@ public final class BridgeGame implements AutoCloseable {
     ticks++;
     terrain.invalidate();
     bindSlots(lost);
-    BridgeSession waiting = null;
-    for (BridgeSession s : sessions.values())
-      if (s.slot() < 0 || server.client(s.slot()).state() != ServerClient.State.ACTIVE) {
-        waiting = s;
-        break;
-      }
-    if (waiting != null) moveSpawn(waiting);
+    restSpawn();
     gatherTargets();
     actorHost.syncActors(targets);
     hideNewPuppets();

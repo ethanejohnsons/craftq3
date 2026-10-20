@@ -27,7 +27,7 @@ installation working (section 4).
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done, except: reference screenshots from `main`, Blaze3D spike, licence decision, nightly corpus/GameTest jobs |
+| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done. Blaze3D spike passed on OpenGL and Vulkan (`mc:devharness`). Licence: no ioquake3 translation (PORTING.md). Not done: reference screenshots from `main`, nightly corpus job |
 | 1 | common, fs, formats, net, console, testkit | Not started |
 | 2 | vm, vm-abi | Not started |
 | 3 | collision, botlib | Not started |

@@ -4,7 +4,7 @@ plugins {
 }
 
 def rewriteProjects = { subprojects.findAll { craftq3.ModuleGraph.isRewrite(it) && it.childProjects.isEmpty() } }
-def portableProjects = { rewriteProjects().findAll { it.path != ':mc:fabric' } }
+def portableProjects = { rewriteProjects().findAll { !(it.path in [':mc:fabric', ':mc:devharness']) } }
 
 tasks.named('build') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:build" } }
 tasks.named('check') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:check" } }

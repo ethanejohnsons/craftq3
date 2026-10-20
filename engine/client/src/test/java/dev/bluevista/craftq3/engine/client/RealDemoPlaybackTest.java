@@ -24,9 +24,10 @@ import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Plays every protocol 66 and 68 demo the installation's search paths expose (baseq3 and CPMA)
- * through the real cgame to its end, as a timedemo, under {@code vm_strictSyscalls 1}; protocol-48
- * demos must be refused with a user-facing error. Writes {@code build/reports/client/demos.txt}.
+ * Plays every demo the installation's search paths expose (baseq3 and CPMA: protocols 48, 66 and
+ * 68) through the real cgame to its end, as a timedemo, under {@code vm_strictSyscalls 1}. The
+ * protocol-48 demos (1.25 and 1.27) play through pak8's 1.32 cgame. Writes {@code
+ * build/reports/client/demos.txt}.
  */
 @RealData
 final class RealDemoPlaybackTest {
@@ -69,15 +70,8 @@ final class RealDemoPlaybackTest {
       rig.keepFrames = false;
       SnapshotPipeline pipeline = new SnapshotPipeline();
       UserCmdHistory commands = new UserCmdHistory();
-      DemoPlayback playback;
-      try {
-        playback = DemoPlayback.open(demo, path.view().open(VirtualPath.of(demo)), pipeline);
-      } catch (DemoPlayback.DemoException refused) {
-        record(String.format(Locale.ROOT, "%-38s refused: %s", demo, refused.getMessage()));
-        assertTrue(demo.toLowerCase(Locale.ROOT).endsWith(".dm_48"), refused.getMessage());
-        return;
-      }
-      assertFalse(demo.toLowerCase(Locale.ROOT).endsWith(".dm_48"), "protocol 48 was accepted");
+      DemoPlayback playback =
+          DemoPlayback.open(demo, path.view().open(VirtualPath.of(demo)), pipeline);
       CgameHost cgame =
           new CgameHost(
               rig.services,

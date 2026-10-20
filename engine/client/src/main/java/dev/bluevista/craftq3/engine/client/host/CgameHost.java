@@ -60,6 +60,13 @@ public final class CgameHost extends GuestVm implements KeyTarget {
 
     /** The cgame consumed a new systeminfo configstring (it carries the server id). */
     default void systemInfo(String info) {}
+
+    /**
+     * Draws what the platform shows over the cgame's loading screen (the ui's connect screen as an
+     * overlay, the console) into the frame being built; called inside {@code CG_INIT}'s {@code
+     * trap_UpdateScreen} after the cgame drew its information screen.
+     */
+    default void loadingOverlay() {}
   }
 
   private final SnapshotPipeline pipeline;
@@ -72,6 +79,9 @@ public final class CgameHost extends GuestVm implements KeyTarget {
   private int selectedWeapon;
   private float sensitivityScale = 1;
   private ClientWorld world;
+  private boolean initializing;
+  private boolean drawingLoadingScreen;
+  private long loadingScreens;
 
   public CgameHost(
       HostServices services, SnapshotPipeline pipeline, UserCmdHistory commands, Link link) {
@@ -116,11 +126,46 @@ public final class CgameHost extends GuestVm implements KeyTarget {
     sensitivityScale = 1;
     instantiate();
     link.systemInfo(config.strings().getOrDefault(Protocol68.CS_SYSTEMINFO, ""));
-    exported(
-        VmExports.Cgame.CG_INIT.command(),
-        pipeline.lastMessage(),
-        lastExecutedCommand,
-        state.clientNumber());
+    initializing = true;
+    try {
+      exported(
+          VmExports.Cgame.CG_INIT.command(),
+          pipeline.lastMessage(),
+          lastExecutedCommand,
+          state.clientNumber());
+    } finally {
+      initializing = false;
+    }
+  }
+
+  /** Loading screens drawn inside {@code CG_INIT} so far. */
+  public long loadingScreens() {
+    return loadingScreens;
+  }
+
+  /**
+   * {@code trap_UpdateScreen}. Inside {@code CG_INIT} it does what the original's {@code
+   * SCR_UpdateScreen} does while loading: a fresh frame, the cgame's own {@code
+   * CG_DRAW_ACTIVE_FRAME} (re-entered; while {@code cg.infoScreenText} is set it only draws the
+   * information screen with the current loading step), the platform's overlay, and the frame goes
+   * to {@code RenderSink.submitImmediate} so the host can present it before {@code CG_INIT}
+   * returns. A nested update, and any update outside {@code CG_INIT}, hands over what was drawn so
+   * far.
+   */
+  @Override
+  protected int updateScreen(QvmInstance vm, int[] a) {
+    if (!initializing || drawingLoadingScreen) return super.updateScreen(vm, a);
+    drawingLoadingScreen = true;
+    try {
+      renderer.beginFrame(services.milliseconds());
+      vm.vmMain(VmExports.Cgame.CG_DRAW_ACTIVE_FRAME.command(), 0, 0, link.demoPlayback() ? 1 : 0);
+      link.loadingOverlay();
+      renderer.updateScreen();
+      loadingScreens++;
+    } finally {
+      drawingLoadingScreen = false;
+    }
+    return 0;
   }
 
   /** Whether the pipeline moved to another level since {@link #start()} (restart the cgame). */

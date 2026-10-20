@@ -58,7 +58,13 @@ final class RealClientFlowTest {
       assertEquals(0, session.degradations(), host.tail(30));
 
       session.command("timedemo 1; demo four");
+      long immediateBefore = host.immediateFrames;
       assertTrue(until(SessionState.DEMO, 600), host.tail(30));
+      // CG_INIT's loading steps each drew the original information screen and handed it over at
+      // once (trap_UpdateScreen re-enters CG_DRAW_ACTIVE_FRAME, as in the original).
+      long loadingFrames = host.immediateFrames - immediateBefore;
+      assertTrue(loadingFrames >= 5, "loading screens inside CG_INIT: " + loadingFrames);
+      assertTrue(host.immediateQuads > 0, "the loading screens draw something");
       long views = host.framesSeen;
       assertTrue(until(SessionState.MENU, 200_000), host.tail(30));
       assertTrue(host.framesSeen > views + 100, "the demo drew frames");

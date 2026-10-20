@@ -26,6 +26,13 @@ final class TestHost implements SessionHost {
   boolean keepFrames = true;
   long framesSeen;
   long quads;
+
+  /** Frames handed to {@code submitImmediate} (loading screens inside a VM call). */
+  long immediateFrames;
+
+  /** Quads of the immediate frames. */
+  long immediateQuads;
+
   boolean quitRequested;
   Boolean hostUi;
 
@@ -37,11 +44,22 @@ final class TestHost implements SessionHost {
 
   @Override
   public RenderSink renderSink() {
-    return frame -> {
-      framesSeen++;
-      for (CgameFrame.Command command : frame.commands())
-        if (command instanceof CgameFrame.Quad) quads++;
-      if (keepFrames) frames.add(frame);
+    return new RenderSink() {
+      @Override
+      public void submit(CgameFrame frame) {
+        framesSeen++;
+        for (CgameFrame.Command command : frame.commands())
+          if (command instanceof CgameFrame.Quad) quads++;
+        if (keepFrames) frames.add(frame);
+      }
+
+      @Override
+      public void submitImmediate(CgameFrame frame) {
+        immediateFrames++;
+        for (CgameFrame.Command command : frame.commands())
+          if (command instanceof CgameFrame.Quad) immediateQuads++;
+        submit(frame);
+      }
     };
   }
 

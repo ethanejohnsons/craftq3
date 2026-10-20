@@ -129,7 +129,8 @@ public final class ExternalActors {
   /**
    * Admits, re-admits, moves, renames and removes puppets to match {@code targets} (the nearest
    * first; beyond the slot limit the rest are skipped). Call before the players' commands run so
-   * their shots see this tick's bodies.
+   * their shots see this tick's bodies. Every puppet leaves hidden from snapshots, so one admitted
+   * now is never sent to a client, not even in the snapshots of this tick's frame.
    */
   void sync(GameAccess game, SpawnSpot spot, List<Target> targets) {
     if (!game.ready()) return;
@@ -180,6 +181,7 @@ public final class ExternalActors {
       }
       place(game, a, t);
     }
+    hide(game);
   }
 
   private boolean admit(
@@ -266,7 +268,10 @@ public final class ExternalActors {
     return out;
   }
 
-  /** Keeps puppets out of snapshots: Minecraft renders the mob itself. */
+  /**
+   * Keeps puppets out of snapshots: Minecraft renders the mob itself. Runs at the end of {@link
+   * #sync} (new puppets) and after each frame (in case the game's own think touched the flags).
+   */
   void hide(GameAccess game) {
     GameEntities g = game.entities();
     for (Actor a : actors.values())

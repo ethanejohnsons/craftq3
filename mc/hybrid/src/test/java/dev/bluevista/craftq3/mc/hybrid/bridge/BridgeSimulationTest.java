@@ -155,6 +155,55 @@ class BridgeSimulationTest {
     }
   }
 
+  /**
+   * A puppet is hidden from the moment it is admitted: the snapshots of the frame that first runs
+   * with it (built before {@code afterFrame}, as {@code Protocol68Host} does) never contain it,
+   * neither for mobs arriving later nor for a puppet re-admitted after a health resync.
+   */
+  @Test
+  void newPuppetsNeverReachASnapshot() throws Exception {
+    CoordinateTransform t = CoordinateTransform.at(0, 64, 0);
+    try (BridgeSimulation sim = new BridgeSimulation(RealDataRoot.require(), TERRAIN, t)) {
+      assertTrue(sim.start(new Vec3f(0, 0, 30), List.of()), sim::tail);
+      sim.idle(10);
+      List<String> leaks = new java.util.ArrayList<>();
+      java.util.Set<Integer> seen = new java.util.HashSet<>();
+      long[] ids = {1, 2, 3, 4};
+      sim.afterServerFrame =
+          () -> {
+            var snapshot = sim.server.snapshot(sim.player);
+            for (long id : ids) {
+              int client = sim.host.actors().client(id);
+              if (client < 0) continue;
+              seen.add(client);
+              if (snapshot.contains(client))
+                leaks.add("mob " + id + " (client " + client + ") at " + sim.server.levelTime());
+            }
+          };
+      // Three mobs in front of the player, then a fourth.
+      sim.targets = List.of(mob(1, 100, 1f), mob(2, 160, 1f), mob(3, 220, 1f));
+      sim.idle(1);
+      assertEquals(3, sim.host.actors().size());
+      sim.idle(5);
+      sim.targets = List.of(mob(1, 100, 1f), mob(2, 160, 1f), mob(3, 220, 1f), mob(4, 280, 1f));
+      sim.idle(1);
+      assertEquals(4, sim.host.actors().size());
+      // Mob 1 loses most of its health in Minecraft: once the resync period has passed it is
+      // re-admitted in a fresh slot.
+      int before = sim.host.actors().client(1);
+      sim.targets = List.of(mob(1, 100, 0.2f), mob(2, 160, 1f), mob(3, 220, 1f), mob(4, 280, 1f));
+      sim.idle(ExternalActors.RESYNC_MILLIS / BridgeSimulation.TICK + 2);
+      assertTrue(sim.host.actors().client(1) >= 0, "mob 1 re-admitted");
+      assertTrue(seen.size() >= 4, "puppets seen " + seen + " (mob 1 was client " + before + ")");
+      assertTrue(leaks.isEmpty(), () -> "puppets in snapshots: " + leaks);
+    }
+  }
+
+  private static ExternalActors.Target mob(long id, float x, float health) {
+    return new ExternalActors.Target(
+        id, "Mob" + id, new float[] {x - 10, 60, 0}, new float[] {x + 10, 80, 62}, health);
+  }
+
   @Test
   void bridgeLoadoutCarriesIntoARealMatch() throws Exception {
     CoordinateTransform t = CoordinateTransform.at(0, 64, 0);

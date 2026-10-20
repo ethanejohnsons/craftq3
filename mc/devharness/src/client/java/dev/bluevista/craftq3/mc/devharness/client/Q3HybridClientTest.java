@@ -308,7 +308,7 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
     report.append(
         String.format(Locale.ROOT, "bridge server: average tick %.3f ms%n", serverTick / 1e6));
 
-    transfers(context, tag);
+    transfers(context, world, tag);
 
     input.holdShift();
     input.pressKey(GLFW.GLFW_KEY_ESCAPE);
@@ -327,6 +327,16 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
 
   /** Machinegun ammo of the session's latest snapshot, or -1. */
   private static int machinegunAmmo(dev.bluevista.craftq3.engine.session.EngineSession session) {
+    return playerInt(
+        session, dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout.AMMO + 4 * 2);
+  }
+
+  /** Health ({@code stats[STAT_HEALTH]}) of the session's latest snapshot, or -1. */
+  private static int health(dev.bluevista.craftq3.engine.session.EngineSession session) {
+    return playerInt(session, dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout.STATS);
+  }
+
+  private static int playerInt(dev.bluevista.craftq3.engine.session.EngineSession session, int at) {
     if (session == null) return -1;
     return session
         .pipeline()
@@ -334,7 +344,6 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
         .map(
             snap -> {
               byte[] ps = snap.snapshot().player();
-              int at = dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout.AMMO + 4 * 2;
               return (ps[at] & 255)
                   | (ps[at + 1] & 255) << 8
                   | (ps[at + 2] & 255) << 16
@@ -343,12 +352,59 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
         .orElse(-1);
   }
 
+  /** Gives a restoration in progress up to five seconds to reach {@link #CARRIED_HEALTH}. */
+  private static void awaitHealth(
+      ClientGameTestContext context, java.util.function.ToIntFunction<Minecraft> health) {
+    for (int i = 0; i < 5 * SECOND_TICKS; i++) {
+      if (context.computeOnClient(c -> health.applyAsInt(c)) == CARRIED_HEALTH) return;
+      context.waitTick();
+    }
+  }
+
+  /** The carried health of the transfer checks. */
+  private static final int CARRIED_HEALTH = 57;
+
+  /** Sets the bridged player's Quake health to {@link #CARRIED_HEALTH} with the game's rules. */
+  private void woundBridgedPlayer(ClientGameTestContext context, TestSingleplayerContext world) {
+    boolean started =
+        world
+            .getServer()
+            .computeOnServer(
+                server -> {
+                  ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
+                  var session = BridgedPlayer.of(player);
+                  if (session == null || session.host() == null) return false;
+                  var now = session.host().captureLoadout().orElse(null);
+                  if (now == null) return false;
+                  session
+                      .host()
+                      .restoreLoadout(
+                          new dev.bluevista.craftq3.mc.hybrid.bridge.Loadout(
+                              CARRIED_HEALTH,
+                              now.armor(),
+                              now.weapons(),
+                              now.weapon(),
+                              now.holdable(),
+                              now.ammo(),
+                              now.powerupMillis()));
+                  return true;
+                });
+    check(started, "could not set the bridged player's health");
+    waitFor(
+        context,
+        "the bridged player's health is " + CARRIED_HEALTH,
+        c -> health(BridgeScreen.current(c).session()) == CARRIED_HEALTH,
+        20 * SECOND_TICKS);
+  }
+
   /**
    * {@code quake q3dm17} in the bridge console starts a local match carrying the bridge loadout
    * (the machinegun ammo spent on the zombie); {@code minecraft} in the match's console returns to
    * the bridge with it.
    */
-  private void transfers(ClientGameTestContext context, String tag) {
+  private void transfers(ClientGameTestContext context, TestSingleplayerContext world, String tag) {
+    woundBridgedPlayer(context, world);
+    int bridgeHealth = context.computeOnClient(c -> health(BridgeScreen.current(c).session()));
     int bridgeAmmo =
         context.computeOnClient(c -> machinegunAmmo(BridgeScreen.current(c).session()));
     context.runOnClient(c -> BridgeScreen.current(c).session().command("quake q3dm17\n"));
@@ -359,7 +415,8 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
           var screen = dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c);
           return screen != null
               && screen.session() != null
-              && screen.session().state() == SessionState.LOCAL
+              && (screen.session().state() == SessionState.LOCAL
+                  || screen.session().state() == SessionState.HOSTING)
               && screen.presenter().framesDrawn() > 60
               && machinegunAmmo(screen.session()) >= 0;
         },
@@ -381,6 +438,22 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
         bridgeAmmo > 0 && bridgeAmmo < 100,
         "the bridge machinegun ammo was not spent: " + bridgeAmmo);
     check(matchAmmo == bridgeAmmo, "the match did not receive the bridge loadout");
+    awaitHealth(
+        context,
+        c -> health(dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c).session()));
+    int matchHealth =
+        context.computeOnClient(
+            c ->
+                health(
+                    dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c).session()));
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "transfer: quake q3dm17 carried health %d -> %d%n",
+            bridgeHealth,
+            matchHealth));
+    check(bridgeHealth == CARRIED_HEALTH, "the bridge health was not set: " + bridgeHealth);
+    check(matchHealth == CARRIED_HEALTH, "the match did not receive the health: " + matchHealth);
     context.runOnClient(
         c ->
             dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c)
@@ -409,6 +482,12 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
             matchAmmo,
             backAmmo));
     check(backAmmo == matchAmmo, "the bridge did not receive the match loadout");
+    awaitHealth(context, c -> health(BridgeScreen.current(c).session()));
+    int backHealth = context.computeOnClient(c -> health(BridgeScreen.current(c).session()));
+    report.append(
+        String.format(
+            Locale.ROOT, "transfer: minecraft carried health %d -> %d%n", matchHealth, backHealth));
+    check(backHealth == CARRIED_HEALTH, "the bridge did not receive the health: " + backHealth);
   }
 
   private void building(ClientGameTestContext context, TestSingleplayerContext world, String tag) {

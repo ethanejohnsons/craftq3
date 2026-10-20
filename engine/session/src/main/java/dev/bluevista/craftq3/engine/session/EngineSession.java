@@ -1228,7 +1228,26 @@ public final class EngineSession implements AutoCloseable {
           return null;
         }
       }
+
+      @Override
+      public void loadingOverlay() {
+        drawLoadingOverlay();
+      }
     };
+  }
+
+  /**
+   * Over a cgame loading screen drawn inside {@code CG_INIT}: the ui's connect screen as an overlay
+   * and the console, as {@code SCR_DrawScreenField} draws them while loading.
+   */
+  private void drawLoadingOverlay() {
+    UiHost ui = content.ui;
+    if (content.uiRunning() && !ui.isFullscreen()) {
+      ui.refresh(realtime);
+      ui.drawConnectScreen(true);
+    }
+    if ((services().input().catchers() & ClientInput.KEYCATCH_CONSOLE) != 0)
+      content.overlay.draw(0.5f, realtime);
   }
 
   /**

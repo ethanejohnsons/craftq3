@@ -6,8 +6,9 @@ import dev.bluevista.craftq3.engine.vmabi.BotlibImport;
 
 /**
  * A server without botlib: {@code BOTLIB_SETUP} reports that the library is not set up, so the game
- * disables its bot code, and every other botlib import fails (and therefore degrades) as calling an
- * absent library would. Under {@code vm_strictSyscalls 1} such a call faults the module.
+ * disables its bot code, {@code AAS_Initialized} answers false, and every other botlib import fails
+ * (and therefore degrades) as calling an absent library would. Under {@code vm_strictSyscalls 1}
+ * such a call faults the module.
  */
 public final class NoBotlib implements BotSupport {
   @Override
@@ -16,6 +17,9 @@ public final class NoBotlib implements BotSupport {
       if (!entry.policy().requiresHandler()) continue;
       if (entry == BotlibImport.BOTLIB_SETUP)
         bindings.bind(entry, (vm, args) -> BotlibImport.BLERR_LIBRARY_NOT_SETUP);
+      else if (entry == BotlibImport.BOTLIB_AAS_INITIALIZED)
+        // The game asks this outside its bot code (for example when a client spawns).
+        bindings.bind(entry, (vm, args) -> 0);
       else
         bindings.bind(
             entry,

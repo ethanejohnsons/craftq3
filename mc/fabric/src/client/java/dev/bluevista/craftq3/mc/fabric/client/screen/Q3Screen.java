@@ -190,7 +190,8 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
     if (closing) return;
     closing = true;
     release();
-    minecraft.gui.setScreen(parent);
+    // A queued close may run after something else replaced this screen; leave that one alone.
+    if (minecraft.gui.screen() == this) minecraft.gui.setScreen(parent);
   }
 
   /** Releases everything in reverse order of creation. Idempotent; never throws. */
@@ -243,7 +244,7 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       error.addSuppressed(toastFailure);
     }
     // Leave the screen once the current input or render callback has returned.
-    minecraft.execute(this::onClose);
+    minecraft.schedule(this::onClose);
   }
 
   // ------------------------------------------------------------------ frame
@@ -263,7 +264,7 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       s.frame();
       if (s.quitRequested() || host.quitRequested()) {
         host.clearQuit();
-        minecraft.execute(this::onClose);
+        minecraft.schedule(this::onClose);
         return;
       }
       syncWorld(s);

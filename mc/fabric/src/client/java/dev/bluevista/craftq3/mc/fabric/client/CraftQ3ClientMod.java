@@ -84,8 +84,9 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
                           .executes(
                               c -> {
                                 Minecraft client = c.getSource().getClient();
-                                // The chat screen closes after the command returns.
-                                client.execute(() -> openSpike(client));
+                                // Queued: the chat screen closes after the command returns (execute
+                                // would run inline).
+                                client.schedule(() -> openSpike(client));
                                 return 1;
                               }))
                   .then(
@@ -129,7 +130,7 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   /** Opens Quake III once the chat screen that ran the command has closed. */
   private int launch(FabricClientCommandSource source, Q3Launch request) {
     Minecraft client = source.getClient();
-    client.execute(() -> launcher.open(client, null, request));
+    client.schedule(() -> launcher.open(client, null, request));
     return 1;
   }
 

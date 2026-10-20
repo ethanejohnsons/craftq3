@@ -37,6 +37,10 @@ This file covers how `mc:fabric` hooks into Minecraft 26.2 (Fabric API 0.156.0+2
 | `SoundEngineMixin` (client) | `destroy` HEAD, `loadLibrary` RETURN, `emergencyShutdown` HEAD (plain `@Inject`s) | Bracket the OpenAL context: while it is going down the device issues no OpenAL calls and reports new voices as ended; after a reload it re-uploads buffers lazily from the PCM it keeps. |
 | `SoundManagerAccessor`, `SoundEngineAccessor`, `ChannelAccessor` (client) | `SoundManager.soundEngine`; `SoundEngine.loaded`/`executor`/`library`; `Channel.source` | The device takes sources from the engine's `Library` channel pools and runs every OpenAL call on the engine's `SoundEngineExecutor`; it never opens a device or context. `Channel.source` is needed for the start offset (`AL_SAMPLE_OFFSET`) and stream buffer queueing, which `Channel` does not expose. The old `channelAccess` and `listener` accessors are gone: device channels are not registered with `ChannelAccess` (whose tick would release a stream that ran dry), and Q3 voices are played source-relative in listener space, so Minecraft's listener (and `updateSource`) is never touched. |
 
+The pure-Q3 entry points need no mixin: the title screen button uses Fabric's
+`ScreenEvents.AFTER_INIT`, `/q3 menu|map|connect|demo` are client commands, and `Q3Screen` reuses
+the `Q3FullscreenView`/`Q3InputView` hooks above.
+
 ## Old mixins and their replacements
 
 Flags: **L** marks a synthetic lambda target and **O** marks an ordinal or index local. Both must

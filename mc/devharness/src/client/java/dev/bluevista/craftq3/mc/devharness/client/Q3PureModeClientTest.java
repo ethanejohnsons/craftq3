@@ -193,7 +193,8 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     List<String> lines =
         context.computeOnClient(c -> Q3Screen.current(c).session().output().lines());
     String last = lines.isEmpty() ? "" : lines.get(lines.size() - 1);
-    report.append("map cq3_no_such_map: menu again; com_errorMessage '")
+    report
+        .append("map cq3_no_such_map: menu again; com_errorMessage '")
         .append(error)
         .append("', console '")
         .append(last)
@@ -210,6 +211,7 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     input.pressKey(GLFW.GLFW_KEY_GRAVE_ACCENT);
     context.waitTicks(2);
     input.typeChars("map q3dm17");
+    long framesAtLoad = context.computeOnClient(c -> Q3Screen.current(c).sessionFrames());
     input.pressKey(GLFW.GLFW_KEY_ENTER);
     context.waitTicks(2);
     long loadStart = System.nanoTime();
@@ -232,6 +234,18 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
             Locale.ROOT,
             "map q3dm17 to first snapshot: %d ms%n",
             (System.nanoTime() - loadStart) / 1_000_000));
+    long[] loadFrames =
+        context.computeOnClient(
+            c -> {
+              Q3Screen screen = Q3Screen.current(c);
+              return screen.recentWorkNanos((int) (screen.sessionFrames() - framesAtLoad));
+            });
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "longest render-thread frame while loading: %.1f ms over %d frames%n",
+            Q3MapViewScreen.percentileMillis(loadFrames, 100),
+            loadFrames.length));
     // Close the console if the map change left it open.
     if (context.computeOnClient(c -> (catchers(c) & 1) != 0))
       input.pressKey(GLFW.GLFW_KEY_GRAVE_ACCENT);
@@ -313,12 +327,14 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     input.pressKey(GLFW.GLFW_KEY_ESCAPE);
     context.waitTicks(10);
     check(
-        context.computeOnClient(c -> (catchers(c) & 2) != 0), "Escape did not open the ingame menu");
+        context.computeOnClient(c -> (catchers(c) & 2) != 0),
+        "Escape did not open the ingame menu");
     screenshot(context, "craftq3-pure-" + tag + "-ingame-menu");
     input.pressKey(GLFW.GLFW_KEY_ESCAPE);
     context.waitTicks(10);
     check(
-        context.computeOnClient(c -> (catchers(c) & 2) == 0), "Escape did not close the ingame menu");
+        context.computeOnClient(c -> (catchers(c) & 2) == 0),
+        "Escape did not close the ingame menu");
     check(context.computeOnClient(c -> Q3Screen.current(c) != null), "Escape left Quake III");
   }
 
@@ -446,11 +462,14 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
    */
   private void inWorld(ClientGameTestContext context, String tag) {
     try (var world = context.worldBuilder().create()) {
-      world.getClientWorld().waitForChunksRender();
+      world.getConnection().waitForChunksRender();
       TestInput input = context.getInput();
-      input.pressKey(GLFW.GLFW_KEY_T);
-      context.waitTicks(2);
+      context.waitTicks(10);
+      input.pressKey(options -> options.keyChat);
+      context.waitForScreen(net.minecraft.client.gui.screens.ChatScreen.class);
       input.typeChars("/q3 menu");
+      context.waitTicks(2);
+      context.takeScreenshot("craftq3-pure-" + tag + "-chat");
       input.pressKey(GLFW.GLFW_KEY_ENTER);
       context.waitForScreen(Q3Screen.class);
       waitFor(

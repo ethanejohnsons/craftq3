@@ -34,7 +34,7 @@ installation working (section 4).
 | 4 | game, headless | Not started |
 | 5 | client, render-ir, audio | Not started |
 | 6 | session | Not started |
-| 7 | Fabric pure-Q3 mode | Not started |
+| 7 | Fabric pure-Q3 mode | Render backend and pure-Q3 flow done (`Q3PureModeClientTest` on OpenGL and Vulkan). Not done: Phase 0 reference screenshot comparison, dedicated-server boot check |
 | 8 | Hybrid bridge and building | Not started |
 | 9 | Parity sign-off | Not started |
 
@@ -163,6 +163,17 @@ Each phase ends with CI green and its exit criteria met.
   `RDF_HYPERSPACE` clears to the time's grey; `videoMap` stages stream their RoQ on a worker
   (`Q3VideoMaps`); every pipeline variant a map needs is compiled during `loadMap`.
   `Q3EffectsRenderClientTest` checks these on both backends.
+- Done: the pure-Q3 flow. A "CraftQ3" title screen button (Fabric `ScreenEvents`, no mixin) and
+  `/q3 menu|map|connect|demo` open `client/screen/Q3Screen`, which owns one `EngineSession` and its
+  `client/session/MinecraftSessionHost` (`SessionHost`): frames through `Q3FramePresenter` (each new
+  map's `RenderScene` and `SceneTextures` built on a virtual thread, the loading screen held
+  meanwhile), sound through `MinecraftAudioDevice` with the host-audio claim, input through
+  `Q3InputCapture`, home `<gameDir>/craftq3/home/<game>`. Escape is Quake's; Shift+Escape and `quit`
+  return to Minecraft; a resize becomes `vid_restart` once it settles; the screen pauses an
+  integrated world; unexpected failures close it with a toast. Without an installation the button
+  opens `Q3MissingInstallationScreen`. `Q3PureModeClientTest` (`-PclientTests=Q3PureMode` runs only
+  it) covers menus, `map q3dm17`, movement, firing, bots, record/demo, ERR_DROP, the in-game menu,
+  resize, `quit`, `/q3 menu` over a world and resource release.
 - Audio: pooled buffers and an executor owned by the lifecycle.
 - Turn the smoke classes into devharness client tests.
 - Exit: screenshots within tolerance of the Phase 0 references on Vulkan and OpenGL; a dedicated Minecraft server boots with the mod; the frame-time budget is met.

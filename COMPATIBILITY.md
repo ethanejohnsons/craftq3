@@ -70,7 +70,7 @@ Notes on the data itself:
 | Single player | Local matches with bots, original menus, map changes, restarts, pause |
 | Multiplayer | Protocol 68 client and server, server browser (LAN, masters, favourites), rcon, dedicated headless server |
 | Bots | Full botlib: routing, all travel types (ladders, elevators, jump pads, bobbing platforms, rocket/BFG jumps, grapple), chat, goals, weapons, alternative route goals for CTF |
-| Demos | Record and play protocol 66/67/68; play 1.09 (`.dm3`) and 1.25–1.27 (`.dm_48`) demos; timedemo |
+| Demos | Record protocol 68 (`.dm_68`); play protocols 66/67/68 plus 1.09 (`.dm3`) and 1.25–1.27 (`.dm_48`) demos; timedemo |
 | Cinematics | RoQ with audio, menu cinematics, `videoMap` surfaces |
 | Rendering | All shader stage features on the GPU, lightmaps, sky boxes and clouds, fog, dynamic lights, portals and mirrors, MD3 models, beams/rails/lightning, HUD, fonts from `fonts/fontImage_N.dat`; Vulkan and OpenGL through Minecraft's Blaze3D |
 | Audio | Original channel and loop semantics through Minecraft's OpenAL device, background music, cinematic audio |

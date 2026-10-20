@@ -50,6 +50,7 @@ final class Harness {
             .vmFiles(new NoFiles())
             .maps(maps)
             .program(() -> game)
+            .bots(new dev.bluevista.craftq3.engine.game.bot.NoBotlib())
             .clocks(clock, java.time.Clock.fixed(Instant.EPOCH, ZoneOffset.UTC))
             .seed(1)
             .pure(pure)

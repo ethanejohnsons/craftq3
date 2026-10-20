@@ -5,7 +5,7 @@ package dev.bluevista.craftq3.mc.hybrid.bridge;
  * Fabric side to apply with Minecraft's own defences, death and drops.
  *
  * @param target the mob's {@link ExternalActors.Target#id()}
- * @param quakeDamage health the actor lost, in Quake points
+ * @param quakeDamage health the actor lost, in Quake points (a killing blow includes its overkill)
  * @param impulseX the knockback the game gave the actor, Quake units per second (convert with
  *     {@code CoordinateTransform.velocityToMinecraft})
  * @param attacker the client number that hurt it last ({@code PERS_ATTACKER}), or -1

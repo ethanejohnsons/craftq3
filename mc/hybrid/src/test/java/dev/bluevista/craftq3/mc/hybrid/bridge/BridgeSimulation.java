@@ -2,9 +2,11 @@ package dev.bluevista.craftq3.mc.hybrid.bridge;
 
 import dev.bluevista.craftq3.engine.common.math.Vec3f;
 import dev.bluevista.craftq3.engine.common.time.ManualClock;
+import dev.bluevista.craftq3.engine.formats.AssetLookup;
 import dev.bluevista.craftq3.engine.formats.FileViewAssets;
 import dev.bluevista.craftq3.engine.fs.SearchPath;
 import dev.bluevista.craftq3.engine.game.GameServer;
+import dev.bluevista.craftq3.engine.game.QvmGameProgram;
 import dev.bluevista.craftq3.engine.game.ServerClient;
 import dev.bluevista.craftq3.engine.game.map.BspMapSource;
 import dev.bluevista.craftq3.engine.game.world.GameEntities;
@@ -19,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * A headless bridge: the installation's baseq3 qagame on the {@link SyntheticMapSource} over
@@ -50,13 +53,40 @@ final class BridgeSimulation implements AutoCloseable {
   /** With {@code realMaps}, maps come from the game's files with host triggers added. */
   BridgeSimulation(Path root, TerrainCells cells, CoordinateTransform transform, boolean realMaps)
       throws IOException {
+    this(root, cells, transform, realMaps, null);
+  }
+
+  /**
+   * @param qagame a specific {@code vm/qagame.qvm} to run (e.g. the retail pak0 build), or null for
+   *     the one the search path selects
+   */
+  BridgeSimulation(
+      Path root, TerrainCells cells, CoordinateTransform transform, boolean realMaps, byte[] qagame)
+      throws IOException {
     this.transform = transform;
     search = SearchPath.mount(root, SearchPath.BASE_GAME);
     FileViewAssets files = new FileViewAssets(search.view());
+    AssetLookup programFiles =
+        qagame == null
+            ? files
+            : new AssetLookup() {
+              @Override
+              public Optional<byte[]> read(String path) {
+                return path.equalsIgnoreCase("vm/qagame.qvm")
+                    ? Optional.of(qagame.clone())
+                    : files.read(path);
+              }
+
+              @Override
+              public List<String> list(String directory, String extension) {
+                return files.list(directory, extension);
+              }
+            };
     server =
         GameServer.builder()
             .files(files)
             .vmFiles(FsVmFiles.of(search, null, root))
+            .program(() -> QvmGameProgram.load(programFiles, "auto", clock))
             .maps(realMaps ? new HostTriggerMapSource(new BspMapSource(files)) : maps)
             .clocks(clock, java.time.Clock.systemDefaultZone())
             .seed(7)

@@ -45,6 +45,16 @@ final class BotChatTest {
   }
 
   @Test
+  void matchesChatNamesCaseInsensitivelyLikeTheOriginal() throws Exception {
+    // TrueCombat's bot files ask for "[bot]bitch" while its chat file defines "[bot]Bitch".
+    try (var sources = sources("chat \"[bot]Bitch\" { type \"greet\" { \"hi\"; } }");
+        var chat = new BotChat(sources, () -> 0, fixed(0))) {
+      chat.setup();
+      assertTrue(chat.load(chat.allocate(), "test.c", "[bot]bitch"));
+    }
+  }
+
+  @Test
   void nativeZeroRandomSelectionAvoidsRecentMessagesForTwentySeconds() throws Exception {
     double[] time = {0};
     try (var sources = sources("chat \"bot\" { type \"choice\" { \"a\"; \"b\"; \"c\"; } }");

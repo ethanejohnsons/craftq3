@@ -27,6 +27,8 @@ public final class BridgeRules {
     player.setNoGravity(true);
     player.setDeltaMovement(Vec3.ZERO);
     player.resetFallDistance();
+    // A dead Quake player stops burning, so its respawn does not inherit the fire.
+    if (!alive) player.clearFire();
     var abilities = player.getAbilities();
     boolean changed = !abilities.mayfly || !abilities.flying || abilities.invulnerable == alive;
     abilities.mayfly = true;

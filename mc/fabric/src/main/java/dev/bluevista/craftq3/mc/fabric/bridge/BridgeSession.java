@@ -8,6 +8,7 @@ import java.util.UUID;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -35,6 +36,7 @@ public final class BridgeSession {
   private Vec3 velocity = Vec3.ZERO;
   private boolean ended;
   private long incomingHits;
+  private long incomingBurns;
   private long joinedTick;
 
   BridgeSession(
@@ -149,16 +151,38 @@ public final class BridgeSession {
     return incomingHits;
   }
 
+  /** Accepted burning damage (fire, campfires, the on-fire ticks) handed to Quake so far. */
+  public long incomingBurns() {
+    return incomingBurns;
+  }
+
   /**
    * Minecraft damage reached the player ({@code Player.actuallyHurt}): mob and player attacks,
-   * their projectiles and every explosion become Quake damage; Quake owns falling, drowning, lava
-   * and the rest, so environmental damage is ignored. Minecraft health never changes while bridged.
+   * their projectiles, every explosion and burning become Quake damage; Quake owns falling,
+   * drowning, lava and the rest, so other environmental damage is ignored. Minecraft health never
+   * changes while bridged.
+   *
+   * <p>Burning is whatever set the body alight: a burning zombie's hit, a flaming arrow, a blaze's
+   * fireball, Fire Aspect, lightning, or fire, campfires and lava the Quake hull stands in (the
+   * player's own tick applies block effects to the hull: {@code Player.tick} clears {@code
+   * noPhysics} before them). Fire blocks and campfires hurt on contact ({@code in_fire}, {@code
+   * campfire}), and the burn goes on as {@code on_fire} ticks, which Minecraft skips while in lava;
+   * lava's own damage is Quake's lava. Water and rain put it out, a dead Quake player is put out
+   * ({@link BridgeRules#hold}).
    */
   public void minecraftDamage(DamageSource source, float amount) {
     if (ended || host == null || !alive || !(amount > 0)) return;
-    if (!accepts(source)) return;
+    if (burning(source)) incomingBurns++;
+    else if (!accepts(source)) return;
     host.minecraftDamage(amount);
     incomingHits++;
+  }
+
+  /** Fire touching the body and the on-fire ticks; lava's own damage is Quake's lava. */
+  private static boolean burning(DamageSource source) {
+    return source.is(DamageTypes.ON_FIRE)
+        || source.is(DamageTypes.IN_FIRE)
+        || source.is(DamageTypes.CAMPFIRE);
   }
 
   private boolean accepts(DamageSource source) {

@@ -212,6 +212,8 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     context.waitTicks(2);
     input.typeChars("map q3dm17");
     long framesAtLoad = context.computeOnClient(c -> Q3Screen.current(c).sessionFrames());
+    long presentsAtLoad = context.computeOnClient(c -> Q3Screen.current(c).immediatePresents());
+    context.runOnClient(c -> Q3Screen.current(c).resetPresentGaps());
     input.pressKey(GLFW.GLFW_KEY_ENTER);
     context.waitTicks(2);
     long loadStart = System.nanoTime();
@@ -246,6 +248,16 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
             "longest render-thread frame while loading: %.1f ms over %d frames%n",
             Q3MapViewScreen.percentileMillis(loadFrames, 100),
             loadFrames.length));
+    long gap = context.computeOnClient(c -> Q3Screen.current(c).longestPresentGapNanos());
+    long presents =
+        context.computeOnClient(c -> Q3Screen.current(c).immediatePresents()) - presentsAtLoad;
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "longest gap between frames on screen while loading: %.1f ms (%d loading frames"
+                + " presented inside VM calls)%n",
+            gap / 1e6,
+            presents));
     // Close the console if the map change left it open.
     if (context.computeOnClient(c -> (catchers(c) & 1) != 0))
       input.pressKey(GLFW.GLFW_KEY_GRAVE_ACCENT);

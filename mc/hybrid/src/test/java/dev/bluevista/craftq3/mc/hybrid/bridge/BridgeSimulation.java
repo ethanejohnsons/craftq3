@@ -41,6 +41,13 @@ final class BridgeSimulation implements AutoCloseable {
   final List<String> console = Collections.synchronizedList(new ArrayList<>());
   final List<MobDamage> mobDamage = new ArrayList<>();
   List<ExternalActors.Target> targets = List.of();
+
+  /**
+   * Runs right after each frame and before {@link BridgeHost#afterFrame}: where a network host
+   * builds the frame's snapshots.
+   */
+  Runnable afterServerFrame = () -> {};
+
   long now;
   int player = -1;
   private int commandTime;
@@ -138,6 +145,7 @@ final class BridgeSimulation implements AutoCloseable {
     now += TICK;
     clock.advance(TICK);
     server.frame(now);
+    if (server.state() == GameServer.State.RUNNING) afterServerFrame.run();
     mobDamage.addAll(host.afterFrame());
     if (server.state() == GameServer.State.RUNNING
         && server.client(player).state() != ServerClient.State.FREE) {

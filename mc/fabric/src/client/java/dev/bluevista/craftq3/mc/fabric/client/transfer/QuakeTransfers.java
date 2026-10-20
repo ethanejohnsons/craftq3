@@ -10,12 +10,16 @@ import dev.bluevista.craftq3.engine.session.EngineSession;
 import dev.bluevista.craftq3.engine.session.GameLocalServer;
 import dev.bluevista.craftq3.engine.session.LocalServer;
 import dev.bluevista.craftq3.engine.session.SessionState;
+import dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout;
+import dev.bluevista.craftq3.engine.vmabi.layout.UserCmdLayout.UserCmd;
 import dev.bluevista.craftq3.mc.fabric.CraftQ3Mod;
 import dev.bluevista.craftq3.mc.fabric.bridge.BridgeSession;
 import dev.bluevista.craftq3.mc.fabric.bridge.BridgedPlayer;
 import dev.bluevista.craftq3.mc.fabric.client.bridge.BridgeScreen;
 import dev.bluevista.craftq3.mc.fabric.client.screen.Q3Launch;
 import dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen;
+import dev.bluevista.craftq3.mc.hybrid.bridge.BridgeHost;
+import dev.bluevista.craftq3.mc.hybrid.bridge.HostTriggerMapSource;
 import dev.bluevista.craftq3.mc.hybrid.bridge.Loadout;
 import dev.bluevista.craftq3.mc.hybrid.bridge.LoadoutPolicy;
 import java.io.IOException;
@@ -37,11 +41,12 @@ import org.slf4j.Logger;
  * <ul>
  *   <li>{@link #latest()}: the local player's loadout as of its last think while alive, for the
  *       {@code minecraft} console command (match to bridge).
- *   <li>{@link #carry}: a loadout from the bridge ({@code quake <map>}), written into the local
- *       player's inventory at its first think in the next local server (weapons, ammo, armor, the
- *       holdable item and timed powerups). Health is not carried into a match: setting it without
- *       cheats needs the host triggers, and the local server loads maps without them (an
- *       engine:session hook would be needed).
+ *   <li>{@link #carry}: a loadout from the bridge ({@code quake <map>}), restored into the local
+ *       player at its first think in the next local server: weapons, ammo, armor, the holdable
+ *       item, timed powerups and exact health. The local servers load their maps through {@link
+ *       HostTriggerMapSource} ({@link GameLocalServer#factory}), so a {@link BridgeHost} can reach
+ *       the carried health with the game's own mega-health and hurt rules, as the bridge does; on a
+ *       map with no room for the host triggers only the inventory is written.
  * </ul>
  *
  * The listener runs on the local server's thread; the two fields are volatile hand-overs.
@@ -49,14 +54,18 @@ import org.slf4j.Logger;
 public final class QuakeTransfers implements LocalServer.Factory {
   private static final Logger LOGGER = LogUtils.getLogger();
 
+  /** Local servers whose maps carry the host triggers (server-only, checksums unchanged). */
+  private static final LocalServer.Factory SERVERS =
+      GameLocalServer.factory(HostTriggerMapSource::new);
+
   private volatile Loadout pending;
   private volatile Loadout latest;
 
   @Override
   public LocalServer create(LocalServer.Context context) throws IOException {
-    LocalServer server = GameLocalServer.FACTORY.create(context);
+    LocalServer server = SERVERS.create(context);
     latest = null;
-    if (server instanceof GameLocalServer local) local.server().addListener(new Watcher());
+    if (server instanceof GameLocalServer local) local.server().addListener(new Watcher(local));
     return server;
   }
 
@@ -193,27 +202,67 @@ public final class QuakeTransfers implements LocalServer.Factory {
     return latest;
   }
 
+  /**
+   * Watches the local player of one local server: restores a carried loadout through its own {@link
+   * BridgeHost} (whose trigger links it forwards around the player's thinks) and publishes the
+   * player's live loadout.
+   */
   private final class Watcher implements GameServer.Listener {
+    private final BridgeHost host;
+
+    Watcher(GameLocalServer local) {
+      host = new BridgeHost(local.server(), LoadoutPolicy.BASE_GAME, 0);
+    }
+
+    @Override
+    public void levelSpawned(GameServer server) {
+      host.levelSpawned(server);
+    }
+
+    @Override
+    public void levelRestarted(GameServer server) {
+      host.levelRestarted(server);
+    }
+
+    @Override
+    public void levelEnded(GameServer server, String reason) {
+      host.levelEnded(server, reason);
+      latest = null;
+    }
+
+    @Override
+    public void beforeClientThink(GameServer server, int client, UserCmd command) {
+      if (localPlayer(server, client)) {
+        host.setPlayer(client);
+        Loadout carried = pending;
+        if (carried != null && host.triggersReady() && alive(server, client)) {
+          pending = null;
+          host.restoreLoadout(carried);
+          LOGGER.info("CraftQ3: restoring the carried loadout in the local match: {}", carried);
+        }
+      }
+      host.beforeClientThink(server, client, command);
+    }
+
     @Override
     public void afterClientThink(GameServer server, int client) {
-      if (server.state() != GameServer.State.RUNNING) return;
-      ServerClient slot = server.client(client);
-      if (slot.isBot() || slot.isPuppet() || !slot.isLocal()) return;
+      host.afterClientThink(server, client);
+      if (server.state() != GameServer.State.RUNNING || !localPlayer(server, client)) return;
       GameEntities g = server.entities().orElse(null);
       if (g == null || !g.located()) return;
-      int health =
-          g.playerInt(client, dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout.STATS);
-      if (health <= 0) {
+      if (!alive(server, client)) {
         latest = null;
         return;
       }
       Loadout carried = pending;
       if (carried != null) {
+        // No host triggers on this map: the inventory only, health stays the game's.
         pending = null;
         LoadoutPolicy.BASE_GAME.writeInventory(
             g.memory(), g.playerState(client), carried, server.levelTime());
-        LOGGER.info("CraftQ3: carried loadout applied to the local player: {}", carried);
+        LOGGER.info("CraftQ3: carried inventory applied (no host triggers): {}", carried);
       }
+      if (host.restoring()) return;
       try {
         latest = Loadout.capture(g.canonicalPlayerState(client), server.levelTime());
       } catch (IllegalArgumentException odd) {
@@ -221,9 +270,17 @@ public final class QuakeTransfers implements LocalServer.Factory {
       }
     }
 
-    @Override
-    public void levelEnded(GameServer server, String reason) {
-      latest = null;
+    private static boolean localPlayer(GameServer server, int client) {
+      if (server.state() != GameServer.State.RUNNING) return false;
+      ServerClient slot = server.client(client);
+      return !slot.isBot() && !slot.isPuppet() && slot.isLocal();
+    }
+
+    private static boolean alive(GameServer server, int client) {
+      GameEntities g = server.entities().orElse(null);
+      return g != null
+          && g.located()
+          && g.playerInt(client, PlayerStateLayout.STATS + 4 * Loadout.STAT_HEALTH) > 0;
     }
   }
 }

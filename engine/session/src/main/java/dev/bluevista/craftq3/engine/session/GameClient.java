@@ -74,6 +74,9 @@ final class GameClient implements AutoCloseable {
 
     /** The pure checksums to answer with after the cgame loaded, or null for none. */
     String pureChecksums();
+
+    /** Draws the session's overlays over a cgame loading screen ({@link CgameHost.Link}). */
+    default void loadingOverlay() {}
   }
 
   /** {@code playerState_t.delta_angles[PITCH]} in the canonical player state. */
@@ -179,6 +182,11 @@ final class GameClient implements AutoCloseable {
       public void systemInfo(String info) {
         if (connection != null) connection.presentServerId(info);
         if (kind != Kind.DEMO) session.systemInfo(GameClient.this, info);
+      }
+
+      @Override
+      public void loadingOverlay() {
+        session.loadingOverlay();
       }
     };
   }

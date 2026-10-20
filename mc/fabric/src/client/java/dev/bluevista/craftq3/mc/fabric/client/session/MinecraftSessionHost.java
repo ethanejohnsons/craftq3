@@ -8,6 +8,7 @@ import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.common.time.Clock;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import dev.bluevista.craftq3.engine.render.frame.CgameFrame;
 import dev.bluevista.craftq3.engine.session.SessionHost;
 import dev.bluevista.craftq3.engine.session.SessionState;
 import dev.bluevista.craftq3.engine.session.TransportFactory;
@@ -22,7 +23,9 @@ import org.slf4j.Logger;
  * What Minecraft provides to one {@link dev.bluevista.craftq3.engine.session.EngineSession}:
  *
  * <ul>
- *   <li>frames go to a {@link Q3FramePresenter} (and from there to {@code Q3RenderBackend});
+ *   <li>frames go to a {@link Q3FramePresenter} (and from there to {@code Q3RenderBackend}); a
+ *       loading frame drawn inside a VM call is also presented at once while the screen allows it
+ *       ({@link #immediatePresentation});
  *   <li>sound goes to a {@link MinecraftAudioDevice} on Minecraft's sound engine;
  *   <li>the clipboard is read through Minecraft's keyboard handler;
  *   <li>the video size ({@code glconfig}) is Minecraft's framebuffer size as of the last {@link
@@ -76,6 +79,7 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   private final Clock clock;
   private final RenderSink sink;
   private final Hooks hooks;
+  private Runnable immediatePresentation;
   private MinecraftAudioDevice device;
   private int videoWidth, videoHeight;
   private SessionState state = SessionState.MENU;
@@ -117,8 +121,30 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
     this.game = Objects.requireNonNull(game, "game");
     this.homeRoot = homeRoot(gameDirectory);
     this.clock = Objects.requireNonNull(clock, "clock");
-    this.sink = presenter::submit;
+    this.sink =
+        new RenderSink() {
+          @Override
+          public void submit(CgameFrame frame) {
+            presenter.submit(frame);
+          }
+
+          @Override
+          public void submitImmediate(CgameFrame frame) {
+            presenter.submit(frame);
+            Runnable present = immediatePresentation;
+            if (present != null) present.run();
+          }
+        };
     applyVideoSize();
+  }
+
+  /**
+   * What to run when the session hands over a frame drawn inside a long VM call ({@code
+   * trap_UpdateScreen} during a loading screen): the screen sets it around its session frame to
+   * present that frame at once; null keeps such frames until the next Minecraft frame.
+   */
+  public void immediatePresentation(Runnable present) {
+    immediatePresentation = present;
   }
 
   /** {@code <gameDirectory>/craftq3/home}. */

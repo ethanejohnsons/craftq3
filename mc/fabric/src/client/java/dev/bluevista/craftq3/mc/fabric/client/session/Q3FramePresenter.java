@@ -137,6 +137,20 @@ public final class Q3FramePresenter implements AutoCloseable {
   public void render(RenderTarget target, int width, int height) {
     if (closed) return;
     finishLoad();
+    draw(target, width, height);
+  }
+
+  /**
+   * As {@link #render}, for a loading frame presented inside a VM call: a map prepared meanwhile is
+   * not uploaded here (a loading screen does not show it; the next {@link #render} uploads it), so
+   * the upload never lengthens a loading step.
+   */
+  public void renderLoading(RenderTarget target, int width, int height) {
+    if (closed) return;
+    draw(target, width, height);
+  }
+
+  private void draw(RenderTarget target, int width, int height) {
     CgameFrame frame = latest;
     if (pending != null && hasWorldView(frame)) frame = lastWithoutWorld;
     if (frame == null) return;

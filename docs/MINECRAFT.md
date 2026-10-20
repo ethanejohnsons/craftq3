@@ -28,11 +28,14 @@ original game module on the Minecraft server, one Quake frame per server tick.
   loot, experience and advancements work), with Quake's knockback. A mob's full health is 125
   Quake points; Minecraft armor still reduces the damage, so a kill message can come before a
   well-armored mob actually dies. Other players outside the bridge are targets when PvP is on.
-- **Getting hurt**: mob and player attacks, their arrows and fireballs, and explosions become
-  Quake damage (one Minecraft point is five Quake points) through Quake's armor rules; their
-  knockback pushes you through Quake movement. Falling, drowning, lava and the like are Quake's
-  own. Your Minecraft health and hunger do not change while bridged. Killed players respawn (fire)
-  where they entered the bridge.
+- **Getting hurt**: mob and player attacks, their arrows, tridents and fireballs (blaze and
+  ghast fireballs hit your Quake body), and explosions become Quake damage (one Minecraft point is
+  five Quake points) through Quake's armor rules; their knockback, including Punch and Knockback
+  on arrows and tridents, pushes you through Quake movement. Burning is Quake damage too, whatever
+  set you alight: fire, campfires or lava your Quake body touches, a burning zombie's hit, a
+  flaming arrow, a blaze's fireball. Water and rain put you out, and dying in Quake puts you out.
+  Falling, drowning, lava itself and the like are Quake's own. Your Minecraft health and hunger do
+  not change while bridged. Killed players respawn (fire) where they entered the bridge.
 - **Your Minecraft body** stands where your Quake player is, with the Quake hull, so mobs aim at
   it and other players see you move. You are in Adventure mode while bridged; your game mode and
   abilities are restored when you leave, also after a crash or server stop (on your next join).
@@ -51,7 +54,7 @@ module it was saved with.
 ### Moving between a Quake match and the bridge (singleplayer)
 
 - In the bridge, `quake <map>` in the Quake console starts a local match of that map with your
-  weapons, ammo, armor, holdable item and powerups (not your health).
+  health, weapons, ammo, armor, holdable item and powerups.
 - In a local match opened over a singleplayer world (`/q3 map <map>`), `minecraft` in the Quake
   console returns to the bridge at your Minecraft position with the match's loadout.
 
@@ -73,12 +76,17 @@ with Minecraft blocks:
 
 - You, mobs, items and falling blocks collide with the map exactly as Quake would.
 - The crosshair picks map surfaces: right-click a map floor or wall with a block to place it in
-  the cell in front of that surface.
+  the cell in front of that surface. Buckets work the same way: a full bucket empties into the
+  cell in front of the surface you aim at, and an empty one cannot reach water or lava behind the
+  map's walls.
+- Item frames and paintings hang on map walls (frames also on floors and ceilings) where a map
+  surface lies on the block grid.
 - Blocks need support as usual: map floors and walls support torches, rails, carpets and the like
   where a map surface lies on the block grid. Blocks cannot be placed inside the map's walls.
 - Sand and gravel rest on map floors; water and lava stop at map surfaces.
 - Map walls block mobs' paths and sight, shelter from explosions (Minecraft's minimum of one
-  point still applies) and stop arrows and other projectiles.
+  point still applies) and stop arrows and other projectiles. Mobs walk over map floors, also
+  those between block heights, and a mob sent somewhere above a map floor heads for that floor.
 - The map renders with its original textures and lighting inside Minecraft's view; your blocks
   render normally among it.
 
@@ -94,9 +102,8 @@ dimension are told why. Restoring the PK3 enables it again.
 
 - The bridge has no bots (no navigation data for Minecraft terrain).
 - Kills by Minecraft damage show the world's obituary, not the mob's name.
-- Arrow knockback, attributed burning and potion effects do not reach the Quake player.
-- In building regions buckets and item frames cannot be used directly against a map surface;
-  they need a block to aim at.
-- Destination snapping of mob navigation to map floors that are off the block grid is not
-  implemented; mobs still path over map floors.
-- A carried loadout's health is not restored when entering a local match from the bridge.
+- Potion effects do not reach the Quake player.
+- Paintings and item frames need a map surface on the block grid to hang on.
+- A carried loadout's health is restored in a local match only on maps with at most 247 BSP
+  models (room for the host's 9 hidden trigger models); on others only the inventory carries
+  over.

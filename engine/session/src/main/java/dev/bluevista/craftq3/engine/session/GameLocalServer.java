@@ -9,6 +9,8 @@ import dev.bluevista.craftq3.engine.fs.PureManifest;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
 import dev.bluevista.craftq3.engine.game.GameServer;
 import dev.bluevista.craftq3.engine.game.ServerClient;
+import dev.bluevista.craftq3.engine.game.map.BspMapSource;
+import dev.bluevista.craftq3.engine.game.map.MapSource;
 import dev.bluevista.craftq3.engine.game.net.Protocol68Host;
 import dev.bluevista.craftq3.engine.net.transport.PacketTransport;
 import dev.bluevista.craftq3.engine.vmabi.service.FsVmFiles;
@@ -20,9 +22,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 /**
  * The {@link LocalServer} of {@code engine:game}: a {@link GameServer} running the original qagame
@@ -31,10 +35,23 @@ import java.util.Set;
  * PureManifest} over the session's search path, so {@code sv_paks} and {@code sv_referencedPaks}
  * describe what it loaded; {@code exec} reads the home store first; nothing else is written but
  * what the qagame writes.
+ *
+ * <p>A platform may decorate where the server's maps come from ({@link #factory(UnaryOperator)}),
+ * for example to add server-only entities to every map it loads; clients still load the files' own
+ * BSP, so a decorator must keep each map's checksum.
  */
 public final class GameLocalServer implements LocalServer {
   /** Builds {@code engine:game} servers. */
   public static final Factory FACTORY = GameLocalServer::new;
+
+  /**
+   * Builds {@code engine:game} servers whose maps come from {@code maps} applied to the default
+   * source (the BSPs of the server's own files).
+   */
+  public static Factory factory(UnaryOperator<MapSource> maps) {
+    Objects.requireNonNull(maps, "maps");
+    return context -> new GameLocalServer(context, maps);
+  }
 
   private final Context context;
   private final PureManifest manifest;
@@ -62,17 +79,30 @@ public final class GameLocalServer implements LocalServer {
       int cvars) {}
 
   public GameLocalServer(Context context) throws IOException {
+    this(context, UnaryOperator.identity());
+  }
+
+  /**
+   * A server whose maps come from {@code maps} applied to the default source.
+   *
+   * @throws IOException when the search path cannot be read
+   */
+  public GameLocalServer(Context context, UnaryOperator<MapSource> maps) throws IOException {
     this.context = context;
     this.manifest = new PureManifest(context.searchPath());
     var view = manifest.view();
     List<Path> roots = new ArrayList<>();
     if (context.home() != null) roots.add(context.home().root());
     if (context.installRoot() != null) roots.add(context.installRoot());
+    FileViewAssets files = new FileViewAssets(view);
+    MapSource mapSource =
+        Objects.requireNonNull(maps.apply(new BspMapSource(files)), "map source decorator");
     GameServer.Builder builder =
         GameServer.builder()
             .owner(context.owner())
             .output(context.output())
-            .files(new FileViewAssets(view))
+            .files(files)
+            .maps(mapSource)
             .vmFiles(
                 new FsVmFiles(view, context.home(), roots.isEmpty() ? null : new ModList(roots)))
             .clocks(context.clock(), context.wallClock())

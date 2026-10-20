@@ -58,12 +58,12 @@ match the original; a mismatch found against the original is a bug.
 | --- | --- | --- | --- |
 | Server-sent systeminfo cvars | Any cvar may be set | Only SYSTEMINFO-flagged or user-created cvars | A malicious server could otherwise rewrite arbitrary client cvars |
 | `trap_SetCDKey` | Writes `q3key` | Kept in memory only | Never write key material to disk |
-| `trap_UpdateScreen` | Re-enters the cgame draw | Presents the frame drawn so far | Avoids re-entrant VM calls during loading screens |
+| `trap_UpdateScreen` outside `CG_INIT` (ui calls, other cgame calls) | Re-enters the cgame draw | Hands over the frame drawn so far | Avoids re-entrant VM calls; inside `CG_INIT` it re-enters `CG_DRAW_ACTIVE_FRAME` as the original does (the loading pacifier), with the ui's connect screen as overlay |
 | Fonts (`trap_R_RegisterFont`) | Pre-rendered `.dat` or FreeType | Pre-rendered `fonts/fontImage_N.dat` only | Retail content ships pre-rendered fonts |
 | Protocol 43 (1.09 `.dm3`) and 46/48 (1.25–1.27 `.dm_48`) demos | Not playable by 1.32 | Played through the same snapshot path | Extension; the layouts were measured from the demos (see `DemoProtocol`) |
 
 | Downloaded PK3s | Written into the game directory and mounted from then on | Kept in a host-only cache (`<home>/.downloads`), mounted only while connected to a server that references them; reconnecting takes them from the cache | A server's packs never change local or other servers' games |
-| `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice | The host owns presentation |
+| `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice (the Fabric screen shows them, at most one per 15 ms) | The host owns presentation |
 
 ## Session (`engine:session`)
 
@@ -73,7 +73,7 @@ match the original; a mismatch found against the original is a bug.
 | `rcon` while playing a local game with no `rconAddress` | An `rcon` packet to the listen server over loopback, checked against its `rconPassword` | Runs on the local server's console directly, without the network (still requires `rconPassword` to be set) | Same effect without opening a socket |
 | `host_ui [0\|1]` | Not present | Shows or hides the platform's own user interface (also shown when the ui VM cannot run) | CraftQ3 extension: the user is never left on an empty screen |
 | Cgame start after a gamestate | Same frame (`CL_InitCGame` from the gamestate) | One or more client frames later, once the map was parsed and its collision built on a worker (same frame for demos and synchronous runs) | Keeps the render thread responsive while the map loads |
-| Host map hooks | Maps come from the game files only | `ClientHostServices.mapOverride` may supply a map, `worldSources` adds collision geometry to client world traces (as the server's map sources do) | CraftQ3 extension for levels the Minecraft bridge synthesizes |
+| Host map hooks | Maps come from the game files only | `ClientHostServices.mapOverride` may supply a map, `worldSources` adds collision geometry to client world traces (as the server's map sources do); `GameLocalServer.factory` decorates the local server's map source (server-only additions, checksum kept) | CraftQ3 extension for levels the Minecraft bridge synthesizes and for the host triggers of carried loadouts |
 
 ## Game server (`engine:game`)
 
@@ -102,5 +102,7 @@ match the original; a mismatch found against the original is a bug.
 | Knockback on a bridged player | Minecraft halves the body's motion and adds the push | The same, computed from the Quake player's velocity, applied as a Quake impulse | Repeated hits saturate as in Minecraft instead of adding up; Quake movement then applies gravity, friction and collision |
 | A bridged player's movement packets | Minecraft trusts the client and checks moves | Ignored; the server places the body from the Quake player state every tick | The Quake player state is authoritative, on the integrated and a dedicated server alike |
 | Bridge game settings | `fraglimit 20`, `sv_pure 1` | `fraglimit 0`, `timelimit 0`, `g_doWarmup 0`, `sv_pure 0`, `bot_enable 0` | A bridge has no end and no AAS; clients use their own installation's PK3s |
-| `quake <map>` from the bridge | n/a | Weapons, ammo, armor, holdable and powerups carry into the match; health does not | Setting health without cheats needs the host triggers, which the local server's map loading does not add (an `engine:session` hook would) |
+| `quake <map>` from the bridge | n/a | The whole loadout carries into the match; the match's maps carry the host triggers (server-only, `HostTriggerMapSource`), so health is reached with the game's own mega-health and hurt rules | Setting health without cheats; on a map with no room for the trigger models only the inventory carries |
+| Burning on a bridged player | Minecraft burns the body (`on_fire` every second) | The same burn is Quake damage; Minecraft health is untouched and a dead Quake player is put out | Quake owns health; lava's own damage stays Quake's lava |
+| Pushes on a bridged player (Punch arrows, explosions, melee) | Minecraft's air drag slows the pushed body | The velocity change is a Quake impulse, so a pushed player slides on in the air as Quake players do (a Punch II arrow throws one about 25 blocks) | Quake movement owns the body |
 | Explosion damage to a bridged player | Minecraft deals at least one point within range, even behind full cover | Unchanged, also behind BSP walls in building regions; the push is a Quake impulse | Minecraft's own explosion rules |

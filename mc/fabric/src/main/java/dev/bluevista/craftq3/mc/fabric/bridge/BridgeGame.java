@@ -398,7 +398,6 @@ public final class BridgeGame implements AutoCloseable {
     restSpawn();
     gatherTargets();
     actorHost.syncActors(targets);
-    hideNewPuppets();
     now += TICK_MILLIS;
     host.frame(now);
     if (!running()) {
@@ -413,23 +412,6 @@ public final class BridgeGame implements AutoCloseable {
     tickNanosTotal += lastTickNanos;
     tickCount++;
     return lost;
-  }
-
-  /**
-   * Puppets admitted this tick are hidden before the frame's snapshots go out ({@code
-   * ExternalActors} hides them only after the frame, so a new puppet's body and name otherwise
-   * reach the clients for one snapshot; reported for {@code mc:hybrid}).
-   */
-  private void hideNewPuppets() {
-    GameEntities g = server.entities().orElse(null);
-    if (g == null || !g.located()) return;
-    for (ExternalActors.Target t : targets) {
-      int client = actorHost.actors().client(t.id());
-      if (client >= 0)
-        g.setSvFlags(
-            client,
-            g.svFlags(client) | dev.bluevista.craftq3.engine.game.world.Contents.SVF_NOCLIENT);
-    }
   }
 
   /** Finds the slot each session's connection was given, and notices connections that ended. */

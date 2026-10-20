@@ -316,6 +316,11 @@ public final class Q3RenderBackend implements AutoCloseable {
     videoMaps.assets(assets);
     preparedMips.clear();
     int evicted = context.textures().evictOlderThan(generation);
+    // The no-world table's materials hold views of images the eviction may just have released
+    // (a loading screen's levelshot drawn before this map): rebuild it when it is next needed.
+    if (overlayMaterials != null) overlayMaterials.close();
+    overlayMaterials = null;
+    noWorldBuilder = null;
     // Compile every pipeline variant the map's materials (and common entity and 2D states) use
     // now, so the first frames do not stall compiling shaders inside their render passes.
     long compileStart = System.nanoTime();

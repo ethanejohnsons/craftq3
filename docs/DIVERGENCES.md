@@ -63,7 +63,7 @@ match the original; a mismatch found against the original is a bug.
 | Protocol 43 (1.09 `.dm3`) and 46/48 (1.25–1.27 `.dm_48`) demos | Not playable by 1.32 | Played through the same snapshot path | Extension; the layouts were measured from the demos (see `DemoProtocol`) |
 
 | Downloaded PK3s | Written into the game directory and mounted from then on | Kept in a host-only cache (`<home>/.downloads`), mounted only while connected to a server that references them; reconnecting takes them from the cache | A server's packs never change local or other servers' games |
-| `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice (the Fabric screen shows them, at most one per 15 ms) | The host owns presentation |
+| `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice (the Fabric full-screen view and the bridge show them, at most one per 15 ms; the bridge only frames without a world view) | The host owns presentation |
 
 ## Session (`engine:session`)
 
@@ -92,6 +92,7 @@ match the original; a mismatch found against the original is a bug.
 
 | Behaviour | Original | Rewrite | Why |
 | --- | --- | --- | --- |
+| Minecraft damage to several bridged players at once | n/a (Minecraft applies each hit at once) | Each player's damage goes through the same host `trigger_hurt`s in its own think; a trigger one player touched re-arms after `FRAMETIME` (100 ms) for everyone, so a player hit in the same tick as others may take part of the damage one or two windows later | One set of triggers serves the whole game (one `BridgeHost` for all clients), and the game ignores a trigger touched again before it re-arms |
 | Obituary of a player killed by Minecraft damage | n/a | "was in the wrong place" (`MOD_TRIGGER_HURT`, killer `<world>`, the player loses a point as for any world death); the mob is not named | Incoming damage goes through the game's own `trigger_hurt` so armor, pain, death and respawn stay qagame's, and `hurt_touch` always passes the trigger itself as attacker. Every map entity that can name another attacker (`target_laser`'s activator) uses a means of death the cgame reports as a single-client message without the killer, and making the mob's puppet fire a weapon cannot deliver exact amounts. Naming the mob would need a modified qagame, or rewriting the `EV_OBITUARY` event's killer and means of death in game memory, which is display-only (scores and `PERS_ATTACKER` would still say world) and depends on each mod's `meansOfDeath_t` and event numbering |
 
 ## Minecraft adapter (`mc:fabric`)

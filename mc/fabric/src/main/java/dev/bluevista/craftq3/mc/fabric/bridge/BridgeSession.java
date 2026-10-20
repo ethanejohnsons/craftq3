@@ -16,8 +16,9 @@ import net.minecraft.world.phys.Vec3;
 
 /**
  * One Minecraft player playing Quake in a level's {@link BridgeGame}: its synthetic network
- * address, the qagame client slot its Quake session connected to, the {@link BridgeHost} that
- * delivers its incoming Minecraft damage and loadout, and the Minecraft state it returns to.
+ * address, the qagame client slot its Quake session connected to, its handle on the game's {@link
+ * BridgeHost} (which delivers its incoming Minecraft damage, pushes and loadout), and the Minecraft
+ * state it returns to.
  *
  * <p>Server thread only.
  */
@@ -30,7 +31,7 @@ public final class BridgeSession {
   private Optional<Loadout> loadout;
   private ServerPlayer player;
   private int slot = -1;
-  private BridgeHost host;
+  private BridgeHost.Client host;
   private boolean alive = true;
   private boolean grounded = true;
   private Vec3 velocity = Vec3.ZERO;
@@ -94,15 +95,15 @@ public final class BridgeSession {
     return slot;
   }
 
-  /** The host handling this player's damage and loadout, or null before it connected. */
-  public BridgeHost host() {
+  /** The host's handle on this player's slot (damage and loadout), or null before it connected. */
+  public BridgeHost.Client host() {
     return host;
   }
 
-  void bind(int client, BridgeHost bridgeHost) {
+  void bind(int client, BridgeHost.Client handle) {
     slot = client;
-    host = bridgeHost;
-    loadout.ifPresent(bridgeHost::restoreLoadout);
+    host = handle;
+    loadout.ifPresent(handle::restoreLoadout);
     loadout = Optional.empty();
   }
 

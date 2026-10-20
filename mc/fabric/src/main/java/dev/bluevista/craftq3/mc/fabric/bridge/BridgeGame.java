@@ -57,11 +57,12 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li><b>Clients</b>: every bridged player's own Quake session connects through a {@link
  *       Protocol68Host} on a {@link PayloadServerTransport} (protocol-68 datagrams inside Minecraft
- *       custom payloads), the same path for the integrated and a dedicated server. Each connected
- *       slot gets a {@link BridgeHost} for its incoming damage and loadout.
- *   <li><b>Mobs</b>: the living entities nearest the bridged players are mirrored as puppets by a
- *       separate actor host; the {@link MobDamage} the game deals comes back as Minecraft damage
- *       attributed to the shooter ({@code craftq3:quake}), with the Quake knockback as a push.
+ *       custom payloads), the same path for the integrated and a dedicated server. One {@link
+ *       BridgeHost} serves the game: each connected slot's {@linkplain BridgeHost.Client handle}
+ *       takes its incoming damage, pushes and loadout.
+ *   <li><b>Mobs</b>: the living entities nearest the bridged players are mirrored as puppets by the
+ *       same host; the {@link MobDamage} the game deals comes back as Minecraft damage attributed
+ *       to the shooter ({@code craftq3:quake}), with the Quake knockback as a push.
  *   <li><b>Avatars</b>: after each frame every bridged Minecraft player is put at its Quake body
  *       (feet, aim, hull), so mobs, projectiles and other players see it where Quake has it.
  * </ul>
@@ -104,9 +105,9 @@ public final class BridgeGame implements AutoCloseable {
   private final SyntheticMapSource maps = new SyntheticMapSource();
   private final ThreadOwner owner = new ThreadOwner("bridge server");
   private final GameServer server;
-  private final Protocol68Host host;
+  private final Protocol68Host network;
   private final PayloadServerTransport transport;
-  private final BridgeHost actorHost;
+  private final BridgeHost bridgeHost;
   private final Map<UUID, BridgeSession> sessions = new LinkedHashMap<>();
   private final BlockPos anchor;
   private long now = 1000;
@@ -159,10 +160,10 @@ public final class BridgeGame implements AutoCloseable {
     cvars.set("sv_fps", "20");
     cvars.set("sv_hostname", "Minecraft bridge");
     if (!content.game().equalsIgnoreCase("baseq3")) cvars.set("fs_game", content.game());
-    host = new Protocol68Host(server, name -> Optional.empty(), new Random());
-    host.addTransport(transport, false);
-    actorHost = new BridgeHost(server, LoadoutPolicy.BASE_GAME, MAX_ACTORS);
-    server.addListener(actorHost);
+    network = new Protocol68Host(server, name -> Optional.empty(), new Random());
+    network.addTransport(transport, false);
+    bridgeHost = new BridgeHost(server, LoadoutPolicy.BASE_GAME, MAX_ACTORS);
+    server.addListener(bridgeHost);
     server.addListener(
         new GameServer.Listener() {
           @Override
@@ -254,7 +255,7 @@ public final class BridgeGame implements AutoCloseable {
 
   private void moveSpawn(BridgeSession session) {
     Vec3f spot = spawnPoint(session.entry().x, session.entry().y, session.entry().z);
-    actorHost.moveSpawn(Math.round(spot.x()), Math.round(spot.y()), Math.round(spot.z()));
+    bridgeHost.moveSpawn(Math.round(spot.x()), Math.round(spot.y()), Math.round(spot.z()));
   }
 
   private static HomeStore openHome(ServerLevel level, String game) {
@@ -290,8 +291,9 @@ public final class BridgeGame implements AutoCloseable {
     return server;
   }
 
-  public BridgeHost actorHost() {
-    return actorHost;
+  /** The host serving every bridged player and the mirrored mobs. */
+  public BridgeHost bridgeHost() {
+    return bridgeHost;
   }
 
   public Collection<BridgeSession> sessions() {
@@ -348,15 +350,12 @@ public final class BridgeGame implements AutoCloseable {
     if (sessions.remove(session.id()) == null) return Optional.empty();
     Optional<Loadout> loadout = Optional.empty();
     if (session.slot() >= 0 && running()) {
-      BridgeHost h = session.host();
-      if (h != null) {
-        loadout = h.captureLoadout();
-        server.removeListener(h);
-      }
+      BridgeHost.Client h = session.host();
+      if (h != null) loadout = h.captureLoadout();
       server.drop(session.slot(), reason);
     }
     // Flush the drop's disconnect before the address goes away.
-    if (running()) host.frame(now);
+    if (running()) network.frame(now);
     transport.close(session.id());
     session.unbind();
     session.end();
@@ -397,15 +396,14 @@ public final class BridgeGame implements AutoCloseable {
     bindSlots(lost);
     restSpawn();
     gatherTargets();
-    actorHost.syncActors(targets);
+    bridgeHost.syncActors(targets);
     now += TICK_MILLIS;
-    host.frame(now);
+    network.frame(now);
     if (!running()) {
       lost.addAll(sessions.values());
       return lost;
     }
-    List<MobDamage> damage = actorHost.afterFrame();
-    for (BridgeSession s : sessions.values()) if (s.host() != null) s.host().afterFrame();
+    List<MobDamage> damage = bridgeHost.afterFrame();
     for (MobDamage d : damage) applyDamage(d);
     for (BridgeSession s : sessions.values()) updateAvatar(s);
     lastTickNanos = System.nanoTime() - start;
@@ -422,7 +420,6 @@ public final class BridgeGame implements AutoCloseable {
         if (client.state() == ServerClient.State.FREE
             || client.state() == ServerClient.State.ZOMBIE
             || !s.addressText().equals(client.address())) {
-          if (s.host() != null) server.removeListener(s.host());
           s.unbind();
           lost.add(s);
         }
@@ -434,11 +431,7 @@ public final class BridgeGame implements AutoCloseable {
             || client.state() == ServerClient.State.ZOMBIE
             || client.isPuppet()
             || !s.addressText().equals(client.address())) continue;
-        BridgeHost h = new BridgeHost(server, LoadoutPolicy.BASE_GAME, 0);
-        server.addListener(h);
-        h.levelSpawned(server);
-        h.setPlayer(i);
-        s.bind(i, h);
+        s.bind(i, bridgeHost.client(i));
         break;
       }
       // A Quake session that never connects (a client without the mod's client side, a failed
@@ -559,8 +552,8 @@ public final class BridgeGame implements AutoCloseable {
     if (closed) return;
     closed = true;
     try {
-      if (server.state() == GameServer.State.RUNNING) actorHost.close();
-      host.close();
+      if (server.state() == GameServer.State.RUNNING) bridgeHost.close();
+      network.close();
     } catch (RuntimeException e) {
       LOGGER.warn("CraftQ3: bridge host did not close cleanly", e);
     } finally {

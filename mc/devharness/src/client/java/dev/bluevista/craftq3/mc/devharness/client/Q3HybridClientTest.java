@@ -243,6 +243,15 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
             Locale.ROOT,
             "bridge: /q3 bridge to the first in-game frames: %d ms%n",
             (System.nanoTime() - start) / 1_000_000));
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "bridge: session start %.1f ms (its own frame); longest gap between frames on screen"
+                + " while connecting and loading: %.1f ms (%d loading frames presented inside VM"
+                + " calls)%n",
+            context.computeOnClient(c -> BridgeScreen.current(c).startNanos()) / 1e6,
+            context.computeOnClient(c -> BridgeScreen.current(c).longestPresentGapNanos()) / 1e6,
+            context.computeOnClient(c -> BridgeScreen.current(c).immediatePresents())));
     boolean bridged =
         world
             .getServer()

@@ -204,8 +204,8 @@ public final class QuakeTransfers implements LocalServer.Factory {
 
   /**
    * Watches the local player of one local server: restores a carried loadout through its own {@link
-   * BridgeHost} (whose trigger links it forwards around the player's thinks) and publishes the
-   * player's live loadout.
+   * BridgeHost} (whose trigger links and slot drops it forwards) and publishes the player's live
+   * loadout.
    */
   private final class Watcher implements GameServer.Listener {
     private final BridgeHost host;
@@ -231,13 +231,17 @@ public final class QuakeTransfers implements LocalServer.Factory {
     }
 
     @Override
+    public void clientDropped(GameServer server, int client, String reason) {
+      host.clientDropped(server, client, reason);
+    }
+
+    @Override
     public void beforeClientThink(GameServer server, int client, UserCmd command) {
       if (localPlayer(server, client)) {
-        host.setPlayer(client);
         Loadout carried = pending;
         if (carried != null && host.triggersReady() && alive(server, client)) {
           pending = null;
-          host.restoreLoadout(carried);
+          host.client(client).restoreLoadout(carried);
           LOGGER.info("CraftQ3: restoring the carried loadout in the local match: {}", carried);
         }
       }
@@ -262,7 +266,7 @@ public final class QuakeTransfers implements LocalServer.Factory {
             g.memory(), g.playerState(client), carried, server.levelTime());
         LOGGER.info("CraftQ3: carried inventory applied (no host triggers): {}", carried);
       }
-      if (host.restoring()) return;
+      if (host.client(client).restoring()) return;
       try {
         latest = Loadout.capture(g.canonicalPlayerState(client), server.levelTime());
       } catch (IllegalArgumentException odd) {

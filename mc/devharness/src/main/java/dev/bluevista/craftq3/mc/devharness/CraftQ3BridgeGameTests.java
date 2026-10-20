@@ -874,7 +874,7 @@ public final class CraftQ3BridgeGameTests {
               java.util.Locale.ROOT,
               "bridge tick with %d mirrored mobs (%d offered, %d husks alive, player at %s): last"
                   + " %.3f ms, average %.3f ms",
-              game.actorHost().actors().size(),
+              game.bridgeHost().actors().size(),
               game.targetCount(),
               crowd.stream().filter(Zombie::isAlive).count(),
               player.position(),
@@ -884,12 +884,12 @@ public final class CraftQ3BridgeGameTests {
       var snapshot = game.server().snapshot(client.slot());
       int visiblePuppets = 0;
       for (Zombie husk : crowd) {
-        int puppet = game.actorHost().actors().client(husk.getId());
+        int puppet = game.bridgeHost().actors().client(husk.getId());
         if (puppet >= 0 && snapshot.contains(puppet)) visiblePuppets++;
       }
       scenario.note("puppets in the player's snapshot: " + visiblePuppets);
       check(visiblePuppets == 0, visiblePuppets + " mob puppets are sent to the client");
-      check(game.actorHost().actors().size() >= game.targetCount(), "mobs not mirrored");
+      check(game.bridgeHost().actors().size() >= game.targetCount(), "mobs not mirrored");
       return true;
     }
 

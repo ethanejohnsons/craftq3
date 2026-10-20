@@ -11,24 +11,29 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Drives the crossover rules on a running {@link GameServer}, on its simulation thread (the
- * Minecraft server thread in bridge mode). One tick:
+ * Drives the crossover rules on a running {@link GameServer}, for all of its clients, on its
+ * simulation thread (the Minecraft server thread in bridge mode). One tick:
  *
  * <ol>
  *   <li>{@link #syncActors} with the nearby mobs;
- *   <li>the player's commands, however they reach the server ({@code GameServer.userMove} directly,
+ *   <li>the players' commands, however they reach the server ({@code GameServer.userMove} directly,
  *       or {@code Protocol68Host} for a network or loopback connection): through the server's
- *       per-think hook this host delivers queued {@linkplain #damage incoming damage} and loadout
- *       restoration by linking the {@link HostTriggers} onto the player for exactly the player's
- *       own think;
+ *       per-think hooks this host delivers each {@link Client}'s queued {@linkplain Client#damage
+ *       incoming damage} and loadout restoration by linking the {@link HostTriggers} onto that
+ *       client for exactly its own think;
  *   <li>{@code GameServer.frame};
  *   <li>{@link #afterFrame}, which returns the {@link MobDamage} the game dealt.
  * </ol>
  *
- * Works on the {@link SyntheticMapSource} bridge level and on any map loaded through {@link
+ * Clients are addressed by slot ({@link #client}); each handle keeps its own damage queue, pending
+ * loadout and restoration, and goes inert when its slot is dropped. The triggers are shared: one
+ * client's touch disarms them for the rest of the {@code FRAMETIME} window, so damage several
+ * clients take at once arrives over consecutive windows as needed, never at another client.
+ *
+ * <p>Works on the {@link SyntheticMapSource} bridge level and on any map loaded through {@link
  * HostTriggerMapSource}; on other maps damage and health restoration are unavailable and say so.
  * Register it as a {@link GameServer.Listener}: it finds the triggers when a level spawns and links
- * them around the player's thinks.
+ * them around the clients' thinks.
  */
 public final class BridgeHost implements GameServer.Listener {
   private static final Log LOG = Log.get(BridgeHost.class);
@@ -41,32 +46,23 @@ public final class BridgeHost implements GameServer.Listener {
 
   private final GameAccess game;
   private final HostTriggerPool triggers = new HostTriggerPool();
-  private final ExternalDamage damage = new ExternalDamage();
   private final ExternalActors actors;
   private final LoadoutPolicy policy;
-  private int player = -1;
+  private final Client[] clients = new Client[GameAccess.MAX_CLIENTS];
   private int spawnSpot = -1;
   private final float[] spawnOrigin = new float[3];
-
-  private Loadout pendingLoadout;
-  private Restore restore;
-  private int heldDamage;
   private final float[] scratch = new float[3];
 
-  // The player's think in progress.
-  private boolean thinking;
+  // The think in progress.
+  private Client thinking;
   private int linkedMask;
   private boolean linkedHeal;
   private int healthBefore;
-
-  /** Mega-health steps of a restoration are this far apart (the heal trigger's re-arm). */
-  private static final int HEAL_INTERVAL_MILLIS = 200;
 
   /** Health restoration in progress. */
   private static final class Restore {
     final Loadout loadout;
     int heals;
-    int nextHealTime;
     boolean damageQueued;
     int target;
 
@@ -89,22 +85,33 @@ public final class BridgeHost implements GameServer.Listener {
     return actors;
   }
 
-  /** The client whose damage and loadout this host handles. */
-  public void setPlayer(int client) {
-    player = client;
-  }
-
-  public int player() {
-    return player;
+  /**
+   * The handle of client {@code slot} (created on first use), through which its damage, impulses
+   * and loadout go. It stays valid while the slot is connected; once the slot is dropped it is
+   * inert and a later call returns a new handle for whoever takes the slot.
+   */
+  public Client client(int slot) {
+    Objects.checkIndex(slot, clients.length);
+    Client c = clients[slot];
+    if (c == null) clients[slot] = c = new Client(slot);
+    return c;
   }
 
   @Override
   public void levelSpawned(GameServer server) {
-    damage.levelChanged();
-    damage.clear();
     actors.levelChanged();
-    restore = null;
-    thinking = false;
+    newEntities(server);
+  }
+
+  /** {@code map_restart} spawned the level's entities again: find the triggers anew. */
+  @Override
+  public void levelRestarted(GameServer server) {
+    newEntities(server);
+  }
+
+  private void newEntities(GameServer server) {
+    for (Client c : clients) if (c != null) c.levelChanged();
+    thinking = null;
     triggers.reset();
     spawnSpot = -1;
     Optional<GameMap> map = server.currentMap();
@@ -124,182 +131,92 @@ public final class BridgeHost implements GameServer.Listener {
     spawnSpot = -1;
   }
 
+  @Override
+  public void clientDropped(GameServer server, int client, String reason) {
+    if (server != game.server() || client < 0 || client >= clients.length) return;
+    Client c = clients[client];
+    if (c == null) return;
+    c.attached = false;
+    clients[client] = null;
+  }
+
   /** True when the level has its host triggers (damage and exact health restoration work). */
   public boolean triggersReady() {
     return triggers.ready();
   }
 
-  // ---- incoming damage and impulses ------------------------------------------------------------
-
-  /** Queues Minecraft damage for the player, converted at {@link #QUAKE_PER_MINECRAFT_POINT}. */
-  public void minecraftDamage(float minecraftPoints) {
-    if (!(minecraftPoints > 0)) return;
-    damage(Math.max(1, Math.round(minecraftPoints * QUAKE_PER_MINECRAFT_POINT)));
-  }
-
-  /** Queues {@code quakePoints} of damage for the player; it is dropped if the player dies. */
-  public void damage(int quakePoints) {
-    if (quakePoints < 1) return;
-    if (!triggers.ready()) {
-      LOG.warnOnce("no-host-damage", "This level has no host triggers; Minecraft damage is lost");
-      return;
-    }
-    if (restore != null) heldDamage += quakePoints;
-    else damage.add(quakePoints);
-  }
-
-  public int queuedDamage() {
-    return damage.queued() + heldDamage;
-  }
-
-  /**
-   * Adds a velocity change (Quake units per second) to the living player, e.g. Minecraft knockback
-   * converted with {@code CoordinateTransform.velocityToQuake}; Quake movement then applies
-   * gravity, friction and collision.
-   */
-  public void impulse(float x, float y, float z) {
-    if (player < 0 || !game.ready() || !isActive(player) || !game.alive(player)) return;
-    game.playerVelocity(player, scratch);
-    game.setPlayerVelocity(
-        player,
-        scratch[0] + Math.clamp(x, -MAX_IMPULSE, MAX_IMPULSE),
-        scratch[1] + Math.clamp(y, -MAX_IMPULSE, MAX_IMPULSE),
-        scratch[2] + Math.clamp(z, -MAX_IMPULSE, MAX_IMPULSE));
-  }
-
-  // ---- loadouts -------------------------------------------------------------------------------
-
-  /**
-   * Restores {@code loadout} (filtered by the policy) into the player once it has spawned: the
-   * inventory is written into its playerState and health is reached with the game's own mega-health
-   * and hurt rules. Replaces any restoration not yet started.
-   */
-  public void restoreLoadout(Loadout loadout) {
-    pendingLoadout = policy.filter(Objects.requireNonNull(loadout));
-  }
-
-  /** True while a loadout is waiting or being restored. */
-  public boolean restoring() {
-    return pendingLoadout != null || restore != null;
-  }
-
-  /** The living player's loadout, or empty when dead, spectating or not in the game. */
-  public Optional<Loadout> captureLoadout() {
-    if (player < 0 || !game.ready() || !isActive(player) || !game.alive(player))
-      return Optional.empty();
-    try {
-      GameEntities g = game.entities();
-      return Optional.of(
-          policy.filter(
-              Loadout.capture(g.canonicalPlayerState(player), game.server().levelTime())));
-    } catch (IllegalArgumentException invalid) {
-      LOG.warn("Cannot capture the loadout: " + invalid.getMessage());
-      return Optional.empty();
-    }
-  }
-
   // ---- the tick ------------------------------------------------------------------------------
 
-  /** Mirrors {@code targets} (nearest first) as puppets; call before the player's commands. */
+  /** Mirrors {@code targets} (nearest first) as puppets; call before the players' commands. */
   public void syncActors(List<ExternalActors.Target> targets) {
     if (spawnSpot < 0) findSpawnSpot();
     actors.sync(game, spot(), targets);
   }
 
   /**
-   * Before every client think: when the player is about to think, links the host triggers due now
+   * Before every client think: when the client has a handle, links the host triggers due now
    * (queued damage, or one step of health restoration) onto it, so exactly this think's {@code
    * G_TouchTriggers} touches them. Other clients' thinks never see them.
    */
   @Override
   public void beforeClientThink(GameServer server, int client, UserCmd command) {
+    thinking = null;
     linkedMask = 0;
     linkedHeal = false;
-    if (client != player || server != game.server() || !game.ready() || !triggers.ready()) return;
+    if (server != game.server() || client < 0 || client >= clients.length) return;
+    Client c = clients[client];
+    if (c == null || !game.ready() || !triggers.ready()) return;
     if (!game.alive(client)) {
-      dropPending();
+      c.dropPending();
       return;
     }
     int time = server.levelTime();
+    if (c.pendingLoadout != null) c.beginRestore();
+    Restore restore = c.restore;
     boolean heal = false;
-    if (pendingLoadout != null) beginRestore();
-    if (restore != null && restore.heals > 0 && time >= restore.nextHealTime) {
+    if (restore != null && restore.heals > 0 && triggers.healArmed(time)) {
       heal = true;
       restore.heals--;
-      restore.nextHealTime = time + HEAL_INTERVAL_MILLIS;
     }
     if (restore != null && restore.heals == 0 && !heal && !restore.damageQueued) {
-      int current = game.stat(client, Loadout.STAT_HEALTH);
-      int extra = current - restore.target;
-      if (extra > 0) damage.add(extra);
+      int extra = game.stat(client, Loadout.STAT_HEALTH) - restore.target;
+      if (extra > 0) c.damage.add(extra);
       restore.damageQueued = true;
     }
-    int mask = heal ? 0 : damage.take(time);
+    int mask = heal ? 0 : c.damage.take(time, triggers.armed(time));
     healthBefore = game.stat(client, Loadout.STAT_HEALTH);
-    triggers.link(game, client, mask, heal);
+    triggers.link(game, client, mask, heal, time);
     linkedMask = mask;
     linkedHeal = heal;
-    thinking = true;
+    thinking = c;
   }
 
-  /** After every client think: parks the triggers linked for the player's think. */
+  /** After every client think: parks the triggers linked for that think. */
   @Override
   public void afterClientThink(GameServer server, int client) {
-    if (!thinking || client != player) return;
-    thinking = false;
+    Client c = thinking;
+    if (c == null || c.slot != client) return;
+    thinking = null;
     int mask = linkedMask;
     triggers.unlink(game, mask, linkedHeal);
     linkedMask = 0;
     linkedHeal = false;
-    if (!game.ready()) return;
+    if (!game.ready() || !c.attached) return;
     if (mask != 0 && game.stat(client, Loadout.STAT_HEALTH) == healthBefore)
       LOG.warnOnce("host-damage-missed", "A host damage touch did not reach the player");
-    if (restore != null && restore.damageQueued && damage.queued() == 0 && mask == 0)
-      finishRestore();
-  }
-
-  private void beginRestore() {
-    Loadout loadout = pendingLoadout;
-    pendingLoadout = null;
-    restore = new Restore(loadout);
-    int ps = game.playerState(player);
-    policy.prepareForHealth(game.memory(), ps);
-    int current = LoadoutPolicy.health(game.memory(), ps);
-    LoadoutPolicy.HealthPlan plan =
-        LoadoutPolicy.healthPlan(
-            current, LoadoutPolicy.maxHealth(game.memory(), ps), loadout.health());
-    restore.heals = plan.heals();
-    restore.target = plan.reached();
-    restore.nextHealTime = Integer.MIN_VALUE;
-    // Damage already queued waits until the restored health is in place.
-    heldDamage += damage.queued();
-    damage.clear();
-  }
-
-  private void finishRestore() {
-    Restore done = restore;
-    restore = null;
-    int health = game.stat(player, Loadout.STAT_HEALTH);
-    if (health != done.target)
-      LOG.warn("Loadout health restored to " + health + " instead of " + done.target);
-    policy.writeInventory(
-        game.memory(), game.playerState(player), done.loadout, game.server().levelTime());
-    if (heldDamage > 0) damage.add(heldDamage);
-    heldDamage = 0;
-  }
-
-  private void dropPending() {
-    damage.clear();
-    heldDamage = 0;
+    Restore restore = c.restore;
+    if (restore != null && restore.damageQueued && c.damage.queued() == 0 && mask == 0)
+      c.finishRestore();
   }
 
   /**
    * After {@code GameServer.frame}: the damage the game dealt to mirrored mobs. Also drops damage
-   * queued for a dead player.
+   * queued for dead players.
    */
   public List<MobDamage> afterFrame() {
     if (!game.ready()) return List.of();
-    if (player >= 0 && isActive(player) && !game.alive(player)) dropPending();
+    for (Client c : clients)
+      if (c != null && isActive(c.slot) && !game.alive(c.slot)) c.dropPending();
     return actors.collect(game);
   }
 
@@ -311,6 +228,144 @@ public final class BridgeHost implements GameServer.Listener {
   private boolean isActive(int client) {
     return client < game.server().maxClients()
         && game.server().client(client).state() == ServerClient.State.ACTIVE;
+  }
+
+  // ---- one client ------------------------------------------------------------------------------
+
+  /**
+   * One client slot's incoming damage, impulses and loadout. Simulation thread only; inert once its
+   * slot was dropped ({@link #attached}).
+   */
+  public final class Client {
+    private final int slot;
+    private boolean attached = true;
+    private final ExternalDamage damage = new ExternalDamage();
+    private Loadout pendingLoadout;
+    private Restore restore;
+    private int heldDamage;
+
+    private Client(int slot) {
+      this.slot = slot;
+    }
+
+    public int slot() {
+      return slot;
+    }
+
+    /** False once the slot was dropped: the handle then does nothing. */
+    public boolean attached() {
+      return attached;
+    }
+
+    /** Queues Minecraft damage, converted at {@link #QUAKE_PER_MINECRAFT_POINT}. */
+    public void minecraftDamage(float minecraftPoints) {
+      if (!(minecraftPoints > 0)) return;
+      damage(Math.max(1, Math.round(minecraftPoints * QUAKE_PER_MINECRAFT_POINT)));
+    }
+
+    /** Queues {@code quakePoints} of damage; it is dropped if the player dies. */
+    public void damage(int quakePoints) {
+      if (quakePoints < 1 || !attached) return;
+      if (!triggers.ready()) {
+        LOG.warnOnce("no-host-damage", "This level has no host triggers; Minecraft damage is lost");
+        return;
+      }
+      if (restore != null) heldDamage += quakePoints;
+      else damage.add(quakePoints);
+    }
+
+    public int queuedDamage() {
+      return damage.queued() + heldDamage;
+    }
+
+    /**
+     * Adds a velocity change (Quake units per second) to the living player, e.g. Minecraft
+     * knockback converted with {@code CoordinateTransform.velocityToQuake}; Quake movement then
+     * applies gravity, friction and collision.
+     */
+    public void impulse(float x, float y, float z) {
+      if (!live()) return;
+      game.playerVelocity(slot, scratch);
+      game.setPlayerVelocity(
+          slot,
+          scratch[0] + Math.clamp(x, -MAX_IMPULSE, MAX_IMPULSE),
+          scratch[1] + Math.clamp(y, -MAX_IMPULSE, MAX_IMPULSE),
+          scratch[2] + Math.clamp(z, -MAX_IMPULSE, MAX_IMPULSE));
+    }
+
+    /**
+     * Restores {@code loadout} (filtered by the policy) into the player once it has spawned: the
+     * inventory is written into its playerState and health is reached with the game's own
+     * mega-health and hurt rules. Replaces any restoration not yet started.
+     */
+    public void restoreLoadout(Loadout loadout) {
+      Objects.requireNonNull(loadout);
+      if (attached) pendingLoadout = policy.filter(loadout);
+    }
+
+    /** True while a loadout is waiting or being restored. */
+    public boolean restoring() {
+      return pendingLoadout != null || restore != null;
+    }
+
+    /** The living player's loadout, or empty when dead, spectating, dropped or not in the game. */
+    public Optional<Loadout> captureLoadout() {
+      if (!live()) return Optional.empty();
+      try {
+        GameEntities g = game.entities();
+        return Optional.of(
+            policy.filter(
+                Loadout.capture(g.canonicalPlayerState(slot), game.server().levelTime())));
+      } catch (IllegalArgumentException invalid) {
+        LOG.warn("Cannot capture the loadout: " + invalid.getMessage());
+        return Optional.empty();
+      }
+    }
+
+    private boolean live() {
+      return attached && game.ready() && isActive(slot) && game.alive(slot);
+    }
+
+    private void beginRestore() {
+      Loadout loadout = pendingLoadout;
+      pendingLoadout = null;
+      restore = new Restore(loadout);
+      int ps = game.playerState(slot);
+      policy.prepareForHealth(game.memory(), ps);
+      int current = LoadoutPolicy.health(game.memory(), ps);
+      LoadoutPolicy.HealthPlan plan =
+          LoadoutPolicy.healthPlan(
+              current, LoadoutPolicy.maxHealth(game.memory(), ps), loadout.health());
+      restore.heals = plan.heals();
+      restore.target = plan.reached();
+      // Damage already queued waits until the restored health is in place.
+      heldDamage += damage.queued();
+      damage.clear();
+    }
+
+    private void finishRestore() {
+      Restore done = restore;
+      restore = null;
+      int health = game.stat(slot, Loadout.STAT_HEALTH);
+      if (health != done.target)
+        LOG.warn("Loadout health restored to " + health + " instead of " + done.target);
+      policy.writeInventory(
+          game.memory(), game.playerState(slot), done.loadout, game.server().levelTime());
+      if (heldDamage > 0) damage.add(heldDamage);
+      heldDamage = 0;
+    }
+
+    private void dropPending() {
+      damage.clear();
+      heldDamage = 0;
+    }
+
+    /** A new level: queued damage and a restoration in progress are gone; a pending one waits. */
+    private void levelChanged() {
+      damage.levelChanged();
+      dropPending();
+      restore = null;
+    }
   }
 
   // ---- spawn spot ----------------------------------------------------------------------------

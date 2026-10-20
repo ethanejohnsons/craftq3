@@ -81,7 +81,7 @@ class HostTriggerIsolationTest {
 
       int healthA = sim.stat(Loadout.STAT_HEALTH);
       int healthB = health(sim, b);
-      sim.host.damage(60);
+      sim.self().damage(60);
       for (int i = 0; i < 10; i++) {
         thinkB.run();
         sim.idle(1);

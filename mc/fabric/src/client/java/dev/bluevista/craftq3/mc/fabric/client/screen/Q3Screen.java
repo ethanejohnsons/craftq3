@@ -1,11 +1,6 @@
 package dev.bluevista.craftq3.mc.fabric.client.screen;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.systems.SurfaceException;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.logging.LogUtils;
 import dev.bluevista.craftq3.engine.client.host.HostServices;
 import dev.bluevista.craftq3.engine.client.render.ClientAssets;
@@ -16,6 +11,7 @@ import dev.bluevista.craftq3.mc.fabric.client.input.Q3InputScreen;
 import dev.bluevista.craftq3.mc.fabric.client.input.Q3InputSink;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3FullscreenView;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3RenderContext;
+import dev.bluevista.craftq3.mc.fabric.client.session.LoadingFrames;
 import dev.bluevista.craftq3.mc.fabric.client.session.MinecraftSessionHost;
 import dev.bluevista.craftq3.mc.fabric.client.session.Q3FramePresenter;
 import dev.bluevista.craftq3.mc.fabric.client.session.Q3SessionFactory;
@@ -39,7 +35,7 @@ import org.slf4j.Logger;
  *       level is neither extracted nor rendered ({@link Q3FullscreenView}). When the session loads
  *       a map ({@code trap_R_LoadWorldMap}), its scene and textures are prepared off the render
  *       thread and the ui's or cgame's loading screen stays up meanwhile; loading frames the cgame
- *       draws inside its long init call are presented at once (see {@link #presentImmediately}).
+ *       draws inside its long init call are presented at once ({@link LoadingFrames}).
  *   <li><b>Input</b>: every key, character, button and the raw mouse motion go to the session
  *       ({@link Q3InputScreen}); Escape is Quake's own (its in-game menu), Shift+Escape always
  *       returns to Minecraft.
@@ -65,9 +61,6 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
 
   private static final int HISTORY = 4096;
 
-  /** Loading frames inside a VM call reach the screen at most this often. */
-  static final long IMMEDIATE_INTERVAL_NANOS = 15_000_000L;
-
   private final Screen parent;
   private final Q3Launch launch;
   private final Q3SessionFactory factory;
@@ -80,6 +73,7 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
   private final InputForwarder input;
 
   private Q3FramePresenter presenter;
+  private LoadingFrames loadingFrames;
   private MinecraftSessionHost host;
   private EngineSession session;
   private HostServices attachedServices;
@@ -94,10 +88,6 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
   private long sessionFrames;
   private long lastFrameNanos;
   private long startNanos;
-  // Presentation gaps: every Minecraft frame and every loading frame presented inside a VM call.
-  private long lastPresentNanos;
-  private long longestPresentGapNanos;
-  private long immediatePresents;
   // Per frame: the session frame plus render submission on the render thread, and the wall time
   // since the previous frame.
   private final long[] workNanos = new long[HISTORY];
@@ -167,6 +157,7 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       host =
           new MinecraftSessionHost(
               minecraft, audio, presenter, installRoot, game, gameDirectory, clock);
+      loadingFrames = new LoadingFrames(minecraft, host, presenter, true);
     } catch (RuntimeException | LinkageError e) {
       fail("Quake III could not start", e);
     }
@@ -276,15 +267,10 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
     if (s == null) return;
     try {
       long start = System.nanoTime();
-      notePresent(start);
+      loadingFrames.noteFrame();
       trackResize();
       inputCapture().poll();
-      host.immediatePresentation(() -> presentImmediately(target));
-      try {
-        s.frame();
-      } finally {
-        host.immediatePresentation(null);
-      }
+      loadingFrames.run(() -> target, s::frame);
       if (s.quitRequested() || host.quitRequested()) {
         host.clearQuit();
         minecraft.schedule(this::onClose);
@@ -300,37 +286,6 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       sessionFrames++;
     } catch (RuntimeException | Error e) {
       fail("Quake III stopped unexpectedly", e);
-    }
-  }
-
-  /**
-   * Shows a loading frame the session drew inside a long VM call ({@code trap_UpdateScreen} while
-   * the cgame registers its map, models and sounds) before the call returns, the way the original
-   * swapped buffers there: the frame is drawn into Minecraft's main target and presented with
-   * Minecraft's own sequence (blit to the window surface, submit, present), and the next surface
-   * image is acquired for the rest of Minecraft's frame, which presents as usual. Nothing happens
-   * when no surface image is held (minimized, invalid surface) or the previous frame reached the
-   * screen less than {@link #IMMEDIATE_INTERVAL_NANOS} ago, so a burst of updates costs at most one
-   * vsync interval each. If the next image cannot be acquired, Minecraft's frame skips its own
-   * present (its {@code isAcquired} checks) and acquires again on the next frame.
-   */
-  private void presentImmediately(RenderTarget target) {
-    long now = System.nanoTime();
-    if (now - lastPresentNanos < IMMEDIATE_INTERVAL_NANOS) return;
-    GpuSurface surface = minecraft.windowSurface();
-    GpuTextureView color = target.getColorTextureView();
-    if (!surface.isAcquired() || color == null) return;
-    presenter.renderLoading(target, host.windowWidth(), host.windowHeight());
-    CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-    surface.blitFromTexture(encoder, color);
-    encoder.submit();
-    surface.present();
-    immediatePresents++;
-    notePresent(System.nanoTime());
-    try {
-      surface.acquireNextTexture();
-    } catch (SurfaceException e) {
-      LOGGER.warn("CraftQ3: no surface image after a loading frame: {}", e.getMessage());
     }
   }
 
@@ -460,24 +415,17 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
    * frames presented inside a VM call) since the last {@link #resetPresentGaps}.
    */
   public long longestPresentGapNanos() {
-    return longestPresentGapNanos;
+    return loadingFrames == null ? 0 : loadingFrames.longestGapNanos();
   }
 
   /** Loading frames presented inside VM calls so far. */
   public long immediatePresents() {
-    return immediatePresents;
+    return loadingFrames == null ? 0 : loadingFrames.presents();
   }
 
   /** Starts a new {@link #longestPresentGapNanos} measurement. */
   public void resetPresentGaps() {
-    longestPresentGapNanos = 0;
-    lastPresentNanos = 0;
-  }
-
-  private void notePresent(long now) {
-    if (lastPresentNanos != 0)
-      longestPresentGapNanos = Math.max(longestPresentGapNanos, now - lastPresentNanos);
-    lastPresentNanos = now;
+    if (loadingFrames != null) loadingFrames.resetGaps();
   }
 
   /** Whether the screen failed and is closing. */

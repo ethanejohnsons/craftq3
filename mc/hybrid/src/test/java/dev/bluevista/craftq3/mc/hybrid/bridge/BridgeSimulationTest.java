@@ -104,25 +104,25 @@ class BridgeSimulationTest {
       // A Minecraft zombie hits the player for 3 points: 15 Quake points through the triggers.
       sim.idle(20);
       int before = sim.stat(Loadout.STAT_HEALTH);
-      sim.host.minecraftDamage(3);
+      sim.self().minecraftDamage(3);
       sim.idle(2);
       int after = sim.stat(Loadout.STAT_HEALTH);
       assertTrue(before - after >= 15 && before - after <= 16, "health " + before + " -> " + after);
       // 300 points arrive over consecutive 100 ms windows, then the player is dead and the rest
       // dropped.
-      sim.host.damage(300);
+      sim.self().damage(300);
       sim.idle(10);
       assertTrue(sim.stat(Loadout.STAT_HEALTH) <= 0, "killed by Minecraft damage");
-      assertEquals(0, sim.host.queuedDamage());
-      assertTrue(sim.host.captureLoadout().isEmpty(), "no loadout from a dead player");
+      assertEquals(0, sim.self().queuedDamage());
+      assertTrue(sim.self().captureLoadout().isEmpty(), "no loadout from a dead player");
 
       // Respawn (attack) and capture a loadout after picking the railgun up again.
       for (int i = 0; i < 40; i++) sim.tick(0, 0, i % 2 == 0 ? BUTTON_ATTACK : 0, 0, 0, 0, 0);
       assertTrue(sim.stat(Loadout.STAT_HEALTH) > 0, sim::tail);
       for (int i = 0; i < 60; i++) sim.tick(0, 0, 0, 0, 127, 0, 0);
-      sim.host.damage(48);
+      sim.self().damage(48);
       sim.idle(4);
-      Optional<Loadout> captured = sim.host.captureLoadout();
+      Optional<Loadout> captured = sim.self().captureLoadout();
       assertTrue(captured.isPresent());
       byte[] module = new byte[32];
       Loadout saved =
@@ -130,10 +130,10 @@ class BridgeSimulationTest {
 
       // A fresh level: the saved loadout comes back with exact health.
       assertTrue(sim.start(new Vec3f(0, 0, 30), List.of()));
-      sim.host.restoreLoadout(saved);
-      for (int i = 0; i < 40 && sim.host.restoring(); i++) sim.idle(1);
-      assertFalse(sim.host.restoring(), sim::tail);
-      Loadout restored = sim.host.captureLoadout().orElseThrow();
+      sim.self().restoreLoadout(saved);
+      for (int i = 0; i < 40 && sim.self().restoring(); i++) sim.idle(1);
+      assertFalse(sim.self().restoring(), sim::tail);
+      Loadout restored = sim.self().captureLoadout().orElseThrow();
       assertEquals(saved.health(), restored.health(), "health");
       assertEquals(saved.weapons(), restored.weapons());
       assertEquals(saved.weapon(), restored.weapon());
@@ -145,10 +145,10 @@ class BridgeSimulationTest {
       powerups[1] = 20_000;
       int[] ammo = saved.ammo();
       Loadout strong = new Loadout(180, 50, saved.weapons(), saved.weapon(), 0, ammo, powerups);
-      sim.host.restoreLoadout(strong);
-      for (int i = 0; i < 40 && sim.host.restoring(); i++) sim.idle(1);
-      assertFalse(sim.host.restoring());
-      Loadout raised = sim.host.captureLoadout().orElseThrow();
+      sim.self().restoreLoadout(strong);
+      for (int i = 0; i < 40 && sim.self().restoring(); i++) sim.idle(1);
+      assertFalse(sim.self().restoring());
+      Loadout raised = sim.self().captureLoadout().orElseThrow();
       assertEquals(180, raised.health(), sim::tail);
       assertEquals(50, raised.armor());
       assertTrue(raised.powerupMillis(1) > 19_000, "quad left " + raised.powerupMillis(1));
@@ -221,10 +221,10 @@ class BridgeSimulationTest {
       powerups[3] = 12_000; // haste
       int weapons = 1 << 1 | 1 << 2 | 1 << 5 | 1 << 7;
       Loadout carried = new Loadout(57, 120, weapons, 5, 0, ammo, powerups);
-      sim.host.restoreLoadout(carried);
-      for (int i = 0; i < 40 && sim.host.restoring(); i++) sim.idle(1);
-      assertFalse(sim.host.restoring(), sim::tail);
-      Loadout in = sim.host.captureLoadout().orElseThrow();
+      sim.self().restoreLoadout(carried);
+      for (int i = 0; i < 40 && sim.self().restoring(); i++) sim.idle(1);
+      assertFalse(sim.self().restoring(), sim::tail);
+      Loadout in = sim.self().captureLoadout().orElseThrow();
       assertEquals(57, in.health());
       assertEquals(120, in.armor());
       assertEquals(weapons, in.weapons());

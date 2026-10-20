@@ -22,6 +22,7 @@ import dev.bluevista.craftq3.mc.fabric.client.input.Q3InputScreen;
 import dev.bluevista.craftq3.mc.fabric.client.input.Q3InputSink;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3LevelOverlay;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3RenderContext;
+import dev.bluevista.craftq3.mc.fabric.client.session.LoadingFrames;
 import dev.bluevista.craftq3.mc.fabric.client.session.MinecraftSessionHost;
 import dev.bluevista.craftq3.mc.fabric.client.session.Q3FramePresenter;
 import dev.bluevista.craftq3.mc.hybrid.CoordinateTransform;
@@ -54,13 +55,16 @@ import org.slf4j.Logger;
  *       camera at the cgame's view ({@link BridgeCameraPose}, roll and field of view included), and
  *       the cgame frame (entities, effects, the weapon, the HUD) is drawn inside the level pass
  *       with Minecraft's projection and depth ({@link Q3LevelOverlay}), so blocks hide Quake things
- *       behind them. Minecraft's hand, view bobbing and HUD are hidden.
+ *       behind them. Minecraft's hand, view bobbing and HUD are hidden. The loading screens the
+ *       cgame draws inside its long init call are presented at once ({@link LoadingFrames}), as in
+ *       the full-screen {@code Q3Screen}.
  *   <li><b>Body</b>: the local player is held where the Quake player is ({@code
  *       BridgeLocalPlayerMixin} stops its own movement) with the Quake hull ({@link BridgeAvatar});
  *       the server places the authoritative body the same way.
  *   <li><b>Input</b>: all of it goes to Quake ({@link Q3InputScreen}); Shift+Escape, {@code quit}
  *       or leaving the game in Quake's menu ends the bridge.
- *   <li><b>Lifecycle</b>: the screen does not pause the game; closing it closes the session and
+ *   <li><b>Lifecycle</b>: the session starts on the screen's second frame (the first shows an
+ *       "Entering" line). The screen does not pause the game; closing it closes the session and
  *       asks the server to end the bridge (which saves the loadout).
  * </ul>
  */
@@ -84,12 +88,15 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
   private final PayloadClientTransport.Factory transports = new PayloadClientTransport.Factory();
 
   private Q3FramePresenter presenter;
+  private LoadingFrames loadingFrames;
   private MinecraftSessionHost host;
   private EngineSession session;
   private GridCollisionSource terrain;
   private BspMap bridgeMap;
   private BridgeCameraPose pose;
   private boolean opened, started, connected, failed, closing;
+  private int passes;
+  private long startNanos;
   private long sessionFrames;
   private final long[] workNanos = new long[HISTORY];
 
@@ -186,6 +193,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
                       : List.of();
                 }
               });
+      loadingFrames = new LoadingFrames(minecraft, host, presenter, false);
     } catch (RuntimeException | LinkageError e) {
       fail("the bridge could not start", e);
     }
@@ -193,6 +201,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
 
   private void startSession() {
     started = true;
+    long start = System.nanoTime();
     try {
       List<String> commands = new ArrayList<>();
       String name = minecraft.getUser().getName().replaceAll("[\\\\\";]", "");
@@ -205,7 +214,11 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
                   .withNetEnabled(false)
                   .withCommandLine(commands));
       consoleCommands.accept(this, session);
-      LOGGER.info("CraftQ3: bridge session started, home {}", host.gameHome());
+      startNanos = System.nanoTime() - start;
+      LOGGER.info(
+          "CraftQ3: bridge session started in {} ms, home {}",
+          startNanos / 1_000_000,
+          host.gameHome());
     } catch (Exception | LinkageError e) {
       fail("the bridge could not start", e);
     }
@@ -303,14 +316,23 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
   @Override
   public void beforeCamera(Minecraft mc) {
     if (failed || closing || host == null) return;
-    if (!started) startSession();
+    loadingFrames.noteFrame();
+    // The first pass only lets the "Entering" line reach the screen.
+    if (passes++ == 0) return;
+    if (!started) {
+      // The session's first frame (the connection, then the cgame's load) runs on the next pass,
+      // so the start and the load never add up into one long frame. Gaps are measured from here.
+      startSession();
+      loadingFrames.resetGaps();
+      return;
+    }
     EngineSession s = session;
     if (s == null) return;
     try {
       long start = System.nanoTime();
       terrain.invalidate();
       inputCapture().poll();
-      s.frame();
+      loadingFrames.run(() -> mc.gameRenderer.mainRenderTarget(), s::frame);
       if (s.quitRequested() || host.quitRequested()) {
         host.clearQuit();
         mc.schedule(this::onClose);
@@ -441,6 +463,30 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
   /** The payload transport of the current connection, or null. */
   public PayloadClientTransport transport() {
     return transports.current();
+  }
+
+  /** How long {@code EngineSession.start} took (mount, configs, ui boot), in its own frame. */
+  public long startNanos() {
+    return startNanos;
+  }
+
+  /**
+   * The longest wall time between two frames reaching the screen (Minecraft frames and loading
+   * frames presented inside a VM call) since the session started (the connection and the cgame's
+   * load) or the last {@link #resetPresentGaps}.
+   */
+  public long longestPresentGapNanos() {
+    return loadingFrames == null ? 0 : loadingFrames.longestGapNanos();
+  }
+
+  /** Loading frames presented inside VM calls so far. */
+  public long immediatePresents() {
+    return loadingFrames == null ? 0 : loadingFrames.presents();
+  }
+
+  /** Starts a new {@link #longestPresentGapNanos} measurement. */
+  public void resetPresentGaps() {
+    if (loadingFrames != null) loadingFrames.resetGaps();
   }
 
   /** Render-thread time of the last {@code count} session frames, oldest first. */

@@ -26,6 +26,10 @@ final class Harness {
   }
 
   Harness(Supplier<GameMap> map) {
+    this(map, null);
+  }
+
+  Harness(Supplier<GameMap> map, dev.bluevista.craftq3.engine.fs.PureManifest pure) {
     MapSource maps =
         new MapSource() {
           @Override
@@ -48,6 +52,7 @@ final class Harness {
             .program(() -> game)
             .clocks(clock, java.time.Clock.fixed(Instant.EPOCH, ZoneOffset.UTC))
             .seed(1)
+            .pure(pure)
             .output(console::add)
             .build();
     server.cvars().set("vm_strictSyscalls", "1");

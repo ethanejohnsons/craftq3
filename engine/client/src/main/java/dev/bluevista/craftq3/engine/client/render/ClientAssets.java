@@ -244,7 +244,9 @@ public final class ClientAssets {
 
   private void decode(ShaderDefinition definition) {
     if (!decodeImages) return;
-    for (Stage stage : definition.stages())
+    for (Stage stage : definition.stages()) {
+      // A videoMap names a RoQ the renderer streams itself; it is not an image.
+      if (stage.texture().video()) continue;
       for (String frame : stage.texture().frames()) {
         if (frame.startsWith("$") || images.containsKey(frame)) continue;
         LoadedImage image = ImageLoader.load(assets, frame);
@@ -256,6 +258,7 @@ public final class ClientAssets {
         imageBytes += bytes;
         images.put(frame, image.image());
       }
+    }
   }
 
   // ---------------------------------------------------------------- models and skins

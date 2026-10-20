@@ -16,16 +16,19 @@ import java.util.Optional;
  *
  * <ol>
  *   <li>{@link #syncActors} with the nearby mobs;
- *   <li>the player's commands through {@link #userMove} (instead of {@code GameServer.userMove}),
- *       which delivers queued {@linkplain #damage incoming damage} and loadout restoration by
- *       linking the {@link HostTriggers} onto the player for exactly that think;
+ *   <li>the player's commands, however they reach the server ({@code GameServer.userMove} directly,
+ *       or {@code Protocol68Host} for a network or loopback connection): through the server's
+ *       per-think hook this host delivers queued {@linkplain #damage incoming damage} and loadout
+ *       restoration by linking the {@link HostTriggers} onto the player for exactly the player's
+ *       own think;
  *   <li>{@code GameServer.frame};
  *   <li>{@link #afterFrame}, which returns the {@link MobDamage} the game dealt.
  * </ol>
  *
  * Works on the {@link SyntheticMapSource} bridge level and on any map loaded through {@link
  * HostTriggerMapSource}; on other maps damage and health restoration are unavailable and say so.
- * Register it as a {@link GameServer.Listener} so it finds the triggers when a level spawns.
+ * Register it as a {@link GameServer.Listener}: it finds the triggers when a level spawns and links
+ * them around the player's thinks.
  */
 public final class BridgeHost implements GameServer.Listener {
   private static final Log LOG = Log.get(BridgeHost.class);
@@ -49,6 +52,15 @@ public final class BridgeHost implements GameServer.Listener {
   private Restore restore;
   private int heldDamage;
   private final float[] scratch = new float[3];
+
+  // The player's think in progress.
+  private boolean thinking;
+  private int linkedMask;
+  private boolean linkedHeal;
+  private int healthBefore;
+
+  /** Mega-health steps of a restoration are this far apart (the heal trigger's re-arm). */
+  private static final int HEAL_INTERVAL_MILLIS = 200;
 
   /** Health restoration in progress. */
   private static final class Restore {
@@ -92,6 +104,7 @@ public final class BridgeHost implements GameServer.Listener {
     damage.clear();
     actors.levelChanged();
     restore = null;
+    thinking = false;
     triggers.reset();
     spawnSpot = -1;
     Optional<GameMap> map = server.currentMap();
@@ -194,22 +207,17 @@ public final class BridgeHost implements GameServer.Listener {
   }
 
   /**
-   * Runs {@code client}'s commands ({@code GameServer.userMove}), with any due host triggers linked
-   * onto the player for exactly this think.
+   * Before every client think: when the player is about to think, links the host triggers due now
+   * (queued damage, or one step of health restoration) onto it, so exactly this think's {@code
+   * G_TouchTriggers} touches them. Other clients' thinks never see them.
    */
-  public void userMove(int client, List<UserCmd> commands) {
-    GameServer server = game.server();
-    if (client != player || !game.ready() || !triggers.ready() || commands.isEmpty()) {
-      server.userMove(client, commands);
-      return;
-    }
-    ServerClient slot = server.client(client);
-    boolean thinks =
-        slot.state() == ServerClient.State.ACTIVE
-            && commands.getLast().serverTime() > slot.lastUsercmd().serverTime();
-    if (!thinks || !game.alive(client)) {
-      if (slot.state() == ServerClient.State.ACTIVE && !game.alive(client)) dropPending();
-      server.userMove(client, commands);
+  @Override
+  public void beforeClientThink(GameServer server, int client, UserCmd command) {
+    linkedMask = 0;
+    linkedHeal = false;
+    if (client != player || server != game.server() || !game.ready() || !triggers.ready()) return;
+    if (!game.alive(client)) {
+      dropPending();
       return;
     }
     int time = server.levelTime();
@@ -218,7 +226,7 @@ public final class BridgeHost implements GameServer.Listener {
     if (restore != null && restore.heals > 0 && time >= restore.nextHealTime) {
       heal = true;
       restore.heals--;
-      restore.nextHealTime = time + 200;
+      restore.nextHealTime = time + HEAL_INTERVAL_MILLIS;
     }
     if (restore != null && restore.heals == 0 && !heal && !restore.damageQueued) {
       int current = game.stat(client, Loadout.STAT_HEALTH);
@@ -227,9 +235,24 @@ public final class BridgeHost implements GameServer.Listener {
       restore.damageQueued = true;
     }
     int mask = heal ? 0 : damage.take(time);
-    int before = game.stat(client, Loadout.STAT_HEALTH);
-    triggers.around(game, client, mask, heal, () -> server.userMove(client, commands));
-    if (mask != 0 && game.ready() && game.stat(client, Loadout.STAT_HEALTH) == before)
+    healthBefore = game.stat(client, Loadout.STAT_HEALTH);
+    triggers.link(game, client, mask, heal);
+    linkedMask = mask;
+    linkedHeal = heal;
+    thinking = true;
+  }
+
+  /** After every client think: parks the triggers linked for the player's think. */
+  @Override
+  public void afterClientThink(GameServer server, int client) {
+    if (!thinking || client != player) return;
+    thinking = false;
+    int mask = linkedMask;
+    triggers.unlink(game, mask, linkedHeal);
+    linkedMask = 0;
+    linkedHeal = false;
+    if (!game.ready()) return;
+    if (mask != 0 && game.stat(client, Loadout.STAT_HEALTH) == healthBefore)
       LOG.warnOnce("host-damage-missed", "A host damage touch did not reach the player");
     if (restore != null && restore.damageQueued && damage.queued() == 0 && mask == 0)
       finishRestore();

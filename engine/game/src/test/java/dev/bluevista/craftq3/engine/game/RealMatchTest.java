@@ -62,7 +62,8 @@ final class RealMatchTest {
     } catch (IOException | UnsupportedOperationException noLinks) {
       Files.copy(pak0, base.resolve("pak0.pk3"));
     }
-    var result = RealMatch.run(pak0Root, "baseq3", "q3dm17", 0, MATCH_MILLIS, BASE_BOTS);
+    // Chatting bots exercise the retail chat imports (BotSetChatName without a client).
+    var result = RealMatch.run(pak0Root, "baseq3", "q3dm17", 0, MATCH_MILLIS, BASE_BOTS, true);
     assertEquals("RETAIL_1999", result.profile(), result.line());
     report(result);
   }

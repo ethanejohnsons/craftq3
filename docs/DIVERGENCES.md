@@ -73,3 +73,10 @@ match the original; a mismatch found against the original is a bug.
 | Bot move goal outside the AAS (Q3Rally) | Botlib call | Original failed-move result returned directly | Same observable result |
 | QVM program stack | No bottom check | May extend down to the end of the guest's globals | Q3Rally needs more than 64 KiB, as on the original |
 | File handle 0 to FS_Read/Write/FCloseFile | Returns 0 | Returns 0 (not a degradation) | CPMA relies on it |
+| Host-driven puppet clients (`connectPuppet`) | No such client kind | Local non-bot slots whose server commands are discarded, without the server's connect/drop prints; freed at once when dropped and at every new level | Extension for `mc:hybrid`'s Minecraft mobs; qagame sees an ordinary local human (`isBot` 0, no `SVF_BOT`), and puppets do not count as players for `cl_paused` |
+
+## Hybrid (`mc:hybrid`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Obituary of a player killed by Minecraft damage | n/a | "was in the wrong place" (`MOD_TRIGGER_HURT`, killer `<world>`, the player loses a point as for any world death); the mob is not named | Incoming damage goes through the game's own `trigger_hurt` so armor, pain, death and respawn stay qagame's, and `hurt_touch` always passes the trigger itself as attacker. Every map entity that can name another attacker (`target_laser`'s activator) uses a means of death the cgame reports as a single-client message without the killer, and making the mob's puppet fire a weapon cannot deliver exact amounts. Naming the mob would need a modified qagame, or rewriting the `EV_OBITUARY` event's killer and means of death in game memory, which is display-only (scores and `PERS_ATTACKER` would still say world) and depends on each mod's `meansOfDeath_t` and event numbering |

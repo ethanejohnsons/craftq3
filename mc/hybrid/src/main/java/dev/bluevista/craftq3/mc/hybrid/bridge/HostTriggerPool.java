@@ -7,7 +7,8 @@ import java.util.Arrays;
 /**
  * The spawned {@link HostTriggers} of the running level: found by inline model after the level
  * spawns, kept unlinked (so nothing ever touches them), and linked onto one client only for the
- * duration of that client's think.
+ * duration of that client's think ({@code GameServer.Listener#beforeClientThink} to {@code
+ * afterClientThink}).
  */
 final class HostTriggerPool {
   private static final Log LOG = Log.get(HostTriggerPool.class);
@@ -55,27 +56,36 @@ final class HostTriggerPool {
   }
 
   /**
-   * Links the hurt triggers of {@code hurtMask} (and the heal trigger) onto {@code client}, runs
-   * {@code think} (which must run exactly that client's commands), then unlinks them again.
+   * Links the hurt triggers of {@code hurtMask} (and the heal trigger) onto {@code client}, which
+   * must be about to think; {@link #unlink} parks them again right after that think.
    */
-  void around(GameAccess game, int client, int hurtMask, boolean healOnce, Runnable think) {
-    if (!ready || (hurtMask == 0 && !healOnce)) {
-      think.run();
-      return;
-    }
+  void link(GameAccess game, int client, int hurtMask, boolean healOnce) {
+    if (!ready || (hurtMask == 0 && !healOnce)) return;
     game.playerOrigin(client, origin);
     for (int bit = 0; bit < ExternalDamage.TRIGGERS; bit++)
       if ((hurtMask & (1 << bit)) != 0) place(game, hurt[bit]);
     if (healOnce) place(game, heal);
-    try {
-      think.run();
-    } finally {
-      if (game.ready()) {
-        for (int bit = 0; bit < ExternalDamage.TRIGGERS; bit++)
-          if ((hurtMask & (1 << bit)) != 0) game.unlink(hurt[bit]);
-        if (healOnce) game.unlink(heal);
-      }
-    }
+  }
+
+  /** Unlinks what {@link #link} linked. */
+  void unlink(GameAccess game, int hurtMask, boolean healOnce) {
+    if (!ready || !game.ready()) return;
+    for (int bit = 0; bit < ExternalDamage.TRIGGERS; bit++)
+      if ((hurtMask & (1 << bit)) != 0) game.unlink(hurt[bit]);
+    if (healOnce) game.unlink(heal);
+  }
+
+  /** True when any host trigger is linked (they must be only during the player's think). */
+  boolean anyLinked(GameAccess game) {
+    if (!ready || !game.ready()) return false;
+    GameEntities g = game.entities();
+    for (int e : hurt) if (g.linked(e)) return true;
+    return g.linked(heal);
+  }
+
+  /** The entity of hurt trigger {@code bit}, or -1 before the level's triggers are located. */
+  int hurtEntity(int bit) {
+    return ready ? hurt[bit] : -1;
   }
 
   private void place(GameAccess game, int e) {

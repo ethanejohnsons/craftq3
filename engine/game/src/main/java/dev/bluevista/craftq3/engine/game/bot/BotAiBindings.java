@@ -12,6 +12,7 @@ import dev.bluevista.craftq3.engine.botlib.goal.Goal;
 import dev.bluevista.craftq3.engine.botlib.movement.MovementResult;
 import dev.bluevista.craftq3.engine.vm.QvmInstance;
 import dev.bluevista.craftq3.engine.vm.QvmMemory;
+import dev.bluevista.craftq3.engine.vmabi.AbiProfile;
 import dev.bluevista.craftq3.engine.vmabi.Bindings;
 import dev.bluevista.craftq3.engine.vmabi.service.GuestText;
 import java.util.ArrayList;
@@ -104,8 +105,10 @@ final class BotAiBindings {
         chat,
         (vm, a) -> {
           lib().freeChatState(a[0]);
-          if (a[0] >= 0 && a[0] < adapter.chatStateClient.length)
+          if (a[0] >= 0 && a[0] < adapter.chatStateClient.length) {
             adapter.chatStateClient[a[0]] = -1;
+            adapter.chatStateName[a[0]] = null;
+          }
           return 0;
         });
     adapter.bind(
@@ -145,8 +148,28 @@ final class BotAiBindings {
         chat,
         (vm, a) -> lib().replyChat(a[0], text(vm, a[1]), a[2], a[3], variables(vm, a, 4)) ? 1 : 0);
     adapter.bind(b, BOTLIB_AI_CHAT_LENGTH, chat, (vm, a) -> lib().chatLength(a[0]));
-    adapter.bind(
-        b, BOTLIB_AI_ENTER_CHAT, chat, (vm, a) -> run(() -> lib().enterChat(a[0], a[1], a[2])));
+    if (retail())
+      // Retail BotEnterChat(chatstate, client, sendto): the second argument is the speaking bot
+      // (its BotSetChatName has no client) and there is no tell; anything but team chat is said
+      // to all.
+      adapter.bind(
+          b,
+          BOTLIB_AI_ENTER_CHAT,
+          a -> a[1],
+          (vm, a) ->
+              run(
+                  () -> {
+                    if (a[0] >= 0 && a[0] < adapter.chatStateClient.length) {
+                      adapter.chatStateClient[a[0]] = a[1];
+                      String name = adapter.chatStateName[a[0]];
+                      lib().setChatName(a[0], name == null ? "" : name, a[1]);
+                    }
+                    int sendTo = a[2] == BotLib.CHAT_TEAM ? BotLib.CHAT_TEAM : BotLib.CHAT_ALL;
+                    lib().enterChat(a[0], a[1], sendTo);
+                  }));
+    else
+      adapter.bind(
+          b, BOTLIB_AI_ENTER_CHAT, chat, (vm, a) -> run(() -> lib().enterChat(a[0], a[1], a[2])));
     adapter.bind(
         b,
         BOTLIB_AI_GET_CHAT_MESSAGE,
@@ -205,16 +228,38 @@ final class BotAiBindings {
         (vm, a) -> lib().loadChatFile(a[0], text(vm, a[1]), text(vm, a[2])));
     adapter.bind(
         b, BOTLIB_AI_SET_CHAT_GENDER, chat, (vm, a) -> run(() -> lib().setChatGender(a[0], a[1])));
-    adapter.bind(
-        b,
-        BOTLIB_AI_SET_CHAT_NAME,
-        a -> a[2],
-        (vm, a) -> {
-          lib().setChatName(a[0], text(vm, a[1]), a[2]);
-          if (a[0] >= 0 && a[0] < adapter.chatStateClient.length)
-            adapter.chatStateClient[a[0]] = a[2];
-          return 0;
-        });
+    if (retail())
+      // Retail BotSetChatName(chatstate, name): no client argument (the third slot is stack
+      // garbage); the speaker arrives with BotEnterChat.
+      adapter.bind(
+          b,
+          BOTLIB_AI_SET_CHAT_NAME,
+          chat,
+          (vm, a) -> {
+            String name = text(vm, a[1]);
+            int client = -1;
+            if (a[0] >= 0 && a[0] < adapter.chatStateClient.length) {
+              adapter.chatStateName[a[0]] = name;
+              client = adapter.chatStateClient[a[0]];
+            }
+            lib().setChatName(a[0], name, client);
+            return 0;
+          });
+    else
+      adapter.bind(
+          b,
+          BOTLIB_AI_SET_CHAT_NAME,
+          a -> a[2],
+          (vm, a) -> {
+            lib().setChatName(a[0], text(vm, a[1]), a[2]);
+            if (a[0] >= 0 && a[0] < adapter.chatStateClient.length)
+              adapter.chatStateClient[a[0]] = a[2];
+            return 0;
+          });
+  }
+
+  private boolean retail() {
+    return adapter.profile() == AbiProfile.RETAIL_1999;
   }
 
   private void bindGoals(Bindings b) {

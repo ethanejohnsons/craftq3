@@ -254,6 +254,28 @@ final class GameServerTest {
     assertFalse(h.server.client(5).botDegraded());
   }
 
+  @Test
+  void aLocalGamePausesWithOneHumanOnly() {
+    Harness h = new Harness().spawn();
+    h.server.connect("\\name\\P", "localhost", true, -1);
+    h.server.execute("fakebot Sarge");
+    h.server.connectPuppet("\\name\\Zombie");
+    int time = h.server.levelTime();
+    h.server.cvars().set("cl_paused", "1");
+    assertEquals(0, h.run(500), "bots and puppets do not count as players");
+    assertEquals(time, h.server.levelTime());
+    assertEquals(1, h.server.cvars().integer("sv_paused"));
+    // Unpausing does not catch the paused time up.
+    h.server.cvars().set("cl_paused", "0");
+    assertEquals(1, h.run(50));
+    assertEquals(0, h.server.cvars().integer("sv_paused"));
+    // A second human keeps the game running.
+    h.server.connect("\\name\\Q", "10.0.0.2:1", false, -1);
+    h.server.cvars().set("cl_paused", "1");
+    assertEquals(2, h.run(100));
+    assertEquals(0, h.server.cvars().integer("sv_paused"));
+  }
+
   static UserCmd cmd(int time, int forward) {
     return new UserCmd(time, 0, 0, 0, 0, 0, forward, 0, 0);
   }

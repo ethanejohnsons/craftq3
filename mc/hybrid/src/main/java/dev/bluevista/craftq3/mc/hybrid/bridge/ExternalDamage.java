@@ -12,6 +12,10 @@ package dev.bluevista.craftq3.mc.hybrid.bridge;
  * windows. Each touched trigger is a separate {@code G_Damage} call, so armor rounding applies per
  * trigger.
  *
+ * <p>The game attributes this damage to the trigger ({@code hurt_touch} passes itself as attacker),
+ * so a death reads "was in the wrong place" rather than naming the mob; no unmodified qagame path
+ * names an arbitrary attacker with exact damage (see {@code docs/DIVERGENCES.md}).
+ *
  * <p>Owned by the simulation thread.
  */
 public final class ExternalDamage {

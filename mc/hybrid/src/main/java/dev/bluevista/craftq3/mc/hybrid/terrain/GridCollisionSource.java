@@ -14,27 +14,17 @@ import java.util.Objects;
  * Solids report {@code CONTENTS_SOLID}; water, lava and slime volumes report their contents up to
  * the fluid height; climbable cells carry {@code SURF_LADDER}.
  *
- * <p>Candidate cells: a small swept volume is enumerated exhaustively. A long trace is covered by
- * the cells along its segment: {@link TraceClipper} exposes only the swept bounds, whose four
- * diagonals include the real segment, so each diagonal is walked as a thick segment padded by the
- * possible box size (bounded by {@link #BOX_BOUND}) and Minecraft's shape rise. Walking all four
- * costs up to four times the exact walk; an engine hook exposing the trace's start and end would
- * remove that factor.
+ * <p>Candidate cells: exactly the cells the swept box touches (padded by the clip epsilon and,
+ * below, by Minecraft's shape rise), from the trace's start, end and box that {@link TraceClipper}
+ * exposes. Cells are visited layer by layer (Minecraft y, then z, then x): for each layer the part
+ * of the sweep that overlaps it is a parameter interval, narrowed again per row, so no cell outside
+ * the swept box is described, whatever the trace's length or box size.
  *
  * <p>Thread-safe and allocation-free after each thread's first trace: per-thread scratch, and an
  * optional per-thread cell cache invalidated by {@link #invalidate()} (call it whenever blocks may
  * have changed, e.g. once per Minecraft tick).
  */
 public final class GridCollisionSource implements CollisionSource {
-  /** Swept volumes with at most this many candidate cells are enumerated exhaustively. */
-  public static final int EXHAUSTIVE_CELLS = 512;
-
-  /**
-   * The largest trace box (Quake units per axis) assumed for long box sweeps. Every baseq3 box is
-   * at most 64 units; longer sweeps of larger boxes may miss terrain beside the segment.
-   */
-  public static final float BOX_BOUND = 256;
-
   /** Longest walked span in blocks; longer traces are clipped to nothing (with a warning). */
   public static final int MAX_SPAN_BLOCKS = 1 << 16;
 
@@ -100,129 +90,80 @@ public final class GridCollisionSource implements CollisionSource {
   @Override
   public void clip(TraceClipper clipper) {
     Work w = works.get();
-    float qMinX = clipper.sweptMin(0) - EPSILON;
-    float qMaxX = clipper.sweptMax(0) + EPSILON;
-    float qMinY = clipper.sweptMin(1) - EPSILON;
-    float qMaxY = clipper.sweptMax(1) + EPSILON;
-    float qMinZ = clipper.sweptMin(2) - EPSILON;
-    float qMaxZ = clipper.sweptMax(2) + EPSILON;
-    // Local block coordinates: L0 = MC x, L1 = MC y (Quake z), L2 = MC z (Quake -y).
-    double l0a = qMinX * inverseScale;
-    double l0b = qMaxX * inverseScale;
-    double l1a = qMinZ * inverseScale - rise;
-    double l1b = qMaxZ * inverseScale;
-    double l2a = -qMaxY * inverseScale;
-    double l2b = -qMinY * inverseScale;
-    if (l0b - l0a > MAX_SPAN_BLOCKS || l1b - l1a > MAX_SPAN_BLOCKS || l2b - l2a > MAX_SPAN_BLOCKS) {
-      LOG.warnOnce("terrain-span", "A trace spans more than " + MAX_SPAN_BLOCKS + " blocks");
-      return;
-    }
-    int x0 = floor(l0a);
-    int x1 = floor(l0b);
-    int y0 = Math.max(floor(l1a), minY - originY);
-    int y1 = Math.min(floor(l1b), maxY - 1 - originY);
-    int z0 = floor(l2a);
-    int z1 = floor(l2b);
-    if (y0 > y1) return;
-    long count = (long) (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
-    if (count <= EXHAUSTIVE_CELLS) {
-      for (int y = y0; y <= y1; y++)
-        for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) clipCell(clipper, w, x, y, z);
-      return;
-    }
-    walkDiagonals(clipper, w);
-  }
-
-  private void walkDiagonals(TraceClipper clipper, Work w) {
-    // The un-padded swept bounds in local coordinates.
-    double[] lo = w.lo;
-    double[] hi = w.hi;
-    lo[0] = clipper.sweptMin(0) * inverseScale;
-    hi[0] = clipper.sweptMax(0) * inverseScale;
-    lo[1] = clipper.sweptMin(2) * inverseScale;
-    hi[1] = clipper.sweptMax(2) * inverseScale;
-    lo[2] = -clipper.sweptMax(1) * inverseScale;
-    hi[2] = -clipper.sweptMin(1) * inverseScale;
+    // Local block coordinates: L0 = MC x, L1 = MC y (Quake z), L2 = MC z (Quake -y). The box's
+    // centre moves from a to b; a cell c on axis k is touched while the centre's coordinate is in
+    // [c - below[k], c + above[k]] (the box, the clip epsilon and, on L1, the shapes' rise).
     double epsilon = EPSILON * inverseScale;
-    double bound = BOX_BOUND * inverseScale;
-    boolean point = clipper.isPoint();
-    for (int axis = 0; axis < 3; axis++) {
-      double box = point ? 0 : Math.min(hi[axis] - lo[axis], bound);
-      w.padLow[axis] = box + epsilon;
-      w.padHigh[axis] = box + epsilon;
+    double[] a = w.a;
+    double[] d = w.d;
+    double[] below = w.below;
+    double[] above = w.above;
+    for (int k = 0; k < 3; k++) {
+      int q = QUAKE_AXIS[k];
+      double sign = k == 2 ? -1 : 1;
+      a[k] = sign * clipper.start(q) * inverseScale;
+      d[k] = sign * clipper.end(q) * inverseScale - a[k];
+      double lo = (k == 2 ? -clipper.maxs(q) : clipper.mins(q)) * inverseScale;
+      double hi = (k == 2 ? -clipper.mins(q) : clipper.maxs(q)) * inverseScale;
+      below[k] = hi + epsilon;
+      above[k] = 1 + (k == 1 ? rise : 0) - lo + epsilon;
+      if (Math.abs(d[k]) + below[k] + above[k] > MAX_SPAN_BLOCKS) {
+        LOG.warnOnce("terrain-span", "A trace spans more than " + MAX_SPAN_BLOCKS + " blocks");
+        return;
+      }
     }
-    w.padLow[1] += rise;
-    for (int pattern = 0; pattern < 4; pattern++) {
-      boolean flipY = (pattern & 1) != 0;
-      boolean flipZ = (pattern & 2) != 0;
-      if (flipY && hi[1] == lo[1]) continue;
-      if (flipZ && hi[2] == lo[2]) continue;
-      w.a[0] = lo[0];
-      w.b[0] = hi[0];
-      w.a[1] = flipY ? hi[1] : lo[1];
-      w.b[1] = flipY ? lo[1] : hi[1];
-      w.a[2] = flipZ ? hi[2] : lo[2];
-      w.b[2] = flipZ ? lo[2] : hi[2];
-      walkThick(clipper, w);
+    int yFirst = Math.max(first(w, 1, 0, 1), minY - originY);
+    int yLast = Math.min(last(w, 1, 0, 1), maxY - 1 - originY);
+    for (int y = yFirst; y <= yLast; y++) {
+      if (!overlap(w, 1, y, 0, 1)) continue;
+      double ty0 = w.t0;
+      double ty1 = w.t1;
+      int zLast = last(w, 2, ty0, ty1);
+      for (int z = first(w, 2, ty0, ty1); z <= zLast; z++) {
+        if (!overlap(w, 2, z, ty0, ty1)) continue;
+        double tz0 = w.t0;
+        double tz1 = w.t1;
+        int xLast = last(w, 0, tz0, tz1);
+        for (int x = first(w, 0, tz0, tz1); x <= xLast; x++) clipCell(clipper, w, x, y, z);
+      }
     }
   }
 
-  /** Visits every cell within the padding of the segment {@code w.a .. w.b} (local coordinates). */
-  private void walkThick(TraceClipper clipper, Work w) {
-    double[] a = w.a;
-    double[] b = w.b;
-    int slab = 0;
-    double longest = -1;
-    for (int axis = 0; axis < 3; axis++) {
-      double span = Math.abs(b[axis] - a[axis]);
-      if (span > longest) {
-        longest = span;
-        slab = axis;
+  /** The Quake axis of each local axis. */
+  private static final int[] QUAKE_AXIS = {0, 2, 1};
+
+  /** The lowest cell on local {@code axis} that the sweep touches while {@code t0 <= t <= t1}. */
+  private static int first(Work w, int axis, double t0, double t1) {
+    double p = w.a[axis] + w.d[axis] * (w.d[axis] >= 0 ? t0 : t1);
+    return (int) Math.ceil(p - w.above[axis]);
+  }
+
+  /** The highest cell on local {@code axis} that the sweep touches while {@code t0 <= t <= t1}. */
+  private static int last(Work w, int axis, double t0, double t1) {
+    double p = w.a[axis] + w.d[axis] * (w.d[axis] >= 0 ? t1 : t0);
+    return floor(p + w.below[axis]);
+  }
+
+  /**
+   * Narrows {@code t0 .. t1} to the part of the sweep touching cell {@code c} on local {@code
+   * axis}, into {@code w.t0 .. w.t1}; false when that part is empty.
+   */
+  private static boolean overlap(Work w, int axis, int c, double t0, double t1) {
+    double d = w.d[axis];
+    if (d != 0) {
+      double enter = (c - w.below[axis] - w.a[axis]) / d;
+      double leave = (c + w.above[axis] - w.a[axis]) / d;
+      if (d < 0) {
+        double swap = enter;
+        enter = leave;
+        leave = swap;
       }
+      t0 = Math.max(t0, enter);
+      t1 = Math.min(t1, leave);
     }
-    int u = slab == 0 ? 1 : 0;
-    int v = slab == 2 ? 1 : 2;
-    double d = b[slab] - a[slab];
-    int first = floor(Math.min(a[slab], b[slab]) - w.padLow[slab]);
-    int last = floor(Math.max(a[slab], b[slab]) + w.padHigh[slab]);
-    int[] cell = w.cell;
-    for (int i = first; i <= last; i++) {
-      double t0;
-      double t1;
-      if (d == 0) {
-        t0 = 0;
-        t1 = 1;
-      } else {
-        t0 = (i - w.padHigh[slab] - a[slab]) / d;
-        t1 = (i + 1 + w.padLow[slab] - a[slab]) / d;
-        if (t0 > t1) {
-          double swap = t0;
-          t0 = t1;
-          t1 = swap;
-        }
-        t0 = Math.max(t0, 0);
-        t1 = Math.min(t1, 1);
-        if (t0 > t1) continue;
-      }
-      double u0 = a[u] + (b[u] - a[u]) * t0;
-      double u1 = a[u] + (b[u] - a[u]) * t1;
-      double v0 = a[v] + (b[v] - a[v]) * t0;
-      double v1 = a[v] + (b[v] - a[v]) * t1;
-      int uFirst = floor(Math.min(u0, u1) - w.padLow[u]);
-      int uLast = floor(Math.max(u0, u1) + w.padHigh[u]);
-      int vFirst = floor(Math.min(v0, v1) - w.padLow[v]);
-      int vLast = floor(Math.max(v0, v1) + w.padHigh[v]);
-      cell[slab] = i;
-      for (int j = uFirst; j <= uLast; j++) {
-        cell[u] = j;
-        for (int k = vFirst; k <= vLast; k++) {
-          cell[v] = k;
-          int y = cell[1];
-          if (y + originY < minY || y + originY >= maxY) continue;
-          clipCell(clipper, w, cell[0], y, cell[2]);
-        }
-      }
-    }
+    w.t0 = t0;
+    w.t1 = t1;
+    return t0 <= t1;
   }
 
   /** Clips cell (local {@code x, y, z}) into the trace. */
@@ -339,13 +280,17 @@ public final class GridCollisionSource implements CollisionSource {
 
   /** Per-thread scratch and cell cache. */
   private static final class Work {
-    final double[] lo = new double[3];
-    final double[] hi = new double[3];
+    /** The sweep in local coordinates: start, displacement and the touch margins per axis. */
     final double[] a = new double[3];
-    final double[] b = new double[3];
-    final double[] padLow = new double[3];
-    final double[] padHigh = new double[3];
-    final int[] cell = new int[3];
+
+    final double[] d = new double[3];
+    final double[] below = new double[3];
+    final double[] above = new double[3];
+
+    /** The parameter interval {@link #overlap} narrowed to. */
+    double t0;
+
+    double t1;
     final CellShape scratch;
     final long[] keys;
     final int[] generations;

@@ -19,6 +19,34 @@ public final class SnapshotDeltaCodec {
 
   private SnapshotDeltaCodec() {}
 
+  /**
+   * The protocol-specific parts of a snapshot body: the player-state delta and one entity body. The
+   * header, history selection and the entity merge are shared by every protocol.
+   */
+  interface StateReader {
+    /** Applies a player-state delta to {@code state} in place. */
+    void player(MessageReader reader, byte[] state);
+
+    /**
+     * Applies one entity body (after its number) to {@code state} in place; false when the entity
+     * is removed.
+     */
+    boolean entity(MessageReader reader, byte[] state, int number);
+  }
+
+  private static final StateReader PROTOCOL_68 =
+      new StateReader() {
+        @Override
+        public void player(MessageReader reader, byte[] state) {
+          PlayerDeltaCodec.readInPlace(reader, state, StateFields.PLAYER_TABLE);
+        }
+
+        @Override
+        public boolean entity(MessageReader reader, byte[] state, int number) {
+          return EntityDeltaCodec.readBodyInPlace(reader, state, number, StateFields.ENTITY_TABLE);
+        }
+      };
+
   /** The message sequence is supplied by netchan or demo framing, not stored in the body. */
   public record Snapshot(
       int sequence, int time, int flags, byte[] areaMask, byte[] player, List<byte[]> entities) {
@@ -124,21 +152,22 @@ public final class SnapshotDeltaCodec {
   /** Looks up the exact referenced message once; full updates never consult history. */
   public static Snapshot read(
       MessageReader reader, int sequence, Baselines baselines, IntFunction<Snapshot> history) {
-    return readBody(reader, sequence, baselines, history, false).orElseThrow();
+    return readBody(reader, sequence, baselines, history, false, PROTOCOL_68).orElseThrow();
   }
 
   /** Consumes missing-base updates without publishing their reconstructed state. */
   public static Optional<Snapshot> readAvailable(
       MessageReader reader, int sequence, Baselines baselines, IntFunction<Snapshot> history) {
-    return readBody(reader, sequence, baselines, history, true);
+    return readBody(reader, sequence, baselines, history, true, PROTOCOL_68);
   }
 
-  private static Optional<Snapshot> readBody(
+  static Optional<Snapshot> readBody(
       MessageReader reader,
       int sequence,
       Baselines baselines,
       IntFunction<Snapshot> history,
-      boolean allowMissing) {
+      boolean allowMissing,
+      StateReader stateReader) {
     Objects.requireNonNull(baselines);
     Objects.requireNonNull(history);
     int checkpoint = reader.mark();
@@ -157,7 +186,7 @@ public final class SnapshotDeltaCodec {
       for (int i = 0; i < area.length; i++) area[i] = (byte) reader.byteValue();
       byte[] player =
           StateBytes.baseline(from == null ? null : from.player, Protocol68.PLAYER_STATE_BYTES);
-      PlayerDeltaCodec.readInPlace(reader, player, StateFields.PLAYER_TABLE);
+      stateReader.player(reader, player);
       var before = from == null ? List.<byte[]>of() : from.entities;
       var entities = new ArrayList<byte[]>();
       int oldIndex = 0, lastNumber = -1;
@@ -173,8 +202,7 @@ public final class SnapshotDeltaCodec {
         boolean existed = oldIndex < before.size() && number(before.get(oldIndex)) == id;
         byte[] baseline = existed ? before.get(oldIndex++) : baselines.states.get(id);
         byte[] state = StateBytes.baseline(baseline, Protocol68.ENTITY_STATE_BYTES);
-        if (EntityDeltaCodec.readBodyInPlace(reader, state, id, StateFields.ENTITY_TABLE))
-          append(entities, state);
+        if (stateReader.entity(reader, state, id)) append(entities, state);
       }
       while (oldIndex < before.size()) append(entities, before.get(oldIndex++));
       Snapshot result = new Snapshot(sequence, time, flags, area, player, entities);

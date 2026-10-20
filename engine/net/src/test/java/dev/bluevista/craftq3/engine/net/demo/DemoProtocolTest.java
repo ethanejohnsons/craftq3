@@ -28,8 +28,7 @@ final class DemoProtocolTest {
     assertTrue(DemoProtocol.fromFileName("ql.dm_73").isEmpty());
     assertTrue(DemoProtocol.fromFileName("demo.dm3").isEmpty());
     assertTrue(DemoProtocol.fromFileName("four.dm_68.txt").isEmpty());
-    for (var protocol : DemoProtocol.values())
-      assertEquals(protocol.number() != 48, protocol.supported());
+    for (var protocol : DemoProtocol.values()) assertTrue(protocol.supported());
   }
 
   /** Protocols 66, 67 and 68 share the message layout: one recording decodes identically. */
@@ -60,7 +59,7 @@ final class DemoProtocolTest {
   }
 
   @Test
-  void protocol48IsRefusedWithItsReasonAndClosesTheStream() {
+  void unknownProtocolIsRefusedAndClosesTheStream() {
     var closed = new boolean[1];
     var input =
         new ByteArrayInputStream(new byte[0]) {
@@ -72,9 +71,8 @@ final class DemoProtocolTest {
     var failure =
         assertThrows(
             UnsupportedDemoProtocolException.class,
-            () -> DemoReader.open("demo000.dm_48", input, DemoRecordReader.Policy.PLAYBACK));
-    assertEquals(48, failure.protocol());
-    assertTrue(failure.getMessage().contains("not supported"));
+            () -> DemoReader.open("demo000.dm_45", input, DemoRecordReader.Policy.PLAYBACK));
+    assertEquals(-1, failure.protocol());
     assertTrue(closed[0]);
     assertThrows(
         UnsupportedDemoProtocolException.class,

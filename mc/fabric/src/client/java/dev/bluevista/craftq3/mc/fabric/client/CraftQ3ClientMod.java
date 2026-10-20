@@ -8,8 +8,12 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import dev.bluevista.craftq3.engine.common.time.Clock;
 import dev.bluevista.craftq3.mc.fabric.CraftQ3Mod;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudio;
+import dev.bluevista.craftq3.mc.fabric.client.bridge.BridgeClient;
+import dev.bluevista.craftq3.mc.fabric.client.bridge.BridgeScreen;
+import dev.bluevista.craftq3.mc.fabric.client.building.BuildingClient;
 import dev.bluevista.craftq3.mc.fabric.client.debug.Q3MapViewer;
 import dev.bluevista.craftq3.mc.fabric.client.debug.Q3SpikeScreen;
+import dev.bluevista.craftq3.mc.fabric.client.render.Q3LevelOverlay;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3RenderContext;
 import dev.bluevista.craftq3.mc.fabric.client.screen.Q3Launch;
 import dev.bluevista.craftq3.mc.fabric.client.screen.Q3Launcher;
@@ -33,10 +37,17 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4fc;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Client entry point: screens, the Blaze3D backend, audio and input are registered here. The client
  * owns the lifetime of its render context and audio host and closes both when the client stops.
+ *
+ * <p>The bridge ({@link BridgeClient}) and building mode ({@link BuildingClient}) are driven by the
+ * server's payloads; both draw inside Minecraft's level as {@link Q3LevelOverlay}s.
  *
  * <p>Pure Quake III opens from a "CraftQ3" button on the title screen (the original main menu, no
  * Minecraft world) and from {@code /q3 menu}, {@code /q3 map <name>}, {@code /q3 connect
@@ -50,6 +61,13 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   private MinecraftAudio audio;
   private Q3Launcher launcher;
   private volatile Q3SessionFactory sessionFactory = Q3SessionFactory.DEFAULT;
+  private BridgeClient bridge;
+  private BuildingClient building;
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(CraftQ3ClientMod.class);
+
+  /** The initialised client entrypoint, for the render hooks (set once at initialisation). */
+  private static volatile CraftQ3ClientMod instance;
 
   @Override
   public void onInitializeClient() {
@@ -63,6 +81,13 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
             this::audio,
             () -> sessionFactory,
             FabricLoader.getInstance().getGameDir());
+    bridge =
+        new BridgeClient(
+            installation, renderContext, this::audio, FabricLoader.getInstance().getGameDir());
+    bridge.register();
+    building = new BuildingClient(installation, renderContext);
+    building.register();
+    instance = this;
     ScreenEvents.AFTER_INIT.register(
         (client, screen, width, height) -> {
           if (screen instanceof TitleScreen title)
@@ -104,7 +129,41 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
                   .then(literal("menu").executes(c -> launch(c.getSource(), Q3Launch.menu())))
                   .then(launchArgument("map", "name", Q3Launch::map))
                   .then(launchArgument("connect", "address", Q3Launch::connect))
-                  .then(launchArgument("demo", "name", Q3Launch::demo)));
+                  .then(launchArgument("demo", "name", Q3Launch::demo))
+                  // The server's subcommands: this client tree would otherwise shadow them.
+                  .then(
+                      literal("bridge")
+                          .executes(CraftQ3ClientMod::forward)
+                          .then(literal("fresh").executes(CraftQ3ClientMod::forward)))
+                  .then(literal("leave").executes(CraftQ3ClientMod::forward))
+                  .then(
+                      literal("build")
+                          .then(
+                              argument("map", StringArgumentType.word())
+                                  .executes(CraftQ3ClientMod::forward)))
+                  .then(
+                      literal("pickup")
+                          .then(
+                              literal("add")
+                                  .then(
+                                      argument("classname", StringArgumentType.word())
+                                          .suggests(
+                                              (c, b) ->
+                                                  net.minecraft.commands.SharedSuggestionProvider
+                                                      .suggest(
+                                                          dev.bluevista.craftq3.mc.fabric.command
+                                                              .Q3ServerCommands.BASE_ITEMS,
+                                                          b))
+                                          .executes(CraftQ3ClientMod::forward)))
+                          .then(literal("list").executes(CraftQ3ClientMod::forward))
+                          .then(
+                              literal("remove")
+                                  .then(
+                                      argument(
+                                              "id",
+                                              com.mojang.brigadier.arguments.IntegerArgumentType
+                                                  .integer(1, 256))
+                                          .executes(CraftQ3ClientMod::forward)))));
         });
     ClientLifecycleEvents.CLIENT_STOPPING.register(this::close);
   }
@@ -127,6 +186,22 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
                     }));
   }
 
+  /** Sends a {@code /q3} subcommand the server implements (bridge, building, pickups) to it. */
+  private static int forward(
+      com.mojang.brigadier.context.CommandContext<FabricClientCommandSource> context) {
+    var connection = context.getSource().getClient().getConnection();
+    if (connection == null) {
+      context.getSource().sendError(Component.literal("CraftQ3: not connected to a world"));
+      return 0;
+    }
+    // Straight to the server: sendCommand would run it through the client tree again. No argument
+    // is a signable message, so the unsigned packet is what vanilla sends too.
+    String command = context.getInput();
+    if (command.startsWith("/")) command = command.substring(1);
+    connection.send(new net.minecraft.network.protocol.game.ServerboundChatCommandPacket(command));
+    return 1;
+  }
+
   /** Opens Quake III once the chat screen that ran the command has closed. */
   private int launch(FabricClientCommandSource source, Q3Launch request) {
     Minecraft client = source.getClient();
@@ -147,6 +222,54 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   /** Replaces the session factory (devharness). */
   public void sessionFactory(Q3SessionFactory factory) {
     sessionFactory = Objects.requireNonNull(factory, "factory");
+  }
+
+  /** The client's building-mode state. */
+  public BuildingClient building() {
+    return building;
+  }
+
+  /** The initialised client entrypoint. */
+  public static CraftQ3ClientMod current() {
+    CraftQ3ClientMod mod = instance;
+    if (mod == null) throw new IllegalStateException("CraftQ3 client is not initialised");
+    return mod;
+  }
+
+  /** Start of a frame ({@code GameRenderer.update}): the overlays' simulation and camera pose. */
+  public static void beforeCamera(Minecraft minecraft) {
+    CraftQ3ClientMod mod = instance;
+    if (mod == null) return;
+    BridgeScreen bridgeScreen = BridgeScreen.current(minecraft);
+    if (bridgeScreen != null) bridgeScreen.beforeCamera(minecraft);
+    guarded(minecraft, () -> mod.building.beforeCamera(minecraft));
+  }
+
+  /** The level pass ended: overlays draw with Minecraft's camera and depth. */
+  public static void renderInLevel(
+      Minecraft minecraft, Matrix4fc projection, Matrix4fc viewRotation, Vec3 camera) {
+    CraftQ3ClientMod mod = instance;
+    if (mod == null) return;
+    guarded(
+        minecraft, () -> mod.building.renderInLevel(minecraft, projection, viewRotation, camera));
+    BridgeScreen bridgeScreen = BridgeScreen.current(minecraft);
+    if (bridgeScreen != null)
+      bridgeScreen.renderInLevel(minecraft, projection, viewRotation, camera);
+  }
+
+  /** Whether the local player's own movement is held (bridged, or waiting for regions). */
+  public static boolean holdsLocalPlayer(Minecraft minecraft) {
+    CraftQ3ClientMod mod = instance;
+    return mod != null
+        && (BridgeScreen.current(minecraft) != null || mod.building.holdsPlayer(minecraft));
+  }
+
+  private static void guarded(Minecraft minecraft, Runnable action) {
+    try {
+      action.run();
+    } catch (RuntimeException e) {
+      LOGGER.error("CraftQ3: a level overlay failed", e);
+    }
   }
 
   /** The client's shared render context. */
@@ -192,6 +315,8 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   private void close(Minecraft client) {
     // An open Quake screen closes its session first (q3config.cfg, threads, GPU objects).
     if (Q3Screen.current(client) != null) client.gui.setScreen(null);
+    if (BridgeScreen.current(client) != null) client.gui.setScreen(null);
+    building.close();
     if (audio != null) audio.close();
     renderContext.close();
   }

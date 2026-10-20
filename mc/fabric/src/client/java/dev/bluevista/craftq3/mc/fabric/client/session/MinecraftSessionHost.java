@@ -5,10 +5,12 @@ import com.mojang.logging.LogUtils;
 import dev.bluevista.craftq3.engine.audio.AudioDevice;
 import dev.bluevista.craftq3.engine.client.RenderSink;
 import dev.bluevista.craftq3.engine.client.render.ClientAssets;
+import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.common.time.Clock;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import dev.bluevista.craftq3.engine.session.SessionHost;
 import dev.bluevista.craftq3.engine.session.SessionState;
+import dev.bluevista.craftq3.engine.session.TransportFactory;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudio;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudioDevice;
 import java.nio.file.Path;
@@ -37,6 +39,31 @@ import org.slf4j.Logger;
 public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   private static final Logger LOGGER = LogUtils.getLogger();
 
+  /**
+   * What a particular kind of session adds to the platform: the bridge connects through Minecraft
+   * payloads, supplies the level its server synthesizes and joins Minecraft terrain into the
+   * client's collision. Render thread.
+   */
+  public interface Hooks {
+    /** Datagram sockets (default: real UDP). */
+    default TransportFactory transports() {
+      return TransportFactory.UDP;
+    }
+
+    /** A map not in the game files ({@link SessionHost#mapOverride}). */
+    default java.util.Optional<BspMap> mapOverride(String normalizedPath) {
+      return java.util.Optional.empty();
+    }
+
+    /** Foreign collision for {@code mapName} ({@link SessionHost#worldSources}). */
+    default java.util.List<CollisionSource> worldSources(String mapName) {
+      return java.util.List.of();
+    }
+
+    /** Pure Quake III: nothing added. */
+    Hooks NONE = new Hooks() {};
+  }
+
   /** Where the home root lives, under Minecraft's game directory. */
   public static final String HOME_DIRECTORY = "craftq3/home";
 
@@ -48,6 +75,7 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   private final Path homeRoot;
   private final Clock clock;
   private final RenderSink sink;
+  private final Hooks hooks;
   private MinecraftAudioDevice device;
   private int videoWidth, videoHeight;
   private SessionState state = SessionState.MENU;
@@ -68,6 +96,20 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
       String game,
       Path gameDirectory,
       Clock clock) {
+    this(minecraft, audio, presenter, installRoot, game, gameDirectory, clock, Hooks.NONE);
+  }
+
+  /** A host with session-specific {@code hooks} (the bridge's transport, map and terrain). */
+  public MinecraftSessionHost(
+      Minecraft minecraft,
+      MinecraftAudio audio,
+      Q3FramePresenter presenter,
+      Path installRoot,
+      String game,
+      Path gameDirectory,
+      Clock clock,
+      Hooks hooks) {
+    this.hooks = Objects.requireNonNull(hooks, "hooks");
     this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
     this.audio = Objects.requireNonNull(audio, "audio");
     this.presenter = Objects.requireNonNull(presenter, "presenter");
@@ -160,6 +202,21 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   @Override
   public void requestHostUi(boolean visible) {
     hostUiRequested = visible;
+  }
+
+  @Override
+  public TransportFactory transports() {
+    return hooks.transports();
+  }
+
+  @Override
+  public java.util.Optional<BspMap> mapOverride(String normalizedPath) {
+    return hooks.mapOverride(normalizedPath);
+  }
+
+  @Override
+  public java.util.List<CollisionSource> worldSources(String mapName) {
+    return hooks.worldSources(mapName);
   }
 
   /** The cgame loaded a map: the presenter builds its scene from the session's own BSP. */

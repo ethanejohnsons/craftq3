@@ -4,8 +4,11 @@
   "package": "dev.bluevista.craftq3.mc.fabric.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "BridgeCameraMixin",
+    "BridgeLocalPlayerMixin",
     "ChannelAccessor",
     "GameRendererMixin",
+    "LevelOverlayGameRendererMixin",
     "MouseHandlerMixin",
     "SoundEngineAccessor",
     "SoundEngineMixin",

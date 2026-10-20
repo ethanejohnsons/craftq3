@@ -18,7 +18,8 @@
       "dev.bluevista.craftq3.mc.devharness.client.Q3InputClientTest",
       "dev.bluevista.craftq3.mc.devharness.client.Q3MapRenderClientTest",
       "dev.bluevista.craftq3.mc.devharness.client.Q3EffectsRenderClientTest",
-      "dev.bluevista.craftq3.mc.devharness.client.Q3PureModeClientTest"
+      "dev.bluevista.craftq3.mc.devharness.client.Q3PureModeClientTest",
+      "dev.bluevista.craftq3.mc.devharness.client.Q3HybridClientTest"
     ]
   },
   "depends": {

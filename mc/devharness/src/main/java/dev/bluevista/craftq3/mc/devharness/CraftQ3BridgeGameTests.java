@@ -332,6 +332,14 @@ public final class CraftQ3BridgeGameTests {
               game.lastTickNanos() / 1e6,
               game.averageTickNanos() / 1e6));
       check(game.targetCount() >= 15, "mobs not offered");
+      var snapshot = game.server().snapshot(client.slot());
+      int visiblePuppets = 0;
+      for (Zombie husk : crowd) {
+        int puppet = game.actorHost().actors().client(husk.getId());
+        if (puppet >= 0 && snapshot.contains(puppet)) visiblePuppets++;
+      }
+      scenario.note("puppets in the player's snapshot: " + visiblePuppets);
+      check(visiblePuppets == 0, visiblePuppets + " mob puppets are sent to the client");
       check(game.actorHost().actors().size() >= game.targetCount(), "mobs not mirrored");
       return true;
     }

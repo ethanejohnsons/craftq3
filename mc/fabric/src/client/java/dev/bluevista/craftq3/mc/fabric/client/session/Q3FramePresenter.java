@@ -148,6 +148,35 @@ public final class Q3FramePresenter implements AutoCloseable {
     framesDrawn++;
   }
 
+  /**
+   * Draws the latest frame inside Minecraft's level (the bridge): world views use {@code
+   * quakeToClip} (Quake world to Minecraft clip space) and Minecraft's {@code depth}, so Quake
+   * entities and the weapon are hidden by blocks; 2D quads (the HUD) draw over everything. Nothing
+   * is cleared.
+   */
+  public void renderInLevel(
+      RenderTarget target,
+      int width,
+      int height,
+      org.joml.Matrix4fc quakeToClip,
+      com.mojang.blaze3d.textures.GpuTextureView depth) {
+    if (closed) return;
+    finishLoad();
+    CgameFrame frame = latest;
+    if (frame == null || (pending != null && hasWorldView(frame))) return;
+    Q3RenderBackend renderer = backend();
+    renderer.externalCamera(quakeToClip, depth);
+    try {
+      renderer.beginFrame(target, width, height, frame.timeMillis());
+      renderer.render(frame);
+      renderer.endFrame();
+    } finally {
+      renderer.externalCamera(null, null);
+    }
+    lastCpuNanos = renderer.stats().cpuNanos;
+    framesDrawn++;
+  }
+
   private void finishLoad() {
     CompletableFuture<Prepared> load = pending;
     if (load == null || !load.isDone()) return;

@@ -145,6 +145,11 @@ public final class Q3RenderBackend implements AutoCloseable {
   private final FrameGeometry[] geometries = new FrameGeometry[MAX_VIEWS];
   private final Items[] itemLists = new Items[MAX_VIEWS];
   private final float[] matrix = new float[16];
+
+  // An external camera (Minecraft's), or null: world views then use this view-projection and
+  // draw into the target with its own depth, without clearing either.
+  private float[] externalViewProjection;
+  private GpuTextureView externalDepth;
   private final float[] modelMatrix = new float[16];
 
   private final Stats stats = new Stats();
@@ -205,6 +210,8 @@ public final class Q3RenderBackend implements AutoCloseable {
     int from, to;
     int[] scissor;
     String label;
+    // Drawn into a depth buffer someone else filled (Minecraft's level): never cleared.
+    boolean keepDepth;
   }
 
   /** One draw; pooled and reused across frames. */
@@ -444,6 +451,23 @@ public final class Q3RenderBackend implements AutoCloseable {
     ensureStaticBlocks();
   }
 
+  /**
+   * Makes the world views of the following {@link #render} calls draw inside another renderer's
+   * scene (Minecraft's level): {@code quakeToClip} maps Quake world coordinates to that scene's
+   * clip space (reversed-Z, as Minecraft's projection), and {@code depth} is its depth buffer,
+   * tested and written but never cleared; the frame's colour is not cleared either. Portal views
+   * are not drawn in this mode. {@code null} returns to the views' own Quake cameras.
+   */
+  public void externalCamera(org.joml.Matrix4fc quakeToClip, GpuTextureView depth) {
+    if (quakeToClip == null) {
+      externalViewProjection = null;
+      externalDepth = null;
+      return;
+    }
+    externalViewProjection = quakeToClip.get(new float[16]);
+    externalDepth = Objects.requireNonNull(depth, "depth");
+  }
+
   /** Renders a captured cgame frame: views, 2D quads and cinematic frames in submission order. */
   public void render(CgameFrame cgame) {
     requireFrame();
@@ -646,7 +670,8 @@ public final class Q3RenderBackend implements AutoCloseable {
 
     // Portal and mirror views, rendered before this view into their own targets.
     Map<Integer, GpuTextureView> portalImages = Map.of();
-    if (worldModel && definition.depth() == 0) {
+    boolean external = externalViewProjection != null && portalTarget == null && worldModel;
+    if (worldModel && definition.depth() == 0 && !external) {
       List<PortalViews.Derived> derived =
           PortalViews.collect(
               scene, definition, visible, cgView.portalEntities(), PortalViews.DEFAULT_MAX_DEPTH);
@@ -704,7 +729,11 @@ public final class Q3RenderBackend implements AutoCloseable {
     // The view block and dynamic vertices.
     int viewBlock =
         viewBlock(
-            definition, viewport, cgView.lights(), portalTarget != null || definition.depth() > 0);
+            definition,
+            viewport,
+            cgView.lights(),
+            portalTarget != null || definition.depth() > 0,
+            external ? externalViewProjection : null);
     int baseVertex = 0;
     if (geometry.mesh().vertexCount() > 0) {
       ByteBuffer v = frame.vertices(geometry.mesh().vertexCount() * Q3WorldRenderer.VERTEX_BYTES);
@@ -725,13 +754,18 @@ public final class Q3RenderBackend implements AutoCloseable {
       pass.color = portalTarget.colorView();
       pass.depth = portalTarget.depthView();
       pass.clearColor = true;
+    } else if (external) {
+      pass.color = target.getColorTextureView();
+      pass.depth = externalDepth;
+      pass.keepDepth = true;
+      pass.clearColor = false;
     } else {
       pass.color = target.getColorTextureView();
       pass.depth = context.renderTarget(0, targetWidth, targetHeight, false).depthView();
       pass.clearColor = !mainCleared && worldModel;
       if (pass.clearColor) mainCleared = true;
     }
-    pass.scissor = fullViewport(viewport) ? null : scissor(viewport);
+    pass.scissor = external || fullViewport(viewport) ? null : scissor(viewport);
 
     GpuTextureView white = context.textures().white(encoder);
     GpuTextureView black = context.textures().black(encoder);
@@ -1193,8 +1227,13 @@ public final class Q3RenderBackend implements AutoCloseable {
   }
 
   private int viewBlock(
-      ViewDefinition view, int[] viewport, List<DynamicLight> lights, boolean portal) {
-    viewProjection(view, viewport, matrix);
+      ViewDefinition view,
+      int[] viewport,
+      List<DynamicLight> lights,
+      boolean portal,
+      float[] external) {
+    if (external != null) System.arraycopy(external, 0, matrix, 0, 16);
+    else viewProjection(view, viewport, matrix);
     float[] clip = null;
     if (portal || view.clipPlane().isPresent()) {
       Optional<Plane> plane = view.clipPlane();
@@ -1483,7 +1522,7 @@ public final class Q3RenderBackend implements AutoCloseable {
             record.color,
             clearColor ? Optional.of(CLEAR) : Optional.empty(),
             record.depth,
-            OptionalDouble.of(0))) {
+            record.keepDepth ? OptionalDouble.empty() : OptionalDouble.of(0))) {
       if (record.scissor != null)
         pass.enableScissor(
             record.scissor[0], record.scissor[1], record.scissor[2], record.scissor[3]);

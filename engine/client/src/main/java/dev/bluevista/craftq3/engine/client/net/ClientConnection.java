@@ -390,7 +390,8 @@ public final class ClientConnection implements AutoCloseable {
       }
     }
     int generation = session.gameStateMessageSequence();
-    if (generation != levelSequence) {
+    // Messages before the first gamestate (a print, a keepalive) are not a level.
+    if (generation != levelSequence && pipeline.gameState().isPresent()) {
       levelSequence = generation;
       state = State.LOADING;
       urgent = true;

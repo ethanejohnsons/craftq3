@@ -2,4 +2,11 @@ plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:client')
     api project(':engine:game')
+    testImplementation project(':engine:testkit')
+}
+tasks.named('test') {
+    // The opt-in real-data flows boot the original ui, cgame and qagame with bots.
+    maxHeapSize = '3g'
+    jvmArgs '-ea'
+    testLogging { showStandardStreams = providers.environmentVariable('CRAFTQ3_Q3ROOT').isPresent() }
 }

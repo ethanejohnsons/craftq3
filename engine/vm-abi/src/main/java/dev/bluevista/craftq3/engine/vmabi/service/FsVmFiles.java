@@ -49,15 +49,22 @@ public final class FsVmFiles implements VmFiles {
         searchPath.view(), home, installRoot == null ? null : new ModList(List.of(installRoot)));
   }
 
+  /** {@code FS_FOpenFileRead}: "qpaths are not supposed to have a leading slash" (one is cut). */
+  private static String qpath(String path) {
+    return path != null && !path.isEmpty() && (path.charAt(0) == '/' || path.charAt(0) == '\\')
+        ? path.substring(1)
+        : path;
+  }
+
   private static VirtualPath path(String path) throws NoSuchFileException {
-    Optional<VirtualPath> parsed = VirtualPath.parse(path);
+    Optional<VirtualPath> parsed = VirtualPath.parse(qpath(path));
     if (parsed.isEmpty()) throw new NoSuchFileException(path, null, "refused path");
     return parsed.get();
   }
 
   @Override
   public int length(String path) throws IOException {
-    Optional<VirtualPath> parsed = VirtualPath.parse(path);
+    Optional<VirtualPath> parsed = VirtualPath.parse(qpath(path));
     if (parsed.isEmpty()) return -1;
     if (home != null) {
       Optional<byte[]> saved = home.readIfPresent(parsed.get());

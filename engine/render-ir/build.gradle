@@ -1,4 +1,10 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:formats')
+    testImplementation testFixtures(project(':engine:formats'))
+    testImplementation project(':engine:testkit')
+}
+tasks.named('test') {
+    // The opt-in real-data sweep builds every map of the installation.
+    maxHeapSize = '3g'
 }

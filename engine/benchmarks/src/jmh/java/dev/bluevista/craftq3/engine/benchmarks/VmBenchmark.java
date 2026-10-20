@@ -39,8 +39,8 @@ public class VmBenchmark {
   /** Base address of the 1024-word global array the memory loop works on. */
   private static final int ARRAY = 256;
 
-  /** The execution engine; a JIT-compiled engine adds a value here. */
-  @Param({"interpreter"})
+  /** The execution engine: the interpreter or the QVM-to-JVM compiler. */
+  @Param({"interpreter", "compiled"})
   public String engine;
 
   private QvmInstance calls;
@@ -64,11 +64,15 @@ public class VmBenchmark {
 
   @Setup
   public void setUp() {
-    if (!engine.equals("interpreter"))
-      throw new IllegalArgumentException("Unknown VM engine " + engine);
-    calls = instance(hotLoop(false), null);
-    syscalls = instance(hotLoop(true), (vm, number, args) -> (args[0] >> 1) + args[0]);
-    memory = instance(memoryLoop(), null);
+    QvmInstance.ExecutionMode mode =
+        switch (engine) {
+          case "interpreter" -> QvmInstance.ExecutionMode.INTERPRET;
+          case "compiled" -> QvmInstance.ExecutionMode.COMPILE;
+          default -> throw new IllegalArgumentException("Unknown VM engine " + engine);
+        };
+    calls = instance(hotLoop(false), null, mode);
+    syscalls = instance(hotLoop(true), (vm, number, args) -> (args[0] >> 1) + args[0], mode);
+    memory = instance(memoryLoop(), null, mode);
     callInstructions = verify(calls, hotLoopExpected(ITERATIONS));
     syscallInstructions = verify(syscalls, hotLoopExpected(ITERATIONS));
     memoryInstructions = verify(memory, memoryLoopExpected(ITERATIONS));
@@ -92,14 +96,15 @@ public class VmBenchmark {
     return memory.vmMain(ITERATIONS);
   }
 
-  private static QvmInstance instance(SyntheticQvm code, Syscalls handler) {
+  private static QvmInstance instance(
+      SyntheticQvm code, Syscalls handler, QvmInstance.ExecutionMode mode) {
     var limits = new QvmInstance.Limits(Long.MAX_VALUE / 8, Long.MAX_VALUE / 8, 0, 4096, 1024, 16);
     Syscalls none =
         (vm, number, args) -> {
           throw new IllegalStateException("Unexpected syscall " + number);
         };
     return new QvmInstance(
-        code.image("synthetic"), handler == null ? none : handler, limits, Clock.system());
+        code.image("synthetic"), handler == null ? none : handler, limits, Clock.system(), mode);
   }
 
   /** Runs one call on a fresh instance, checks its result and returns its instruction count. */

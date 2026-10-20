@@ -46,13 +46,35 @@ public class VmHost implements Syscalls {
     FATAL
   }
 
-  /** Dispatcher configuration; set from the host's config, never from system properties. */
-  public record Options(boolean strictSyscalls, UnknownPolicy unknownPolicy) {
+  /**
+   * Host VM configuration; set from the host's config, never from system properties.
+   *
+   * @param executionMode how hosts run the module ({@code vm_jit})
+   */
+  public record Options(
+      boolean strictSyscalls,
+      UnknownPolicy unknownPolicy,
+      QvmInstance.ExecutionMode executionMode) {
     /** The cvar a host reads with {@link #fromCvars}. */
     public static final String STRICT_CVAR = "vm_strictSyscalls";
 
+    /**
+     * {@code vm_jit}: 0 interprets, 1 (the default) compiles to JVM bytecode and falls back to the
+     * interpreter when an image cannot be compiled, 2 compiles and fails the module load instead.
+     */
+    public static final String JIT_CVAR = "vm_jit";
+
+    /** The default of {@value #JIT_CVAR}. */
+    public static final String JIT_DEFAULT = "1";
+
     public Options {
       Objects.requireNonNull(unknownPolicy);
+      Objects.requireNonNull(executionMode);
+    }
+
+    /** Options with {@link QvmInstance.ExecutionMode#AUTO}. */
+    public Options(boolean strictSyscalls, UnknownPolicy unknownPolicy) {
+      this(strictSyscalls, unknownPolicy, QvmInstance.ExecutionMode.AUTO);
     }
 
     /** Degrade and continue: the release behaviour. */
@@ -65,9 +87,23 @@ public class VmHost implements Syscalls {
       return new Options(true, UnknownPolicy.DEGRADE);
     }
 
-    /** Reads {@value #STRICT_CVAR} (absent means 0) from a cvar table. */
+    /**
+     * Reads {@value #STRICT_CVAR} (absent means 0) and {@value #JIT_CVAR} (absent means {@value
+     * #JIT_DEFAULT}) from a cvar table.
+     */
     public static Options fromCvars(CvarTable cvars) {
-      return new Options(cvars.integer(STRICT_CVAR) != 0, UnknownPolicy.DEGRADE);
+      String jit = cvars.find(JIT_CVAR).isPresent() ? cvars.string(JIT_CVAR) : JIT_DEFAULT;
+      return new Options(
+          cvars.integer(STRICT_CVAR) != 0, UnknownPolicy.DEGRADE, executionMode(jit));
+    }
+
+    /** The mode a {@value #JIT_CVAR} value selects. */
+    public static QvmInstance.ExecutionMode executionMode(String jit) {
+      return switch (jit.trim()) {
+        case "0" -> QvmInstance.ExecutionMode.INTERPRET;
+        case "2" -> QvmInstance.ExecutionMode.COMPILE;
+        default -> QvmInstance.ExecutionMode.AUTO;
+      };
     }
   }
 

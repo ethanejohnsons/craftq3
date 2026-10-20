@@ -71,4 +71,9 @@ public final class QvmGameProgram implements GameProgram {
   public QvmInstance instantiate(Syscalls syscalls) {
     return new QvmInstance(image, syscalls, limits, clock);
   }
+
+  @Override
+  public QvmInstance instantiate(Syscalls syscalls, QvmInstance.ExecutionMode mode) {
+    return new QvmInstance(image, syscalls, limits, clock, mode);
+  }
 }

@@ -32,8 +32,8 @@ import org.openjdk.jmh.annotations.Warmup;
 @Fork(value = 1, jvmArgsAppend = "-Xmx2g")
 @State(Scope.Thread)
 public class RealQagameBenchmark {
-  /** The execution engine; a JIT-compiled engine adds a value here. */
-  @Param({"interpreter"})
+  /** The execution engine: the interpreter ({@code vm_jit 0}) or compiled code ({@code 2}). */
+  @Param({"interpreter", "compiled"})
   public String engine;
 
   private RealServer server;
@@ -57,10 +57,16 @@ public class RealQagameBenchmark {
 
   @Setup
   public void setUp() throws IOException {
-    if (!engine.equals("interpreter"))
-      throw new IllegalArgumentException("Unknown VM engine " + engine);
-    server = new RealServer("q3dm17", 8);
+    String jit =
+        switch (engine) {
+          case "interpreter" -> "0";
+          case "compiled" -> "2";
+          default -> throw new IllegalArgumentException("Unknown VM engine " + engine);
+        };
+    server = new RealServer("q3dm17", 8, jit);
     vm = server.qagame();
+    if ((vm.executionMode() == QvmInstance.ExecutionMode.COMPILE) != engine.equals("compiled"))
+      throw new IllegalStateException("qagame runs in " + vm.executionMode());
     time = server.levelTime();
     step = 1000 / Math.max(1, server.server.cvars().integer("sv_fps"));
   }

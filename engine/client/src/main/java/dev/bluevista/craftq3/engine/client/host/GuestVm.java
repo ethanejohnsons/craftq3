@@ -154,13 +154,15 @@ public abstract class GuestVm implements AutoCloseable {
     Bindings bindings = shared.install(new Bindings(module));
     bind(bindings);
     if (host != null) degradationsBefore += host.degradationTotal();
-    host = new VmHost(ImportTable.of(module, loaded.profile()), bindings, services.vmOptions());
+    VmHost.Options options = services.vmOptions();
+    host = new VmHost(ImportTable.of(module, loaded.profile()), bindings, options);
     vm =
         new QvmInstance(
             loaded.image(),
             host,
             HostServices.VM_LIMITS,
-            dev.bluevista.craftq3.engine.common.time.Clock.system());
+            dev.bluevista.craftq3.engine.common.time.Clock.system(),
+            options.executionMode());
     fault = null;
     state = State.RUNNING;
     services.output().print(module.moduleName() + ": " + loaded.profile().key() + " ABI");

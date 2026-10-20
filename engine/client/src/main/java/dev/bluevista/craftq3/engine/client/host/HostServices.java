@@ -129,6 +129,7 @@ public final class HostServices implements AutoCloseable {
     EngineCvars.register(cvars);
     registerSoundCommands();
     cvars.register(VmHost.Options.STRICT_CVAR, "0", 0);
+    cvars.register(VmHost.Options.JIT_CVAR, VmHost.Options.JIT_DEFAULT, 0);
     cvars.register(AbiProfile.OVERRIDE_CVAR, "", 0);
     cvars.register("s_volume", "0.8", CvarFlags.ARCHIVE);
     cvars.register("s_musicvolume", "0.25", CvarFlags.ARCHIVE);

@@ -394,6 +394,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     cvars.register("nextmap", "", 0);
     cvars.register("sv_master1", "", 0);
     cvars.register(VmHost.Options.STRICT_CVAR, "0", 0);
+    cvars.register(VmHost.Options.JIT_CVAR, VmHost.Options.JIT_DEFAULT, 0);
     cvars.register(AbiProfile.OVERRIDE_CVAR, "auto", 0);
     cvars.register(BOT_FAILURE_POLICY, "degrade", 0);
     cvars.register(BOT_FAILURE_LIMIT, "8", 0);
@@ -782,7 +783,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     QagameHost bindings = new QagameHost(this, program.profile());
     if (host != null) pastDegradations += host.degradationTotal();
     host = bindings.build(services, options);
-    vm = program.instantiate(host);
+    vm = program.instantiate(host, options.executionMode());
     vm.owner().claim();
     entities = new GameEntities(vm.memory(), program.profile());
     world.attach(entities);
@@ -795,6 +796,7 @@ public final class GameServer implements BotHost, AutoCloseable {
             + " ABI) for "
             + map.name()
             + (restart ? " (restart)" : ""));
+    vm.compileReport().ifPresent(report -> LOG.info("qagame compiled: " + report));
     callGame(Qagame.GAME_INIT.command(), svTime, random.nextInt() & 0x7fffffff, restart ? 1 : 0);
   }
 

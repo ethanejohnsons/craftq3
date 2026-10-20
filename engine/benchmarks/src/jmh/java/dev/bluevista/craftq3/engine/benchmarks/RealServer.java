@@ -11,6 +11,7 @@ import dev.bluevista.craftq3.engine.game.bot.BotlibAdapter;
 import dev.bluevista.craftq3.engine.vm.QvmInstance;
 import dev.bluevista.craftq3.engine.vm.Syscalls;
 import dev.bluevista.craftq3.engine.vmabi.AbiProfile;
+import dev.bluevista.craftq3.engine.vmabi.VmHost;
 import dev.bluevista.craftq3.engine.vmabi.service.FsVmFiles;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -32,6 +33,11 @@ final class RealServer implements AutoCloseable {
   private long now;
 
   RealServer(String map, int bots) throws IOException {
+    this(map, bots, VmHost.Options.JIT_DEFAULT);
+  }
+
+  /** A server whose qagame runs as {@code vm_jit} {@code jit} selects. */
+  RealServer(String map, int bots, String jit) throws IOException {
     Path root = RealDataBench.root();
     searchPath = SearchPath.mount(root, SearchPath.BASE_GAME);
     FileViewAssets files = new FileViewAssets(searchPath.view());
@@ -45,6 +51,7 @@ final class RealServer implements AutoCloseable {
             .bots(new BotlibAdapter())
             .program(() -> capturing(QvmGameProgram.load(files, "auto", clock)))
             .build();
+    server.cvars().set(VmHost.Options.JIT_CVAR, jit);
     server.cvars().set("sv_pure", "0");
     server.cvars().set("sv_maxclients", Integer.toString(Math.max(8, bots + 1)));
     server.cvars().set("bot_enable", "1");
@@ -79,6 +86,12 @@ final class RealServer implements AutoCloseable {
       @Override
       public QvmInstance instantiate(Syscalls syscalls) {
         qagame = program.instantiate(syscalls);
+        return qagame;
+      }
+
+      @Override
+      public QvmInstance instantiate(Syscalls syscalls, QvmInstance.ExecutionMode mode) {
+        qagame = program.instantiate(syscalls, mode);
         return qagame;
       }
     };

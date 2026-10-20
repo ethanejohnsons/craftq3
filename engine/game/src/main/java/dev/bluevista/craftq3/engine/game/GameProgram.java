@@ -19,6 +19,14 @@ public interface GameProgram {
   /** A fresh running instance whose traps go to {@code syscalls}. */
   QvmInstance instantiate(Syscalls syscalls);
 
+  /**
+   * A fresh running instance in {@code mode} ({@code vm_jit}); programs that are not QVM images
+   * ignore the mode.
+   */
+  default QvmInstance instantiate(Syscalls syscalls, QvmInstance.ExecutionMode mode) {
+    return instantiate(syscalls);
+  }
+
   /** Loads the game module for a level; called on the simulation thread at every map spawn. */
   @FunctionalInterface
   interface Loader {

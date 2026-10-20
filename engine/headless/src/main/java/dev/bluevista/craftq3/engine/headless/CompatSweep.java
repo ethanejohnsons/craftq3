@@ -350,7 +350,7 @@ public final class CompatSweep {
   }
 
   private static boolean isDemo(String name) {
-    return name.toLowerCase(Locale.ROOT).matches(".*\\.dm_\\d+");
+    return name.toLowerCase(Locale.ROOT).matches(".*\\.(dm_\\d+|dm3)");
   }
 
   /** Names in {@code directory} that the profile's own game directory provides. */
@@ -491,6 +491,8 @@ public final class CompatSweep {
   private static List<String> entityModels(BspMap bsp) {
     List<String> models = new ArrayList<>();
     for (var entity : bsp.entities()) {
+      // q3map compiles misc_model geometry into the BSP; only runtime models count.
+      if (entity.classname().orElse("").equalsIgnoreCase("misc_model")) continue;
       String model = entity.getOrDefault("model", "").replace('\\', '/');
       if (model.isEmpty() || model.startsWith("*") || models.contains(model)) continue;
       models.add(model);
@@ -563,7 +565,8 @@ public final class CompatSweep {
     long finished = client.session().demosFinished();
     long frames = client.frames().frames();
     long start = System.nanoTime();
-    client.command("set com_errorMessage \"\"; timedemo 1; demo " + demo);
+    client.session().cvars().set("com_errorMessage", "");
+    client.command("timedemo 1; demo " + demo);
     boolean started =
         client.runUntil(
             () ->
@@ -582,9 +585,13 @@ public final class CompatSweep {
     String error = client.session().cvars().string("com_errorMessage");
     entry.put("frames", client.frames().frames() - frames);
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);
-    if (demo.toLowerCase(Locale.ROOT).endsWith(".dm_48")) {
-      entry.put("result", error.contains("protocol 48") ? "ok" : "unexpected");
-      entry.put("note", "protocol 48 is refused by design");
+    String lower = demo.toLowerCase(Locale.ROOT);
+    if (lower.endsWith(".dm_48") || lower.endsWith(".dm3")) {
+      // Quake III 1.27 (48) and pre-1.17 (.dm3) demos: 1.32 cannot play them either.
+      boolean refused = !error.isEmpty() && client.session().demosFinished() == finished;
+      entry.put("result", refused ? "ok" : "unexpected");
+      entry.put("note", "refused by design: " + error);
+      if (!refused) game.problem("demo", demo, "an unsupported demo protocol was accepted");
     } else if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
       entry.put("result", "ok");
     } else
@@ -603,7 +610,23 @@ public final class CompatSweep {
     long start = System.nanoTime();
     client.command("cinematic " + video);
     boolean started = client.runUntil(SessionState.CINEMATIC, 1_000);
-    boolean ended = started && client.runUntil(SessionState.MENU, 30 * 60_000);
+    String lower = video.toLowerCase(Locale.ROOT);
+    boolean hold = lower.equals("end.roq") || lower.equals("demoend.roq");
+    boolean ended;
+    if (hold) {
+      // These hold their last frame until a key, as in the original: play, then press one.
+      long last = -1;
+      for (int i = 0; i < 30 * 60 && client.state() == SessionState.CINEMATIC; i++) {
+        client.run(1_000);
+        long now = client.frames().images();
+        if (now == last) break;
+        last = now;
+      }
+      boolean held = client.state() == SessionState.CINEMATIC;
+      client.tap(dev.bluevista.craftq3.engine.console.KeyNames.ESCAPE);
+      ended = held && client.runUntil(SessionState.MENU, 1_000);
+      entry.put("note", "held at its end until a key");
+    } else ended = started && client.runUntil(SessionState.MENU, 30 * 60_000);
     long drawn = client.frames().images() - images;
     entry.put("frames", drawn);
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);

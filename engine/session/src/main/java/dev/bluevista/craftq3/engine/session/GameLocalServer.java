@@ -13,6 +13,7 @@ import dev.bluevista.craftq3.engine.game.net.Protocol68Host;
 import dev.bluevista.craftq3.engine.net.transport.PacketTransport;
 import dev.bluevista.craftq3.engine.vmabi.service.FsVmFiles;
 import dev.bluevista.craftq3.engine.vmabi.service.ModList;
+import dev.bluevista.craftq3.engine.vmabi.service.VmFiles;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -74,7 +75,10 @@ public final class GameLocalServer implements LocalServer {
             .output(context.output())
             .files(new FileViewAssets(view))
             .vmFiles(
-                new FsVmFiles(view, context.home(), roots.isEmpty() ? null : new ModList(roots)))
+                new ReopeningFiles(
+                    () ->
+                        new FsVmFiles(
+                            view, context.home(), roots.isEmpty() ? null : new ModList(roots))))
             .clocks(context.clock(), context.wallClock())
             .pure(manifest)
             .seed(context.seed())
@@ -108,6 +112,70 @@ public final class GameLocalServer implements LocalServer {
             if (source.state() == GameServer.State.DROPPED) drops++;
           }
         });
+  }
+
+  /**
+   * The qagame's file handles. {@link FsVmFiles#closeAll} retires its table for good, while the
+   * server closes the files at every level change and restart and keeps using the same {@link
+   * VmFiles}; this reopens a fresh table after each close.
+   */
+  private static final class ReopeningFiles implements VmFiles {
+    private final java.util.function.Supplier<FsVmFiles> factory;
+    private FsVmFiles files;
+
+    ReopeningFiles(java.util.function.Supplier<FsVmFiles> factory) {
+      this.factory = factory;
+      this.files = factory.get();
+    }
+
+    @Override
+    public int length(String path) throws IOException {
+      return files.length(path);
+    }
+
+    @Override
+    public Opened open(String path, Mode mode) throws IOException {
+      return files.open(path, mode);
+    }
+
+    @Override
+    public byte[] read(int handle, int length) throws IOException {
+      return files.read(handle, length);
+    }
+
+    @Override
+    public int write(int handle, byte[] data) throws IOException {
+      return files.write(handle, data);
+    }
+
+    @Override
+    public boolean seek(int handle, int offset, Origin origin) throws IOException {
+      return files.seek(handle, offset, origin);
+    }
+
+    @Override
+    public void close(int handle) throws IOException {
+      files.close(handle);
+    }
+
+    @Override
+    public List<String> list(String directory, String extension) throws IOException {
+      return files.list(directory, extension);
+    }
+
+    @Override
+    public List<ModInfo> mods() throws IOException {
+      return files.mods();
+    }
+
+    @Override
+    public void closeAll() throws IOException {
+      try {
+        files.closeAll();
+      } finally {
+        files = factory.get();
+      }
+    }
   }
 
   private Optional<String> readConfig(String path) {

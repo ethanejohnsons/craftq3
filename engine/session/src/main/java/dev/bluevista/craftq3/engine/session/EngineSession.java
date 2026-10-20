@@ -131,8 +131,7 @@ public final class EngineSession implements AutoCloseable {
           "removeip",
           "listip",
           "heartbeat",
-          "abort_podium",
-          "say");
+          "abort_podium");
 
   private static final Log LOG = Log.get(EngineSession.class);
   private static final int UI_RESTARTS = 3;
@@ -1101,7 +1100,6 @@ public final class EngineSession implements AutoCloseable {
       LOG.warn("Cleanup after an error failed: " + cleanup);
     }
     console.cvars().set("com_errorMessage", message);
-    console.buffer().clear();
     if (!content.uiRunning() && uiRestarts < UI_RESTARTS) {
       uiRestarts++;
       content.ui.shutdown();

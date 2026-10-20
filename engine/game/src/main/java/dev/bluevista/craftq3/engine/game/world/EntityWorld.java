@@ -374,10 +374,12 @@ public final class EntityWorld {
     for (int i = 0; i < count; i++) {
       if (out.allSolid) return;
       int touched = list[i];
-      if (touched == passEntity) continue;
-      int owner = g.ownerNum(touched);
-      if (owner == passEntity) continue;
-      if (passOwner != -1 && owner == passOwner) continue;
+      if (passEntity != TraceLayout.ENTITYNUM_NONE) {
+        if (touched == passEntity) continue;
+        int owner = g.ownerNum(touched);
+        if (owner == passEntity) continue;
+        if (owner == passOwner) continue;
+      }
       if ((contentMask & g.contents(touched)) == 0) continue;
       clipEntity(scratch, start, end, mins, maxs, touched, contentMask, capsule);
       if (scratch.allSolid) {

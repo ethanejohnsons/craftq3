@@ -53,7 +53,7 @@ class GridCollisionSourceTest {
       float[] end;
       if (kind == 4) end = start.clone();
       else if (kind == 3) {
-        // Long traces exceed the exhaustive budget and take the diagonal walk.
+        // Long traces cross the whole region.
         end = randomPoint(random, t, 18);
         longTraces++;
       } else {
@@ -86,13 +86,93 @@ class GridCollisionSourceTest {
     }
     assertTrue(
         failures.isEmpty(), () -> failures.size() + " mismatches, first: " + failures.getFirst());
-    // Equally near boxes are visited in a different order only by the diagonal walk of long
-    // traces; then which coplanar box's contents and flags are reported may differ, as it does
-    // between brush orders in the original.
-    for (String tie : ties) assertTrue(tie.contains("kind 3"), tie);
-    assertTrue(ties.size() < 60, ties.size() + " tie-order differences");
+    // Cells are visited in the brute force's order (y, z, x), so even equally near coplanar boxes
+    // resolve to the same one.
+    assertTrue(
+        ties.isEmpty(), () -> ties.size() + " tie-order differences, first: " + ties.getFirst());
     assertTrue(hits > 1000, "the terrain should obstruct many traces, got " + hits);
     assertTrue(longTraces > 500);
+  }
+
+  @Test
+  void longTracesOfLargeBoxesMatchBruteForceAndDescribeOnlyTouchedCells() {
+    CoordinateTransform t = CoordinateTransform.at(0, 50, 0);
+    TerrainCells terrain = TestTerrain.random(11, -24, 40, -24, 24, 60, 24);
+    BoxSource brute = TestTerrain.bruteForce(terrain, t, -24, 40, -24, 24, 60, 24);
+    List<int[]> described = new ArrayList<>();
+    TerrainCells counting =
+        new TerrainCells() {
+          @Override
+          public void describe(int x, int y, int z, CellSink sink) {
+            // Relative to the transform's origin (0, 50, 0): local block coordinates.
+            described.add(new int[] {x, y - 50, z});
+            terrain.describe(x, y, z, sink);
+          }
+
+          @Override
+          public double maxRise() {
+            return terrain.maxRise();
+          }
+        };
+    GridCollisionSource grid = new GridCollisionSource(counting, t, false);
+    double rise = terrain.maxRise();
+    Random random = new Random(17);
+    int hits = 0;
+    for (int i = 0; i < 400; i++) {
+      // Boxes up to 20 blocks across, sweeping up to 80 blocks diagonally through the region.
+      float[] start = randomPoint(random, t, 40);
+      float[] end = randomPoint(random, t, 40);
+      float[] half = new float[3];
+      for (int axis = 0; axis < 3; axis++) half[axis] = 8 + random.nextFloat() * 320;
+      float[] mins = {-half[0], -half[1], -half[2]};
+      float[] maxs = half.clone();
+      if (i % 4 == 0) end = start.clone();
+      Trace expected = trace(brute, start, end, mins, maxs, Contents.MASK_PLAYERSOLID);
+      described.clear();
+      Trace actual = trace(grid, start, end, mins, maxs, Contents.MASK_PLAYERSOLID);
+      assertEquals(expected.fraction(), actual.fraction(), "trace " + i);
+      assertEquals(expected.startSolid(), actual.startSolid(), "trace " + i);
+      assertEquals(expected.allSolid(), actual.allSolid(), "trace " + i);
+      if (expected.blocked()) hits++;
+      // Every described cell (local block coordinates) is touched by the padded swept box.
+      double s = t.unitsPerBlock();
+      double pad = 0.25 / s;
+      for (int[] c : described) {
+        double[] lo = {c[0] - pad, c[1] - pad, c[2] - pad};
+        double[] hi = {c[0] + 1 + pad, c[1] + 1 + rise + pad, c[2] + 1 + pad};
+        assertTrue(
+            sweptBoxTouches(start, end, mins, maxs, s, lo, hi),
+            () -> "untouched cell " + java.util.Arrays.toString(c));
+      }
+    }
+    assertTrue(hits > 100, "hits " + hits);
+  }
+
+  /** Whether the box swept from {@code start} to {@code end} meets a local cell box (slab test). */
+  private static boolean sweptBoxTouches(
+      float[] start, float[] end, float[] mins, float[] maxs, double s, double[] lo, double[] hi) {
+    double t0 = 0;
+    double t1 = 1;
+    for (int k = 0; k < 3; k++) {
+      int q = k == 0 ? 0 : k == 1 ? 2 : 1;
+      double sign = k == 2 ? -1 : 1;
+      double a = sign * start[q] / s;
+      double d = sign * end[q] / s - a;
+      double boxLo = (k == 2 ? -maxs[q] : mins[q]) / s;
+      double boxHi = (k == 2 ? -mins[q] : maxs[q]) / s;
+      // The box's centre-free form: the swept interval [a + boxLo, a + boxHi] + d t meets [lo, hi].
+      double enterAt = lo[k] - boxHi;
+      double leaveAt = hi[k] - boxLo;
+      if (d == 0) {
+        if (a < enterAt || a > leaveAt) return false;
+        continue;
+      }
+      double e = (enterAt - a) / d;
+      double l = (leaveAt - a) / d;
+      t0 = Math.max(t0, Math.min(e, l));
+      t1 = Math.min(t1, Math.max(e, l));
+    }
+    return t0 <= t1;
   }
 
   @Test

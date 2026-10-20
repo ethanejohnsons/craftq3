@@ -73,6 +73,19 @@ final class RealMatch {
   static Result run(
       Path root, String game, String map, int gametype, int millis, List<String> preferredBots)
       throws Exception {
+    return run(root, game, map, gametype, millis, preferredBots, false);
+  }
+
+  /** With {@code chat}, bots chat ({@code bot_nochat 0}, {@code bot_fastchat 1}). */
+  static Result run(
+      Path root,
+      String game,
+      String map,
+      int gametype,
+      int millis,
+      List<String> preferredBots,
+      boolean chat)
+      throws Exception {
     long started = System.nanoTime();
     try (RealGame real = new RealGame(root, game, new BotlibAdapter())) {
       GameServer server = real.server;
@@ -82,7 +95,8 @@ final class RealMatch {
       server.cvars().set("g_warmup", "0");
       server.cvars().set("g_doWarmup", "0");
       server.cvars().set("bot_minplayers", "0");
-      server.cvars().set("bot_nochat", "1");
+      server.cvars().set("bot_nochat", chat ? "0" : "1");
+      if (chat) server.cvars().set("bot_fastchat", "1");
       if (!server.spawn(map, false))
         return failed(game, map, "spawn failed: " + server.dropReason() + " / " + real.tail(40));
       FileViewAssets files = new FileViewAssets(real.searchPath.view());

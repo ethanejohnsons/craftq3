@@ -41,6 +41,9 @@ final class FakeGame implements GameProgram {
   private int scratch;
   int locateCalls;
 
+  /** Told the client number of every {@code GAME_CLIENT_THINK}. */
+  java.util.function.IntConsumer thinkObserver = client -> {};
+
   @Override
   public String name() {
     return "fake-qagame";
@@ -223,6 +226,7 @@ final class FakeGame implements GameProgram {
           sys(QagameImport.G_SEND_SERVER_COMMAND, a[1], string("print \"echo " + argv(1) + "\""));
       }
       case GAME_CLIENT_THINK -> {
+        thinkObserver.accept(a[1]);
         int cmd = string(" ".repeat(UserCmdLayout.BYTES));
         sys(QagameImport.G_GET_USERCMD, a[1], cmd, 0);
         var usercmd = UserCmdLayout.Q3_132.read(vm.memory(), cmd);

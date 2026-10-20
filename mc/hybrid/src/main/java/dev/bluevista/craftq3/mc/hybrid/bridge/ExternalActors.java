@@ -4,7 +4,6 @@ import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.game.GameServer;
 import dev.bluevista.craftq3.engine.game.world.Contents;
 import dev.bluevista.craftq3.engine.game.world.GameEntities;
-import dev.bluevista.craftq3.engine.vmabi.layout.UserCmdLayout.UserCmd;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -16,9 +15,10 @@ import java.util.Set;
 
 /**
  * Minecraft mobs as qagame players, so the original weapons, splash, knockback and obituaries apply
- * to them unchanged. Each mob gets a host-driven client slot (a "puppet": connected locally, never
- * sending commands, so it never thinks or moves by itself) whose body the host places at the mob's
- * box every tick and hides from snapshots ({@code SVF_NOCLIENT}: Minecraft draws the mob).
+ * to them unchanged. Each mob gets a host-driven client slot ({@code GameServer.connectPuppet}: a
+ * local non-bot client whose server commands are discarded; it is never sent commands, so it never
+ * thinks or moves by itself) whose body the host places at the mob's box every tick and hides from
+ * snapshots ({@code SVF_NOCLIENT}: Minecraft draws the mob).
  *
  * <p>Health without cheats: a client spawns with {@code handicap + 25} health and, never thinking,
  * keeps it. A mob at full health maps to {@link #QUAKE_HEALTH_AT_FULL}, so admitting a puppet with
@@ -187,19 +187,13 @@ public final class ExternalActors {
     GameServer server = game.server();
     spot.park(index);
     try {
-      GameServer.Admission admission = server.connect(userinfo(name, t), "localhost", true, -1);
+      GameServer.Admission admission = server.connectPuppet(userinfo(name, t));
       if (!admission.accepted()) {
         LOG.warnOnce(
             "actor-admission", "A Minecraft mob was refused a slot: " + admission.denied());
         return false;
       }
       int c = admission.client();
-      server.gamestateSent(c);
-      server.userMove(c, List.of(UserCmd.idle(Math.max(1, server.serverTime()))));
-      if (server.client(c).state() != dev.bluevista.craftq3.engine.game.ServerClient.State.ACTIVE) {
-        server.drop(c, "actor did not enter");
-        return false;
-      }
       a.client = c;
       a.name = name;
       a.health = game.stat(c, Loadout.STAT_HEALTH);
@@ -269,7 +263,6 @@ public final class ExternalActors {
       a.health = health;
     }
     hide(game);
-    for (Actor a : actors.values()) if (a.client >= 0) game.discardReliable(a.client);
     return out;
   }
 

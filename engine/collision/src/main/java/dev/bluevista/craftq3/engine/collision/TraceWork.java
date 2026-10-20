@@ -146,6 +146,26 @@ public final class TraceWork {
     }
 
     @Override
+    public float start(int axis) {
+      return start[axis];
+    }
+
+    @Override
+    public float end(int axis) {
+      return end[axis];
+    }
+
+    @Override
+    public float mins(int axis) {
+      return size0[axis];
+    }
+
+    @Override
+    public float maxs(int axis) {
+      return size1[axis];
+    }
+
+    @Override
     public int contentMask() {
       return mask;
     }

@@ -105,6 +105,22 @@ public final class GameServer implements BotHost, AutoCloseable {
 
     /** Client {@code client} was dropped ({@code SV_DropClient}). */
     default void clientDropped(GameServer server, int client, String reason) {}
+
+    /**
+     * Just before {@code GAME_CLIENT_THINK} runs {@code command} for {@code client}: every think,
+     * whatever drives the client ({@link #userMove}, which {@code Protocol68Host} uses for network
+     * and loopback clients, or botlib's user commands). Nothing else runs between this, the think
+     * and {@link #afterClientThink}, so entities linked here are seen by exactly that client's
+     * {@code G_TouchTriggers}. Called inside the game's call stack: the listener must not spawn,
+     * restart or drop clients.
+     */
+    default void beforeClientThink(GameServer server, int client, UserCmd command) {}
+
+    /**
+     * Right after {@code client}'s think, also when it faulted (the level is then already being
+     * dropped; check {@link #state()} before touching game memory).
+     */
+    default void afterClientThink(GameServer server, int client) {}
   }
 
   /** The result of {@link #connect}. */
@@ -144,7 +160,7 @@ public final class GameServer implements BotHost, AutoCloseable {
   private final CvarTable cvars;
   private final ServerOutput output;
   private final AssetLookup files;
-  private final VmFiles vmFiles;
+  private final LevelFiles vmFiles;
   private final MapSource maps;
   private final Function<GameMap, WorldCollision> collisionFactory;
   private final GameProgram.Loader programLoader;
@@ -154,6 +170,7 @@ public final class GameServer implements BotHost, AutoCloseable {
   private final PureManifest pure;
   private final Random random;
   private final List<Listener> listeners = new CopyOnWriteArrayList<>();
+  private volatile Listener[] listenerArray = new Listener[0];
   private final ServerClient[] clients = new ServerClient[Protocol68.MAX_CLIENTS];
   private final ClientSnapshot[] botSnapshots = new ClientSnapshot[Protocol68.MAX_CLIENTS];
   private final Deque<Runnable> deferred = new ArrayDeque<>();
@@ -197,7 +214,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     this.cvars = console.cvars();
     this.output = builder.output;
     this.files = Objects.requireNonNull(builder.files, "files");
-    this.vmFiles = Objects.requireNonNull(builder.vmFiles, "vmFiles");
+    this.vmFiles = new LevelFiles(Objects.requireNonNull(builder.vmFiles, "vmFiles"));
     this.maps = builder.maps != null ? builder.maps : new BspMapSource(files);
     this.collisionFactory =
         builder.collision != null
@@ -275,7 +292,11 @@ public final class GameServer implements BotHost, AutoCloseable {
       return this;
     }
 
-    /** The qagame's {@code trap_FS_*} handles. */
+    /**
+     * The qagame's {@code trap_FS_*} files, shared by every level: at each level end and restart
+     * the server closes only the handles that module instance left open, and it retires the files
+     * ({@link VmFiles#closeAll}) when it closes.
+     */
     public Builder vmFiles(VmFiles value) {
       vmFiles = Objects.requireNonNull(value);
       return this;
@@ -375,6 +396,9 @@ public final class GameServer implements BotHost, AutoCloseable {
     cvars.register(AbiProfile.OVERRIDE_CVAR, "auto", 0);
     cvars.register(BOT_FAILURE_POLICY, "degrade", 0);
     cvars.register(BOT_FAILURE_LIMIT, "8", 0);
+    cvars.register("sv_paused", "0", rom);
+    // The client's read-only cl_paused, forwarded to the server by a local session's ui.
+    cvars.register("cl_paused", "0", CvarFlags.TEMP);
   }
 
   // ---- accessors -------------------------------------------------------------------------------
@@ -402,10 +426,12 @@ public final class GameServer implements BotHost, AutoCloseable {
 
   public void addListener(Listener listener) {
     listeners.add(Objects.requireNonNull(listener));
+    listenerArray = listeners.toArray(Listener[]::new);
   }
 
   public void removeListener(Listener listener) {
     listeners.remove(listener);
+    listenerArray = listeners.toArray(Listener[]::new);
   }
 
   /** {@code sv.time}. */
@@ -662,6 +688,11 @@ public final class GameServer implements BotHost, AutoCloseable {
     for (int i = 0; i < maxClients; i++) {
       ServerClient client = clients[i];
       if (client.state.compareTo(ServerClient.State.CONNECTED) < 0) continue;
+      if (client.puppet) {
+        // The host that drove it re-admits what it still needs on the new level.
+        freePuppet(i, "level changed");
+        continue;
+      }
       boolean bot = client.bot;
       if (bot && killBots) {
         dropClient(i, "");
@@ -773,7 +804,7 @@ public final class GameServer implements BotHost, AutoCloseable {
 
   private void releaseVm() {
     try {
-      vmFiles.closeAll();
+      vmFiles.closeOpen();
     } catch (IOException failure) {
       LOG.warn("Closing qagame files: " + failure.getMessage());
     }
@@ -839,7 +870,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     try {
       callGame(Qagame.GAME_SHUTDOWN.command(), 1);
       try {
-        vmFiles.closeAll();
+        vmFiles.closeOpen();
       } catch (IOException failure) {
         LOG.warn("Closing qagame files: " + failure.getMessage());
       }
@@ -930,6 +961,11 @@ public final class GameServer implements BotHost, AutoCloseable {
     if (vmDepth == 0 && (state == State.RUNNING || state == State.LOADING))
       guarded("close", () -> endLevel(State.IDLE, "Server shutdown", true));
     bots.close();
+    try {
+      vmFiles.closeAll();
+    } catch (IOException failure) {
+      LOG.warn("Closing the game files: " + failure.getMessage());
+    }
     state = State.CLOSED;
   }
 
@@ -951,6 +987,11 @@ public final class GameServer implements BotHost, AutoCloseable {
   private int runFrame(long now) {
     console.frame();
     if (state != State.RUNNING) {
+      lastFrameMillis = now;
+      return 0;
+    }
+    if (checkPaused()) {
+      // Paused time is not caught up afterwards.
       lastFrameMillis = now;
       return 0;
     }
@@ -993,6 +1034,30 @@ public final class GameServer implements BotHost, AutoCloseable {
     return ran;
   }
 
+  /**
+   * {@code SV_CheckPaused}: a local game pauses ({@code cl_paused}) only while at most one human
+   * (neither bot nor puppet) is connected; {@code sv_paused} publishes the state.
+   */
+  private boolean checkPaused() {
+    if (cvars.integer("cl_paused") == 0) {
+      if (cvars.integer("sv_paused") != 0) cvars.set("sv_paused", "0");
+      return false;
+    }
+    int humans = 0;
+    for (int i = 0; i < maxClients; i++) {
+      ServerClient client = clients[i];
+      if (client.state.compareTo(ServerClient.State.CONNECTED) >= 0
+          && !client.bot
+          && !client.puppet) humans++;
+    }
+    if (humans > 1) {
+      if (cvars.integer("sv_paused") != 0) cvars.set("sv_paused", "0");
+      return false;
+    }
+    if (cvars.integer("sv_paused") == 0) cvars.set("sv_paused", "1");
+    return true;
+  }
+
   private void botFrame(int time) {
     if (cvars.integer("bot_enable") == 0 || vm == null) return;
     callGame(Qagame.BOTAI_START_FRAME.command(), time);
@@ -1016,7 +1081,7 @@ public final class GameServer implements BotHost, AutoCloseable {
         client.ping = 999;
         continue;
       }
-      if (client.bot || (entities.svFlags(i) & Contents.SVF_BOT) != 0) {
+      if (client.bot || client.puppet || (entities.svFlags(i) & Contents.SVF_BOT) != 0) {
         client.ping = 0;
         continue;
       }
@@ -1035,7 +1100,7 @@ public final class GameServer implements BotHost, AutoCloseable {
         client.reset();
         continue;
       }
-      if (client.bot || client.local) continue;
+      if (client.bot || client.puppet || client.local) continue;
       if (client.state.compareTo(ServerClient.State.CONNECTED) >= 0
           && client.lastPacketTime < dropPoint) {
         if (++client.timeoutCount > 5) {
@@ -1088,6 +1153,8 @@ public final class GameServer implements BotHost, AutoCloseable {
 
   /** {@code SV_AddServerCommand}: appends to the client's reliable window; overflow drops it. */
   void addServerCommand(ServerClient client, String text) {
+    // Nobody reads a puppet's commands; a window would only fill up and overflow.
+    if (client.puppet) return;
     client.reliableSequence++;
     if (client.reliableSequence - client.reliableAcknowledge == ServerClient.MAX_RELIABLE + 1) {
       output.print("===== pending server commands =====");
@@ -1170,11 +1237,44 @@ public final class GameServer implements BotHost, AutoCloseable {
    */
   public Admission connect(String userinfo, String address, boolean local, int reuse) {
     Admission[] result = {new Admission(-1, "Server is not running.")};
-    guarded("connect", () -> result[0] = admit(userinfo, address, local, reuse));
+    guarded("connect", () -> result[0] = admit(userinfo, address, local, reuse, false));
     return result[0];
   }
 
-  private Admission admit(String userinfo, String address, boolean local, int reuse) {
+  /**
+   * Admits a {@linkplain ServerClient#isPuppet puppet}: a local, non-bot client the caller drives
+   * itself (e.g. an outside creature mirrored into the game). The game sees an ordinary local
+   * player ({@code GAME_CLIENT_CONNECT} with {@code isBot} 0, {@code ip} {@code localhost}, no
+   * {@code SVF_BOT}, so every {@code g_*} rule treats it as a human) that enters the world at once;
+   * it thinks only when the caller sends it commands through {@link #userMove}. Unlike a network
+   * client, server commands to it are discarded, the server prints no connect or drop announcements
+   * for it (the game's own {@code ClientConnect} and {@code ClientDisconnect} prints still happen),
+   * a drop frees the slot at once, and a new level frees it.
+   *
+   * @return the admission; when accepted the slot is {@link ServerClient.State#ACTIVE}
+   */
+  public Admission connectPuppet(String userinfo) {
+    Admission[] result = {new Admission(-1, "Server is not running.")};
+    guarded(
+        "connect puppet",
+        () -> {
+          Admission admission = admit(userinfo, "localhost", true, -1, true);
+          if (admission.accepted()) {
+            ServerClient slot = clients[admission.client()];
+            slot.ping = 0;
+            enterWorld(admission.client(), UserCmd.idle(Math.max(1, svsTime)));
+            if (slot.state != ServerClient.State.ACTIVE) {
+              freePuppet(admission.client(), "did not enter the world");
+              admission = new Admission(-1, "The puppet did not enter the world");
+            }
+          }
+          result[0] = admission;
+        });
+    return result[0];
+  }
+
+  private Admission admit(
+      String userinfo, String address, boolean local, int reuse, boolean puppet) {
     if (state != State.RUNNING) return new Admission(-1, "Server is not running.");
     String info = InfoText.setValueForKey(userinfo, "ip", address, Protocol68.MAX_INFO_STRING);
     int slot = -1;
@@ -1191,7 +1291,7 @@ public final class GameServer implements BotHost, AutoCloseable {
               : Math.clamp(cvars.integer("sv_privateClients"), 0, maxClients);
       for (int i = start; i < maxClients && slot < 0; i++)
         if (clients[i].state == ServerClient.State.FREE) slot = i;
-      if (slot < 0 && local) {
+      if (slot < 0 && local && !puppet) {
         int botCount = 0;
         for (int i = start; i < maxClients; i++) if (clients[i].bot) botCount++;
         if (botCount == maxClients - start && maxClients > start) {
@@ -1205,6 +1305,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     ServerClient client = clients[slot];
     client.reset();
     client.local = local;
+    client.puppet = puppet;
     client.address = address;
     client.userinfo = info;
     client.lastUsercmd = UserCmd.idle(0);
@@ -1218,7 +1319,7 @@ public final class GameServer implements BotHost, AutoCloseable {
     client.nextSnapshotTime = svsTime;
     client.lastPacketTime = svsTime;
     client.lastConnectTime = svsTime;
-    output.print("Client " + slot + " connecting: " + client.name);
+    if (!puppet) output.print("Client " + slot + " connecting: " + client.name);
     return new Admission(slot, null);
   }
 
@@ -1318,7 +1419,14 @@ public final class GameServer implements BotHost, AutoCloseable {
     ServerClient slot = clients[client];
     slot.lastUsercmd = command;
     if (slot.state != ServerClient.State.ACTIVE) return;
-    callGame(Qagame.GAME_CLIENT_THINK.command(), client);
+    // A snapshot array: no iterator per think, and stable if a listener is removed meanwhile.
+    Listener[] hooks = listenerArray;
+    for (Listener hook : hooks) hook.beforeClientThink(this, client, command);
+    try {
+      callGame(Qagame.GAME_CLIENT_THINK.command(), client);
+    } finally {
+      for (Listener hook : hooks) hook.afterClientThink(this, client);
+    }
   }
 
   /**
@@ -1374,6 +1482,11 @@ public final class GameServer implements BotHost, AutoCloseable {
     ServerClient slot = clients[client];
     if (slot.state == ServerClient.State.ZOMBIE || slot.state == ServerClient.State.FREE) return;
     boolean bot = slot.bot;
+    if (slot.puppet) {
+      if (vm != null && !vm.faulted()) callGame(Qagame.GAME_CLIENT_DISCONNECT.command(), client);
+      freePuppet(client, reason);
+      return;
+    }
     sendServerCommandToAll("print \"" + slot.name + "^7 " + reason + "\n\"");
     if (vm != null && !vm.faulted()) callGame(Qagame.GAME_CLIENT_DISCONNECT.command(), client);
     addServerCommand(slot, "disconnect \"" + reason + "\"");
@@ -1385,6 +1498,12 @@ public final class GameServer implements BotHost, AutoCloseable {
       slot.state = ServerClient.State.ZOMBIE;
       slot.lastPacketTime = svsTime;
     }
+    for (Listener listener : listeners) listener.clientDropped(this, client, reason);
+  }
+
+  /** Frees a puppet's slot at once: there is no connection to deliver a disconnect to. */
+  private void freePuppet(int client, String reason) {
+    clients[client].reset();
     for (Listener listener : listeners) listener.clientDropped(this, client, reason);
   }
 

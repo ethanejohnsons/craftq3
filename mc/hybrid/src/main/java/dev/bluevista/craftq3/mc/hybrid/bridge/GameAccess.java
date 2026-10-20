@@ -115,12 +115,6 @@ final class GameAccess {
     server.world().unlink(e);
   }
 
-  /** Acknowledges every reliable command of a client nobody reads (puppets, headless players). */
-  void discardReliable(int client) {
-    var slot = server.client(client);
-    slot.acknowledgeReliable(slot.reliableSequence());
-  }
-
   private static void writeVec(QvmMemory m, int address, float x, float y, float z) {
     m.writeFloat(address, x);
     m.writeFloat(address + 4, y);

@@ -200,6 +200,63 @@ class BrushTraceTest {
     assertEquals(1, hit.planeSignbits());
   }
 
+  @Test
+  void sourcesSeeTheTracesCentredBoxAndSegment() {
+    var model = CollisionModel.build(emptyMap());
+    float[][] seen = new float[6][3];
+    boolean[] position = new boolean[1];
+    CollisionSource probe =
+        new CollisionSource() {
+          @Override
+          public void clip(TraceClipper c) {
+            for (int axis = 0; axis < 3; axis++) {
+              seen[0][axis] = c.start(axis);
+              seen[1][axis] = c.end(axis);
+              seen[2][axis] = c.mins(axis);
+              seen[3][axis] = c.maxs(axis);
+              seen[4][axis] = c.sweptMin(axis);
+              seen[5][axis] = c.sweptMax(axis);
+            }
+            position[0] = c.positionTest();
+            c.clipBox(-1000, -1000, -10, 1000, 1000, 0, Contents.SOLID, 0);
+          }
+
+          @Override
+          public int pointContents(float x, float y, float z) {
+            return 0;
+          }
+        };
+    Trace out = new Trace();
+    model.boxTrace(
+        model.work(),
+        out,
+        v(10, 20, 100),
+        v(-30, 50, 4),
+        PLAYER_MINS,
+        PLAYER_MAXS,
+        0,
+        Contents.SOLID,
+        false,
+        probe);
+    // The player box's centre sits 4 units above its origin; its half-size is 15, 15, 28.
+    assertArrayEquals(v(10, 20, 104), seen[0]);
+    assertArrayEquals(v(-30, 50, 8), seen[1]);
+    assertArrayEquals(v(-15, -15, -28), seen[2]);
+    assertArrayEquals(v(15, 15, 28), seen[3]);
+    assertArrayEquals(v(-45, 5, -20), seen[4]);
+    assertArrayEquals(v(25, 65, 132), seen[5]);
+    assertFalse(position[0]);
+    // The context agrees with the result: the box's feet reach the floor at z = 0.
+    assertEquals(24 + Clip.SURFACE_CLIP_EPSILON, out.endPos(2), 0.01f);
+
+    model.boxTrace(
+        model.work(), out, v(1, 2, 3), v(1, 2, 3), null, null, 0, Contents.SOLID, false, probe);
+    assertArrayEquals(v(1, 2, 3), seen[0]);
+    assertArrayEquals(v(1, 2, 3), seen[1]);
+    assertArrayEquals(v(0, 0, 0), seen[3]);
+    assertTrue(position[0]);
+  }
+
   static BspMap emptyMap() {
     TestMap map = new TestMap();
     map.texture("textures/none", 0, 0);

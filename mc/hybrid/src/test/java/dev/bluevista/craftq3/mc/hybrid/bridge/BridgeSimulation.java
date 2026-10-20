@@ -132,7 +132,7 @@ final class BridgeSimulation implements AutoCloseable {
     terrain.invalidate();
     host.syncActors(targets);
     commandTime = Math.max(commandTime + TICK, server.levelTime());
-    host.userMove(
+    server.userMove(
         player,
         List.of(new UserCmd(commandTime, pitch, yaw, 0, buttons, weapon, forward, right, up)));
     now += TICK;

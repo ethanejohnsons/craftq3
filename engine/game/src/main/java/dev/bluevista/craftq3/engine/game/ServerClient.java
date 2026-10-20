@@ -7,9 +7,10 @@ import java.util.Map;
 
 /**
  * One client slot ({@code client_t}): its connection state, userinfo, last user command, snapshot
- * schedule and the reliable server-command window. Bots and network clients share the slot type; a
- * network client's commands are drained to its connection by {@code Protocol68Host}, a bot's are
- * read by botlib's {@code GetConsoleMessage}. Owned by the simulation thread.
+ * schedule and the reliable server-command window. Bots, puppets and network clients share the slot
+ * type; a network client's commands are drained to its connection by {@code Protocol68Host}, a
+ * bot's are read by botlib's {@code GetConsoleMessage}, a {@linkplain #isPuppet puppet} has none.
+ * Owned by the simulation thread.
  */
 public final class ServerClient {
   /** {@code clientState_t}. */
@@ -30,6 +31,7 @@ public final class ServerClient {
   private final int number;
   State state = State.FREE;
   boolean bot;
+  boolean puppet;
   boolean local;
   String address = "";
   String userinfo = "";
@@ -63,6 +65,15 @@ public final class ServerClient {
 
   public boolean isBot() {
     return bot;
+  }
+
+  /**
+   * A puppet: a local slot the host drives itself (no connection, no botlib). Server commands to it
+   * are discarded instead of filling a reliable window nobody acknowledges, and the server's own
+   * connect and drop announcements skip it.
+   */
+  public boolean isPuppet() {
+    return puppet;
   }
 
   /** A loopback (local player) connection: snapshots every frame, never rate limited. */
@@ -155,6 +166,7 @@ public final class ServerClient {
   void reset() {
     state = State.FREE;
     bot = false;
+    puppet = false;
     local = false;
     address = "";
     userinfo = "";
@@ -176,6 +188,13 @@ public final class ServerClient {
 
   @Override
   public String toString() {
-    return "client " + number + " (" + state + (bot ? ", bot" : "") + ", " + name + ")";
+    return "client "
+        + number
+        + " ("
+        + state
+        + (bot ? ", bot" : puppet ? ", puppet" : "")
+        + ", "
+        + name
+        + ")";
   }
 }

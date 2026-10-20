@@ -30,6 +30,15 @@ final class Harness {
   }
 
   Harness(Supplier<GameMap> map, dev.bluevista.craftq3.engine.fs.PureManifest pure) {
+    this(map, pure, new NoFiles());
+  }
+
+  /** Over the corridor map with the given game files. */
+  Harness(VmFiles files) {
+    this(TestMaps::corridor, null, files);
+  }
+
+  Harness(Supplier<GameMap> map, dev.bluevista.craftq3.engine.fs.PureManifest pure, VmFiles files) {
     MapSource maps =
         new MapSource() {
           @Override
@@ -47,7 +56,7 @@ final class Harness {
     server =
         GameServer.builder()
             .files(new MemoryAssets())
-            .vmFiles(new NoFiles())
+            .vmFiles(files)
             .maps(maps)
             .program(() -> game)
             .bots(new dev.bluevista.craftq3.engine.game.bot.NoBotlib())

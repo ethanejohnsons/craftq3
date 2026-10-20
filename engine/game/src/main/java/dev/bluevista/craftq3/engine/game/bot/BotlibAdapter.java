@@ -35,6 +35,9 @@ public final class BotlibAdapter implements BotSupport {
   /** Per-state owner client for failure attribution (-1: unknown). */
   final int[] goalStateClient = filled(), moveStateClient = filled(), chatStateClient = filled();
 
+  /** Retail chat names by chat state, re-applied when the speaker becomes known. */
+  final String[] chatStateName = new String[256];
+
   private static int[] filled() {
     int[] values = new int[256];
     Arrays.fill(values, -1);

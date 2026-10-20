@@ -59,6 +59,9 @@ dependencies {
         attributes { attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR)) }
     }
     implementation project(':engine:common') // ManualClock for deterministic shader time
+    implementation project(':engine:audio') // AudioDevice SPI types for the audio client test
+    implementation project(':engine:fs') // SearchPath for the installation tests
+    implementation project(':engine:console') // KeyNames for the input client test
 }
 
 processResources {

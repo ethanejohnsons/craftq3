@@ -4,7 +4,12 @@
   "package": "dev.bluevista.craftq3.mc.fabric.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "GameRendererMixin"
+    "ChannelAccessor",
+    "GameRendererMixin",
+    "MouseHandlerMixin",
+    "SoundEngineAccessor",
+    "SoundEngineMixin",
+    "SoundManagerAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

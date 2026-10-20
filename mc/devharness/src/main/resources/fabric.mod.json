@@ -8,7 +8,11 @@
   "license": "GPL-3.0-only",
   "entrypoints": {
     "fabric-gametest": ["dev.bluevista.craftq3.mc.devharness.CraftQ3ServerGameTests"],
-    "fabric-client-gametest": ["dev.bluevista.craftq3.mc.devharness.client.Q3SpikeClientTest"]
+    "fabric-client-gametest": [
+      "dev.bluevista.craftq3.mc.devharness.client.Q3SpikeClientTest",
+      "dev.bluevista.craftq3.mc.devharness.client.Q3AudioClientTest",
+      "dev.bluevista.craftq3.mc.devharness.client.Q3InputClientTest"
+    ]
   },
   "depends": {
     "craftq3": "*",

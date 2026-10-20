@@ -1,4 +1,10 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:formats')
+    testImplementation project(':engine:testkit')
+    testImplementation testFixtures(project(':engine:formats'))
+}
+tasks.named('test') {
+    // The opt-in real-data sweep builds every map's collision model in turn.
+    maxHeapSize = '2g'
 }

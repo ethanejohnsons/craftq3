@@ -237,6 +237,23 @@ final class GameServerTest {
     assertTrue(h.game.log.contains("shutdown restart=0"));
   }
 
+  @Test
+  void botlibFailuresMarkTheBotAndTheKickPolicyRemovesIt() {
+    Harness h = new Harness().spawn();
+    h.server.execute("fakebot Anarki");
+    h.server.botFailed(0, new IllegalStateException("route failed"));
+    assertTrue(h.server.client(0).botDegraded());
+    assertEquals(ServerClient.State.ACTIVE, h.server.client(0).state(), "degrade is the default");
+    h.server.cvars().set(GameServer.BOT_FAILURE_POLICY, "kick");
+    h.server.cvars().set(GameServer.BOT_FAILURE_LIMIT, "3");
+    h.server.botFailed(0, new IllegalStateException("route failed"));
+    h.server.botFailed(0, new IllegalStateException("route failed"));
+    h.run(100);
+    assertEquals(ServerClient.State.FREE, h.server.client(0).state());
+    h.server.botFailed(5, new IllegalStateException("not a bot"));
+    assertFalse(h.server.client(5).botDegraded());
+  }
+
   static UserCmd cmd(int time, int forward) {
     return new UserCmd(time, 0, 0, 0, 0, 0, forward, 0, 0);
   }

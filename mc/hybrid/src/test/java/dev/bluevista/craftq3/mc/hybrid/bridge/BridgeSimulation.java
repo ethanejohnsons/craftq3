@@ -6,6 +6,7 @@ import dev.bluevista.craftq3.engine.formats.FileViewAssets;
 import dev.bluevista.craftq3.engine.fs.SearchPath;
 import dev.bluevista.craftq3.engine.game.GameServer;
 import dev.bluevista.craftq3.engine.game.ServerClient;
+import dev.bluevista.craftq3.engine.game.map.BspMapSource;
 import dev.bluevista.craftq3.engine.game.world.GameEntities;
 import dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout;
 import dev.bluevista.craftq3.engine.vmabi.layout.UserCmdLayout.UserCmd;
@@ -43,13 +44,20 @@ final class BridgeSimulation implements AutoCloseable {
 
   BridgeSimulation(Path root, TerrainCells cells, CoordinateTransform transform)
       throws IOException {
+    this(root, cells, transform, false);
+  }
+
+  /** With {@code realMaps}, maps come from the game's files with host triggers added. */
+  BridgeSimulation(Path root, TerrainCells cells, CoordinateTransform transform, boolean realMaps)
+      throws IOException {
     this.transform = transform;
     search = SearchPath.mount(root, SearchPath.BASE_GAME);
+    FileViewAssets files = new FileViewAssets(search.view());
     server =
         GameServer.builder()
-            .files(new FileViewAssets(search.view()))
+            .files(files)
             .vmFiles(FsVmFiles.of(search, null, root))
-            .maps(maps)
+            .maps(realMaps ? new HostTriggerMapSource(new BspMapSource(files)) : maps)
             .clocks(clock, java.time.Clock.systemDefaultZone())
             .seed(7)
             .output(
@@ -70,7 +78,12 @@ final class BridgeSimulation implements AutoCloseable {
   /** Spawns the bridge level with the player at {@code spawn} and the given items. */
   boolean start(Vec3f spawn, List<SyntheticMapSource.ItemSpawn> items) {
     maps.prepare(new SyntheticMapSource.World(terrain, spawn, 0, items, "test bridge"));
-    if (!server.spawn(SyntheticMapSource.MAP_NAME, true)) return false;
+    return startMap(SyntheticMapSource.MAP_NAME);
+  }
+
+  /** Spawns {@code map} and (re)admits the player. */
+  boolean startMap(String map) {
+    if (!server.spawn(map, true)) return false;
     if (player < 0) {
       GameServer.Admission admission =
           server.connect(

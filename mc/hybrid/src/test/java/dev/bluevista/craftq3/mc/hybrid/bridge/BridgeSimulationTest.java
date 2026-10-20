@@ -154,4 +154,37 @@ class BridgeSimulationTest {
       assertTrue(raised.powerupMillis(1) > 19_000, "quad left " + raised.powerupMillis(1));
     }
   }
+
+  @Test
+  void bridgeLoadoutCarriesIntoARealMatch() throws Exception {
+    CoordinateTransform t = CoordinateTransform.at(0, 64, 0);
+    try (BridgeSimulation sim = new BridgeSimulation(RealDataRoot.require(), TERRAIN, t, true)) {
+      assertTrue(sim.startMap("q3dm17"), sim::tail);
+      assertTrue(sim.host.triggersReady(), "host triggers added to q3dm17");
+      assertEquals(
+          sim.server.map().bsp().models().size() - HostTriggers.MODELS,
+          HostTriggerMapSource.firstHostModel(sim.server.map()));
+      int[] ammo = new int[16];
+      ammo[2] = 120;
+      ammo[5] = 7;
+      ammo[7] = 4;
+      int[] powerups = new int[16];
+      powerups[3] = 12_000; // haste
+      int weapons = 1 << 1 | 1 << 2 | 1 << 5 | 1 << 7;
+      Loadout carried = new Loadout(57, 120, weapons, 5, 0, ammo, powerups);
+      sim.host.restoreLoadout(carried);
+      for (int i = 0; i < 40 && sim.host.restoring(); i++) sim.idle(1);
+      assertFalse(sim.host.restoring(), sim::tail);
+      Loadout in = sim.host.captureLoadout().orElseThrow();
+      assertEquals(57, in.health());
+      assertEquals(120, in.armor());
+      assertEquals(weapons, in.weapons());
+      assertEquals(5, in.weapon());
+      assertEquals(Arrays.toString(ammo), Arrays.toString(in.ammo()));
+      assertTrue(in.powerupMillis(3) > 11_000);
+      // The game's own rules still apply: the rocket launcher fires and uses ammo.
+      for (int i = 0; i < 20; i++) sim.tick(0, 0, BUTTON_ATTACK, 5, 0, 0, 0);
+      assertTrue(sim.ammo(5) < 7, "rockets fired: " + sim.ammo(5));
+    }
+  }
 }

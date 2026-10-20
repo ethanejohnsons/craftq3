@@ -12,12 +12,12 @@ import java.util.function.Function;
 
 /**
  * The {@code trap_PC_*} handle table of one VM: {@value #MAX_SOURCES} open script sources read
- * through a {@link ScriptPrecompiler}, and the global defines added to every source loaded later.
- * A script error is printed once and ends that source, as the original prints the error and its
- * read returns 0.
+ * through a {@link ScriptPrecompiler}, and the global defines added to every source loaded later. A
+ * script error is printed once and ends that source, as the original prints the error and its read
+ * returns 0.
  *
- * <p>Guest layout of {@code pc_token_t}: {@code int type, subtype, intvalue; float floatvalue;
- * char string[1024]}.
+ * <p>Guest layout of {@code pc_token_t}: {@code int type, subtype, intvalue; float floatvalue; char
+ * string[1024]}.
  */
 public final class ScriptSources {
   /** {@code MAX_SOURCEFILES}. */

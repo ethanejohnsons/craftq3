@@ -19,13 +19,15 @@ import java.util.function.Function;
  * <ul>
  *   <li>{@code #include "file"} and {@code #include <file>}, read through the game file system;
  *   <li>{@code #define} of object-like and function-like macros (with {@code #} stringizing and
- *       {@code ##} pasting), {@code #undef}, global defines added by {@code trap_PC_AddGlobalDefine};
+ *       {@code ##} pasting), {@code #undef}, global defines added by {@code
+ *       trap_PC_AddGlobalDefine};
  *   <li>{@code #if}, {@code #ifdef}, {@code #ifndef}, {@code #elif}, {@code #else}, {@code #endif}
  *       with integer and float expressions and {@code defined};
  *   <li>{@code #eval}/{@code #evalfloat} and {@code $evalint(..)}/{@code $evalfloat(..)}, which
  *       replace an expression by its value; {@code #line} and {@code #pragma} are ignored, {@code
  *       #error} ends the script;
- *   <li>the built-in macros {@code __LINE__}, {@code __FILE__}, {@code __DATE__} and {@code __TIME__};
+ *   <li>the built-in macros {@code __LINE__}, {@code __FILE__}, {@code __DATE__} and {@code
+ *       __TIME__};
  *   <li>adjacent string tokens are joined, as the lexer already does within a file.
  * </ul>
  *
@@ -48,7 +50,8 @@ public final class ScriptPrecompiler {
     }
   }
 
-  private record Conditional(boolean parentActive, boolean active, boolean taken, boolean sawElse) {}
+  private record Conditional(
+      boolean parentActive, boolean active, boolean taken, boolean sawElse) {}
 
   private final Function<String, Optional<String>> files;
   private final Deque<ScriptLexer> sources = new ArrayDeque<>();
@@ -63,7 +66,10 @@ public final class ScriptPrecompiler {
    * @param globalDefines {@code trap_PC_AddGlobalDefine} strings, e.g. {@code "MISSIONPACK 1"}
    */
   public ScriptPrecompiler(
-      String file, String text, Function<String, Optional<String>> files, List<String> globalDefines) {
+      String file,
+      String text,
+      Function<String, Optional<String>> files,
+      List<String> globalDefines) {
     this.files = Objects.requireNonNull(files);
     for (String global : globalDefines) defineFromString(global);
     sources.push(new ScriptLexer(file, text));
@@ -305,7 +311,8 @@ public final class ScriptPrecompiler {
 
   private void directiveUndef() {
     ScriptToken name = lineToken();
-    if (name == null || name.type() != ScriptToken.TT_NAME) throw error("expected name after #undef");
+    if (name == null || name.type() != ScriptToken.TT_NAME)
+      throw error("expected name after #undef");
     skipLine();
     defines.remove(name.text());
   }
@@ -480,7 +487,9 @@ public final class ScriptPrecompiler {
 
   private ScriptToken evaluateLine(boolean real, int line) {
     Value value = evaluate(lineTokens(), true);
-    return real ? ScriptToken.real(value.asDouble(), line) : ScriptToken.integer(value.asLong(), line);
+    return real
+        ? ScriptToken.real(value.asDouble(), line)
+        : ScriptToken.integer(value.asLong(), line);
   }
 
   private ScriptToken evaluateDollar(boolean real, int line) {
@@ -499,7 +508,9 @@ public final class ScriptPrecompiler {
       expression.add(token);
     }
     Value value = evaluate(expression, true);
-    return real ? ScriptToken.real(value.asDouble(), line) : ScriptToken.integer(value.asLong(), line);
+    return real
+        ? ScriptToken.real(value.asDouble(), line)
+        : ScriptToken.integer(value.asLong(), line);
   }
 
   /** A number in an expression; integers stay integral until a float joins them. */

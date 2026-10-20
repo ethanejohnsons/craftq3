@@ -27,8 +27,8 @@ import java.util.Set;
  *   <li>Escape clears message mode, then the cgame catcher; without a ui catcher it asks the {@link
  *       Hooks} to open a menu; otherwise it goes to the ui.
  *   <li>Other key presses go, in order, to the console, ui, cgame or message target named by the
- *       catcher mask, to the console while disconnected, and otherwise to the key's binding,
- *       whose {@code +commands} carry the key number and time.
+ *       catcher mask, to the console while disconnected, and otherwise to the key's binding, whose
+ *       {@code +commands} carry the key number and time.
  *   <li>Releases always release a held binding (so a button never sticks) and are also reported to
  *       a catching ui or cgame.
  *   <li>Characters ({@link #charEvent}) go to the console, the ui (with {@link #K_CHAR_FLAG}) or
@@ -38,12 +38,12 @@ import java.util.Set;
  *
  * <h2>User commands ({@code CL_CreateCmd})</h2>
  *
- * The {@code +forward}.. buttons track every key holding them and the time each was held within
- * the frame, so a tap shorter than a frame still moves a fraction. Keyboard turning uses {@code
+ * The {@code +forward}.. buttons track every key holding them and the time each was held within the
+ * frame, so a tap shorter than a frame still moves a fraction. Keyboard turning uses {@code
  * cl_yawspeed}/{@code cl_pitchspeed} ({@code cl_anglespeedkey} with {@code +speed}), mouse turning
  * {@code sensitivity} (times the cgame's zoom scale), {@code m_yaw}, {@code m_pitch}, {@code
- * m_filter} and {@code cl_mouseAccel}; {@code cl_run} selects running unless {@code +speed}
- * inverts it. Pitch is clamped against the server's delta angle.
+ * m_filter} and {@code cl_mouseAccel}; {@code cl_run} selects running unless {@code +speed} inverts
+ * it. Pitch is clamped against the server's delta angle.
  *
  * <p>Single owner thread (the render thread).
  */
@@ -70,8 +70,19 @@ public final class ClientInput {
 
   private static final int BUTTON_COUNT = 15;
   private static final String[] MOVES = {
-    "forward", "back", "moveleft", "moveright", "moveup", "movedown", "left", "right", "lookup",
-    "lookdown", "speed", "strafe", "mlook"
+    "forward",
+    "back",
+    "moveleft",
+    "moveright",
+    "moveup",
+    "movedown",
+    "left",
+    "right",
+    "lookup",
+    "lookdown",
+    "speed",
+    "strafe",
+    "mlook"
   };
 
   /** Session callbacks for keys the input layer cannot resolve itself. */
@@ -332,7 +343,8 @@ public final class ClientInput {
     for (var entry : moves.entrySet())
       sampled.put(entry.getKey(), entry.getValue().sample(frameTime, duration));
     Sample[] buttonSamples = new Sample[BUTTON_COUNT];
-    for (int i = 0; i < BUTTON_COUNT; i++) buttonSamples[i] = buttons[i].sample(frameTime, duration);
+    for (int i = 0; i < BUTTON_COUNT; i++)
+      buttonSamples[i] = buttons[i].sample(frameTime, duration);
 
     boolean speed = sampled.get("speed").active();
     boolean strafe = sampled.get("strafe").active();
@@ -341,8 +353,7 @@ public final class ClientInput {
 
     // Keyboard turning.
     double seconds = Math.min(duration, 200) * 0.001 * (speed ? number("cl_anglespeedkey") : 1);
-    if (!strafe)
-      yaw -= seconds * number("cl_yawspeed") * axis(sampled, "right", "left");
+    if (!strafe) yaw -= seconds * number("cl_yawspeed") * axis(sampled, "right", "left");
     pitch += seconds * number("cl_pitchspeed") * axis(sampled, "lookdown", "lookup");
 
     // Mouse.

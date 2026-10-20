@@ -163,14 +163,7 @@ public final class ScriptLexer {
       throw error("too many characters in literal");
     position++;
     return new ScriptToken(
-        ScriptToken.TT_LITERAL,
-        value,
-        "'" + value + "'",
-        value,
-        value,
-        tokenLine,
-        crossed,
-        space);
+        ScriptToken.TT_LITERAL, value, "'" + value + "'", value, value, tokenLine, crossed, space);
   }
 
   /** Reads an escape sequence at the backslash and returns the character it stands for. */
@@ -250,7 +243,8 @@ public final class ScriptLexer {
         } else break;
       }
       boolean exponent = false;
-      if (position < text.length() && (text.charAt(position) == 'e' || text.charAt(position) == 'E')) {
+      if (position < text.length()
+          && (text.charAt(position) == 'e' || text.charAt(position) == 'E')) {
         int mark = position + 1;
         if (mark < text.length() && (text.charAt(mark) == '+' || text.charAt(mark) == '-')) mark++;
         if (mark < text.length() && isDigit(text.charAt(mark))) {
@@ -264,7 +258,9 @@ public final class ScriptLexer {
         real = Double.parseDouble(digits.startsWith(".") ? "0" + digits : digits);
         value = (long) real;
         subtype = ScriptToken.TT_DECIMAL | ScriptToken.TT_FLOAT;
-      } else if (digits.length() > 1 && digits.charAt(0) == '0' && digits.chars().allMatch(d -> d < '8')) {
+      } else if (digits.length() > 1
+          && digits.charAt(0) == '0'
+          && digits.chars().allMatch(d -> d < '8')) {
         for (int i = 1; i < digits.length(); i++) value = value * 8 + digits.charAt(i) - '0';
         real = value;
         subtype = ScriptToken.TT_OCTAL | ScriptToken.TT_INTEGER;

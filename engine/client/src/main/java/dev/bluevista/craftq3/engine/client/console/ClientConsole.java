@@ -16,13 +16,13 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * The drop-down console: the scroll-back of printed lines and the input field ({@code Console_Key}).
- * Enter executes a line starting with {@code /} or {@code \} as a command; other text is a command
- * while disconnected and chat ({@code cmd say}) while in a game. Tab completes, the arrow keys walk
- * the history, page keys scroll.
+ * The drop-down console: the scroll-back of printed lines and the input field ({@code
+ * Console_Key}). Enter executes a line starting with {@code /} or {@code \} as a command; other
+ * text is a command while disconnected and chat ({@code cmd say}) while in a game. Tab completes,
+ * the arrow keys walk the history, page keys scroll.
  *
- * <p>It is also the {@link ConsoleOutput} the VMs and engine print to; every line is forwarded to an
- * optional mirror (the host's log).
+ * <p>It is also the {@link ConsoleOutput} the VMs and engine print to; every line is forwarded to
+ * an optional mirror (the host's log).
  */
 public final class ClientConsole implements ConsoleOutput, KeyTarget {
   /** Lines of scroll-back kept. */

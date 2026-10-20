@@ -81,14 +81,7 @@ public record ScriptToken(
   /** A decimal integer token. */
   public static ScriptToken integer(long value, int line) {
     return new ScriptToken(
-        TT_NUMBER,
-        TT_DECIMAL | TT_INTEGER,
-        Long.toString(value),
-        value,
-        value,
-        line,
-        0,
-        true);
+        TT_NUMBER, TT_DECIMAL | TT_INTEGER, Long.toString(value), value, value, line, 0, true);
   }
 
   /** A decimal float token. */
@@ -100,8 +93,7 @@ public record ScriptToken(
 
   /** A string token; {@code contents} is without quotes. */
   public static ScriptToken string(String contents, int line) {
-    return new ScriptToken(
-        TT_STRING, contents.length(), '"' + contents + '"', 0, 0, line, 0, true);
+    return new ScriptToken(TT_STRING, contents.length(), '"' + contents + '"', 0, 0, line, 0, true);
   }
 
   @Override

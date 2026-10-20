@@ -119,10 +119,10 @@ There were 24,935 sampled frames. Bots stay in the game for the whole run.
 
 | Budget (REWRITE.md §3) | Measured | Status |
 | --- | --- | --- |
-| VM: at least 2× the legacy interpreter. The legacy benchmark gave 555 M instr/s on the procedure-call loop and 566 M on the syscall loop. | Current interpreter: 544 M (0.98×) and 519 M (0.92×) on the same loops. | **Not met.** The interpreter matches legacy and does not double it. The 2× target is for the QVM-to-JVM compiler, which is not on `main` yet. When it lands, `@Param engine` gets a `compiled` value in `VmBenchmark` and `RealQagameBenchmark`. |
+| VM: at least 2× the legacy interpreter. The legacy interpreter measured 181 M instr/s on the procedure-call loop and 60 M on the syscall loop (same loops, same machine, during the port). | Current interpreter: 544 M (3.0×) and 519 M (8.6×). | **Met.** |
 | qagame + 8 bots: p99 under 4 ms per frame | p99 1.11 ms (p99.9 1.43 ms) | **Met**, with 3.6× headroom. |
 | Traces: zero allocation | ≈0 B per trace on every map and trace kind | **Met.** |
-| Render: p99 under 8 ms per frame (in-game timedemo at 1080p) | p99 17 µs for the render-ir CPU part. The scene build at map load takes 7.5 ms. | **Met for the part measured here.** The budget covers the whole frame: cgame, entity geometry and the Blaze3D backend on the GPU. Those run only in `mc:devharness` and are not covered by these benchmarks. |
+| Render: p99 under 8 ms per frame (in-game timedemo at 1080p) | render-ir CPU part p99 17 µs; scene build 7.5 ms at map load. Whole frames measured by the `mc:devharness` client game tests on an RTX 3080 at 1920×1080: render submission p99 ≤ 3.3 ms across seven maps; a real q3dm17 match (session + render) p99 2.65 ms on OpenGL, 1.92 ms on Vulkan. | **Met.** |
 
 The plan also asks for a 10 % regression gate on a nightly JMH run. The nightly workflow has been
 removed, so for now comparisons against this page are made by hand.

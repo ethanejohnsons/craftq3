@@ -9,6 +9,7 @@ import static dev.bluevista.craftq3.engine.vmabi.BotlibImport.*;
 
 import dev.bluevista.craftq3.engine.botlib.BotLib;
 import dev.bluevista.craftq3.engine.botlib.goal.Goal;
+import dev.bluevista.craftq3.engine.botlib.movement.MovementResult;
 import dev.bluevista.craftq3.engine.vm.QvmInstance;
 import dev.bluevista.craftq3.engine.vm.QvmMemory;
 import dev.bluevista.craftq3.engine.vmabi.Bindings;
@@ -39,6 +40,11 @@ final class BotAiBindings {
     List<String> values = new ArrayList<>(8);
     for (int i = 0; i < 8; i++) values.add(a[first + i] == 0 ? null : text(vm, a[first + i]));
     return values;
+  }
+
+  /** Whether {@code area} is an area of the loaded AAS file (area 0 is the solid placeholder). */
+  private boolean validArea(int area) {
+    return lib().navigation().map(n -> area > 0 && area < n.map().areas().size()).orElse(false);
   }
 
   private static int goalOut(QvmMemory m, int address, Optional<Goal> goal) {
@@ -391,7 +397,14 @@ final class BotAiBindings {
         a -> BotlibAdapter.owner(adapter.moveStateClient, a[1]),
         (vm, a) -> {
           QvmMemory m = vm.memory();
-          var output = lib().moveToGoal(a[1], a[2] == 0 ? null : goal(m, a[2]), a[3]);
+          Goal goal = a[2] == 0 ? null : goal(m, a[2]);
+          if (goal != null && !validArea(goal.area())) {
+            // The original finds no reachability towards an area outside the AAS file and fails
+            // the move; Q3Rally passes such goals.
+            moveResult(m, a[0], MovementResult.failed(0), MOVE_RESULT_PREFIX_BYTES);
+            return 0;
+          }
+          var output = lib().moveToGoal(a[1], goal, a[3]);
           moveResult(m, a[0], output.result(), output.writtenBytes());
           return 0;
         });

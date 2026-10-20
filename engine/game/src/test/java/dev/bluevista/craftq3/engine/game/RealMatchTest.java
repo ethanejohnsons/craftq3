@@ -30,10 +30,10 @@ final class RealMatchTest {
     return Stream.of(
         Arguments.of("baseq3", "q3dm17", 0),
         Arguments.of("cpma", "q3dm17", 0),
-        Arguments.of("jailbreak", "q3jbeven1", 0),
+        Arguments.of("jailbreak", "q3jbeven1", 3),
         Arguments.of("truecombat", "tc_harbour", 0),
-        Arguments.of("combat", "combatdm_01", 0),
-        Arguments.of("q3rally", "q3r_dm02", 0),
+        Arguments.of("combat", "combatctf_01", 4),
+        Arguments.of("q3rally", "q3r_country01", 0),
         Arguments.of("alternatefire", "q3dm17", 0),
         Arguments.of("sha", "q3dm17", 0),
         Arguments.of("q3pinball", "q3dm17", 0),
@@ -67,7 +67,10 @@ final class RealMatchTest {
     report(result);
   }
 
-  /** {@code CRAFTQ3_MATCHES} (comma-separated {@code game:map}) narrows the run, e.g. for a re-check. */
+  /**
+   * {@code CRAFTQ3_MATCHES} (comma-separated {@code game:map}) narrows the run, e.g. for a
+   * re-check.
+   */
   private static boolean selected(String key) {
     String only = System.getenv("CRAFTQ3_MATCHES");
     return only == null || only.isBlank() || List.of(only.split(",")).contains(key);
@@ -75,6 +78,13 @@ final class RealMatchTest {
 
   private static void report(RealMatch.Result result) {
     System.out.println("MATCH " + result.line());
+    boolean ok =
+        result.drop().isEmpty()
+            && result.degradations() == 0
+            && result.botsActive() == 4
+            && result.botsMoved() >= 3
+            && result.scoreChanges() > 0;
+    if (!ok) System.out.println("LOG " + result.game() + "\n" + result.log());
     assertEquals("", result.drop(), result.line());
     assertEquals(0, result.degradations(), result.line());
     assertEquals(4, result.botsActive(), result.line());

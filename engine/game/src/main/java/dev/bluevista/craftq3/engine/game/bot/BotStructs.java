@@ -35,6 +35,9 @@ final class BotStructs {
   /** {@code sizeof(bot_moveresult_t)}. */
   static final int MOVE_RESULT_BYTES = 52;
 
+  /** The leading words a failed move writes (failure to flags). */
+  static final int MOVE_RESULT_PREFIX_BYTES = 24;
+
   /** {@code sizeof(bot_input_t)}. */
   static final int INPUT_BYTES = 40;
 
@@ -77,13 +80,27 @@ final class BotStructs {
     return Float.floatToRawIntBits(value);
   }
 
+  /**
+   * Reads a {@code bot_goal_t}. Guests sometimes pass goals whose bounds were never set and are
+   * inverted (Q3Rally's nearby-item calls); the original library tolerates them and a box test
+   * against them never succeeds, so an inverted axis is collapsed to its midpoint, where a box test
+   * is just as unlikely to succeed. Botlib's goal type refuses inverted bounds.
+   */
   static Goal goal(QvmMemory m, int a) {
     m.resolve(a, GOAL_BYTES);
+    float[] mins = new float[3], maxs = new float[3];
+    VmStructs.readVec3(m, a + 16, mins);
+    VmStructs.readVec3(m, a + 28, maxs);
+    for (int i = 0; i < 3; i++)
+      if (!(mins[i] <= maxs[i])) {
+        float mid = Float.isFinite(mins[i] + maxs[i]) ? (mins[i] + maxs[i]) * 0.5f : 0;
+        mins[i] = maxs[i] = mid;
+      }
     return new Goal(
         vec(m, a),
         m.readInt(a + 12),
-        vec(m, a + 16),
-        vec(m, a + 28),
+        Vec3f.of(mins),
+        Vec3f.of(maxs),
         m.readInt(a + 40),
         m.readInt(a + 44),
         m.readInt(a + 48),

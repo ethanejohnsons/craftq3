@@ -38,6 +38,9 @@ public final class HeadlessClient implements AutoCloseable {
    * @param frameMillis client frame length
    * @param keepFrames newest frames the sink keeps
    * @param log receives every console line (may be null)
+   * @param failOnDegradation {@link #frame()} throws {@link
+   *     dev.bluevista.craftq3.engine.session.SessionDegradedException} on a VM syscall degradation
+   *     ({@link SessionOptions#failOnDegradation()})
    */
   public record Options(
       Path install,
@@ -50,7 +53,8 @@ public final class HeadlessClient implements AutoCloseable {
       List<String> commandLine,
       LocalServer.Factory servers,
       boolean netEnabled,
-      Consumer<String> log) {
+      Consumer<String> log,
+      boolean failOnDegradation) {
     public Options {
       Objects.requireNonNull(install);
       Objects.requireNonNull(game);
@@ -72,7 +76,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withGame(String value) {
@@ -87,7 +92,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withHome(Path value) {
@@ -102,7 +108,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withSeed(long value) {
@@ -117,7 +124,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withManualClock(boolean value) {
@@ -132,7 +140,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withFrameMillis(int value) {
@@ -147,7 +156,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withKeepFrames(int value) {
@@ -162,7 +172,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withCommandLine(List<String> value) {
@@ -177,7 +188,8 @@ public final class HeadlessClient implements AutoCloseable {
           value,
           servers,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withServers(LocalServer.Factory value) {
@@ -192,7 +204,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           value,
           netEnabled,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withNetEnabled(boolean value) {
@@ -207,7 +220,8 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           value,
-          log);
+          log,
+          failOnDegradation);
     }
 
     public Options withLog(Consumer<String> value) {
@@ -222,6 +236,23 @@ public final class HeadlessClient implements AutoCloseable {
           commandLine,
           servers,
           netEnabled,
+          value,
+          failOnDegradation);
+    }
+
+    public Options withFailOnDegradation(boolean value) {
+      return new Options(
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log,
           value);
     }
   }
@@ -239,7 +270,8 @@ public final class HeadlessClient implements AutoCloseable {
         List.of(),
         dev.bluevista.craftq3.engine.session.GameLocalServer.FACTORY,
         false,
-        null);
+        null,
+        false);
   }
 
   private final Options options;
@@ -260,7 +292,8 @@ public final class HeadlessClient implements AutoCloseable {
             .withDecodeImages(false)
             .withWriteConfig(false)
             .withNetEnabled(options.netEnabled())
-            .withCommandLine(options.commandLine());
+            .withCommandLine(options.commandLine())
+            .withFailOnDegradation(options.failOnDegradation());
     session = EngineSession.start(new Host(), sessionOptions);
   }
 

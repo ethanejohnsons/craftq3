@@ -10,6 +10,10 @@ import java.nio.file.Path;
  * writable home, the monotonic clock, sockets, and callbacks for state changes and for the host's
  * own user interface. Every method is called on the client thread (the thread that calls {@link
  * EngineSession#frame}).
+ *
+ * <p>Map hooks (inherited): {@link ClientHostServices#mapOverride} supplies a map that is not in
+ * the game files (a level the server synthesizes), {@link ClientHostServices#worldSources} joins
+ * foreign collision geometry into the client's world traces.
  */
 public interface SessionHost extends ClientHostServices {
   /** The Quake III installation (the directory containing {@code baseq3}). */

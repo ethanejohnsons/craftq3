@@ -192,6 +192,7 @@ final class VmHostTest {
     assertTrue(fault.getMessage().contains("vm_strictSyscalls"), fault.getMessage());
     assertInstanceOf(IllegalArgumentException.class, fault.getCause());
     assertTrue(vm.faulted());
+    assertEquals(1, host.degradationTotal(), "the fault is still counted");
   }
 
   @Test

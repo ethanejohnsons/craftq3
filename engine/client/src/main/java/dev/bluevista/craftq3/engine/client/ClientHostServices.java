@@ -2,7 +2,11 @@ package dev.bluevista.craftq3.engine.client;
 
 import dev.bluevista.craftq3.engine.audio.AudioDevice;
 import dev.bluevista.craftq3.engine.audio.NullAudioDevice;
+import dev.bluevista.craftq3.engine.collision.CollisionSource;
+import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * What the platform (the Fabric mod, the headless runner, tests) provides to the client: where
@@ -29,6 +33,29 @@ public interface ClientHostServices {
 
   /** The game asked to quit ({@code quit} command). */
   default void requestQuit() {}
+
+  /**
+   * A map the host supplies instead of reading it from the game files, consulted first whenever the
+   * client loads a world ({@code trap_CM_LoadMap}, {@code trap_R_LoadWorldMap}): for levels a
+   * server synthesizes (the Minecraft bridge's {@code maps/craftq3_bridge.bsp}). The renderer's
+   * world ({@code ClientAssets.world()}, from which render scenes are built) is the same object.
+   *
+   * @param normalizedPath the map's normalized game path, e.g. {@code maps/q3dm17.bsp}
+   */
+  default Optional<BspMap> mapOverride(String normalizedPath) {
+    return Optional.empty();
+  }
+
+  /**
+   * Foreign collision geometry joined into the client's world (model 0) traces and point contents
+   * for {@code mapName}, as the server joins a map source's sources: the cgame's prediction then
+   * collides with what the server's movement does. Called once per world load.
+   *
+   * @param mapName the map's base name as the server names it, e.g. {@code q3dm17}
+   */
+  default List<CollisionSource> worldSources(String mapName) {
+    return List.of();
+  }
 
   /** Services with no output: a null audio device and the given sink and size. */
   static ClientHostServices headless(RenderSink sink, int width, int height) {

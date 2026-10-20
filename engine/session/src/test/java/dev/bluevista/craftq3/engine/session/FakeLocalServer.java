@@ -35,6 +35,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * peers on any transports, one entity per bot in every snapshot at 20 Hz.
  */
 final class FakeLocalServer implements LocalServer {
+  /** Degradations the next published status reports (any thread). */
+  volatile long degradations;
+
   static final int CHALLENGE = 0x1234567;
 
   /** Every factory-built server, newest last (tests inspect them). */
@@ -220,7 +223,17 @@ final class FakeLocalServer implements LocalServer {
     maxPeers = Math.max(maxPeers, peers.size());
     status =
         new Status(
-            phase, map, spawns, drops, dropReason, peers.size(), bots, 0, frames, sync, names);
+            phase,
+            map,
+            spawns,
+            drops,
+            dropReason,
+            peers.size(),
+            bots,
+            degradations,
+            frames,
+            sync,
+            names);
   }
 
   private void sendAll() {

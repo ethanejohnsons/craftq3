@@ -77,6 +77,33 @@ final class SessionStateMachineTest {
   }
 
   @Test
+  void failOnDegradationFailsTheFrameOnceAndCountingContinues() throws Exception {
+    SessionOptions options =
+        SessionOptions.deterministic(1, FakeLocalServer.FACTORY).withFailOnDegradation(true);
+    try (SyntheticRig rig = new SyntheticRig(root, false, options)) {
+      rig.session.command("map test");
+      assertTrue(rig.until(() -> rig.session.state() == SessionState.LOCAL, 200), rig.tail());
+      rig.server().degradations = 2;
+      SessionDegradedException failure =
+          assertThrows(SessionDegradedException.class, () -> rig.run(2));
+      assertTrue(failure.getMessage().startsWith("2 syscall degradation"), failure.getMessage());
+      rig.run(2);
+      assertEquals(2, rig.session.degradations(), "reported once");
+      assertEquals(SessionState.LOCAL, rig.session.state(), "the session keeps running");
+    }
+    try (SyntheticRig rig = new SyntheticRig(root, false)) {
+      rig.session.command("map test");
+      assertTrue(rig.until(() -> rig.session.state() == SessionState.LOCAL, 200), rig.tail());
+      rig.server().degradations = 3;
+      rig.run(2);
+      assertEquals(3, rig.session.degradations(), "counted without failing");
+      rig.session.command("disconnect");
+      rig.run(2);
+      assertEquals(3, rig.session.degradations(), "kept after the server stopped");
+    }
+  }
+
+  @Test
   void synchronousModeRunsTheServerOnTheClientThread() throws Exception {
     try (SyntheticRig rig = new SyntheticRig(root, false)) {
       rig.session.command("map test");

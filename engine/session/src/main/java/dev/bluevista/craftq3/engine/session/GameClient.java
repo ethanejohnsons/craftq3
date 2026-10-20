@@ -85,6 +85,7 @@ final class GameClient implements AutoCloseable {
   private int lastServerTime;
   private boolean drawnSnapshot;
   private int levels;
+  private long retiredDegradations;
 
   private GameClient(Kind kind, String serverName, Session session) {
     this.kind = kind;
@@ -204,8 +205,9 @@ final class GameClient implements AutoCloseable {
     return recordingName;
   }
 
+  /** Syscall degradations of every cgame this game ran (each level, {@code vid_restart}). */
   long degradations() {
-    return cgame == null ? 0 : cgame.degradationTotal();
+    return retiredDegradations + (cgame == null ? 0 : cgame.degradationTotal());
   }
 
   /** {@code uiClientState_t} for the ui's connect screen. */
@@ -244,7 +246,10 @@ final class GameClient implements AutoCloseable {
     levelPending = false;
     ServerMessageCodec.GameState gameState =
         pipeline.gameState().orElseThrow(() -> new Drop("No gamestate to load"));
-    if (cgame != null) cgame.shutdown();
+    if (cgame != null) {
+      cgame.shutdown();
+      retiredDegradations += cgame.degradationTotal();
+    }
     commands.reset();
     drawnSnapshot = false;
     lastServerTime = 0;
@@ -336,6 +341,7 @@ final class GameClient implements AutoCloseable {
     if (cgame == null || pipeline.gameState().isEmpty()) return;
     HostServices services = session.services();
     cgame.shutdown();
+    retiredDegradations += cgame.degradationTotal();
     cgame = new CgameHost(services, pipeline, commands, cgameLink());
     services.input().setCgameTarget(cgame);
     cgame.start();
@@ -422,6 +428,7 @@ final class GameClient implements AutoCloseable {
     stopRecording().ifPresent(session::print);
     if (cgame != null) {
       cgame.shutdown();
+      retiredDegradations += cgame.degradationTotal();
       session
           .services()
           .input()

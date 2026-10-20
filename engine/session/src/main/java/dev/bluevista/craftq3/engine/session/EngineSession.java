@@ -180,6 +180,9 @@ public final class EngineSession implements AutoCloseable {
   private boolean closed;
   private long framesRun;
   private long serverDegradations;
+  private long clientDegradations;
+  private long reportedDegradations;
+  private String lastDrop = "";
 
   /** A {@code map} waiting for the server to spawn the level. */
   private record PendingLevel(int spawns, int drops, int sync, long started, String map) {}
@@ -321,6 +324,7 @@ public final class EngineSession implements AutoCloseable {
     ClientInput oldInput = services().input();
     int catchers = oldInput.catchers();
     content.close();
+    clientDegradations += content.ui.degradationTotal();
     content = newContent(view);
     paks.releaseRetired();
     ClientInput input = services().input();
@@ -1060,6 +1064,7 @@ public final class EngineSession implements AutoCloseable {
     } catch (RuntimeException failure) {
       LOG.warn("Game cleanup failed: " + failure);
     }
+    clientDegradations += ending.degradations();
     if (server != null) server.wake();
     console.cvars().set("cl_demoRecording", "0");
     console.cvars().set("cl_demoPlaying", "0");
@@ -1105,6 +1110,7 @@ public final class EngineSession implements AutoCloseable {
   private void drop(String message) {
     print("********************");
     print("ERROR: " + message);
+    lastDrop = message;
     print("********************");
     transitions.clear();
     try {
@@ -1253,6 +1259,24 @@ public final class EngineSession implements AutoCloseable {
     if (server != null && server.threaded()) server.wake();
     updateState();
     rethrowServerFatal();
+    checkDegradations();
+  }
+
+  /**
+   * {@link SessionOptions#failOnDegradation()}: a new syscall degradation (a VM fault under {@code
+   * vm_strictSyscalls 1}, a degraded import otherwise) fails the caller's frame.
+   */
+  private void checkDegradations() {
+    if (!options.failOnDegradation()) return;
+    long total = degradations();
+    if (total <= reportedDegradations) return;
+    long added = total - reportedDegradations;
+    reportedDegradations = total;
+    throw new SessionDegradedException(
+        added
+            + " syscall degradation(s)"
+            + (lastDrop.isEmpty() ? "" : "; last error: " + lastDrop)
+            + " (see the log)");
   }
 
   private void rethrowServerFatal() {
@@ -1663,7 +1687,7 @@ public final class EngineSession implements AutoCloseable {
    * vm_strictSyscalls} counters).
    */
   public long degradations() {
-    long total = content.ui.degradationTotal() + serverDegradations;
+    long total = content.ui.degradationTotal() + serverDegradations + clientDegradations;
     if (game != null) total += game.degradations();
     if (server != null) total += server.status().degradations();
     return total;

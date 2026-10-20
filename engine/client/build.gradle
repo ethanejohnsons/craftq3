@@ -6,6 +6,7 @@ dependencies {
     api project(':engine:render-ir')
     api project(':engine:audio')
     testImplementation project(':engine:testkit')
+    testImplementation testFixtures(project(':engine:formats'))
 }
 tasks.named('test') {
     // The opt-in real-data sweep boots every ui and plays every demo of the installation.

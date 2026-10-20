@@ -13,6 +13,8 @@ import dev.bluevista.craftq3.engine.console.Console;
 import dev.bluevista.craftq3.engine.console.CvarFlags;
 import dev.bluevista.craftq3.engine.console.CvarTable;
 import dev.bluevista.craftq3.engine.formats.FileViewAssets;
+import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import dev.bluevista.craftq3.engine.formats.bsp.BspReader;
 import dev.bluevista.craftq3.engine.fs.FileView;
 import dev.bluevista.craftq3.engine.fs.HomeStore;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
@@ -277,19 +279,34 @@ public final class HostServices implements AutoCloseable {
 
   /**
    * The map {@code name} for {@code trap_CM_LoadMap} and {@code trap_R_LoadWorldMap}, read once and
-   * shared by collision and the renderer until another map is loaded.
+   * shared by collision and the renderer until another map is loaded. The host's {@link
+   * ClientHostServices#mapOverride} is consulted first; its {@link ClientHostServices#worldSources}
+   * join the world's collision.
    *
    * @throws IOException when the map is missing or malformed
    */
   public ClientWorld loadWorld(String name) throws IOException {
     String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
     if (world != null && world.name().equals(normalized)) return world;
-    VirtualPath path = VirtualPath.of(normalized);
-    byte[] bytes = view.read(path);
-    var map = dev.bluevista.craftq3.engine.formats.bsp.BspReader.read(bytes, normalized);
-    world = new ClientWorld(normalized, map, assets.library());
+    Optional<BspMap> override = platform.mapOverride(normalized);
+    BspMap map;
+    if (override.isPresent()) map = override.get();
+    else map = BspReader.read(view.read(VirtualPath.of(normalized)), normalized);
+    world =
+        new ClientWorld(
+            normalized, map, assets.library(), platform.worldSources(mapName(normalized)));
     renderer.loadWorld(normalized, map);
     return world;
+  }
+
+  /** {@code maps/q3dm17.bsp} → {@code q3dm17}. */
+  static String mapName(String normalizedPath) {
+    String name = normalizedPath;
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) name = name.substring(slash + 1);
+    if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".bsp"))
+      name = name.substring(0, name.length() - 4);
+    return name;
   }
 
   /** The loaded map, if any. */

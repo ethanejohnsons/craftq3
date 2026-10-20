@@ -1,7 +1,9 @@
 package dev.bluevista.craftq3.engine.client.host;
 
 import dev.bluevista.craftq3.engine.collision.CollisionModel;
+import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.collision.Trace;
+import dev.bluevista.craftq3.engine.collision.TraceClipper;
 import dev.bluevista.craftq3.engine.collision.TraceWork;
 import dev.bluevista.craftq3.engine.common.math.Vec3f;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
@@ -12,18 +14,23 @@ import dev.bluevista.craftq3.engine.vm.QvmMemory;
 import dev.bluevista.craftq3.engine.vmabi.layout.MarkFragmentLayout;
 import dev.bluevista.craftq3.engine.vmabi.layout.TraceLayout;
 import dev.bluevista.craftq3.engine.vmabi.layout.VmStructs;
+import java.util.List;
 import java.util.Objects;
 
 /**
  * The cgame's view of the loaded map ({@code trap_CM_*}): the collision model for prediction traces
  * and point contents, temporary box and capsule models, mark fragments projected onto the world
  * surfaces, and the entity string tokens. The collision model and the mark-fragment surfaces are
- * built on first use.
+ * built on first use. Foreign {@link CollisionSource}s (the host's terrain) are joined into world
+ * (model 0) traces and point contents, as the server joins them.
  */
 public final class ClientWorld {
   private final String name;
   private final BspMap map;
+  private static final float[] ZERO = new float[3];
+
   private final ShaderLibrary shaders;
+  private final CollisionSource source;
   private CollisionModel collision;
   private TraceWork work;
   private final Trace trace = new Trace();
@@ -36,9 +43,37 @@ public final class ClientWorld {
   private int entityCursor;
 
   public ClientWorld(String name, BspMap map, ShaderLibrary shaders) {
+    this(name, map, shaders, List.of());
+  }
+
+  /**
+   * @param sources foreign geometry joined into world traces and point contents, in order
+   */
+  public ClientWorld(
+      String name, BspMap map, ShaderLibrary shaders, List<CollisionSource> sources) {
     this.name = Objects.requireNonNull(name);
     this.map = Objects.requireNonNull(map);
     this.shaders = Objects.requireNonNull(shaders);
+    this.source = compose(List.copyOf(sources));
+  }
+
+  private static CollisionSource compose(List<CollisionSource> sources) {
+    if (sources.isEmpty()) return null;
+    if (sources.size() == 1) return sources.getFirst();
+    CollisionSource[] all = sources.toArray(CollisionSource[]::new);
+    return new CollisionSource() {
+      @Override
+      public void clip(TraceClipper clipper) {
+        for (CollisionSource s : all) s.clip(clipper);
+      }
+
+      @Override
+      public int pointContents(float x, float y, float z) {
+        int contents = 0;
+        for (CollisionSource s : all) contents |= s.pointContents(x, y, z);
+        return contents;
+      }
+    };
   }
 
   public String name() {
@@ -81,11 +116,22 @@ public final class ClientWorld {
   public int pointContents(
       QvmMemory memory, int pointAddress, int model, int originAddress, int anglesAddress) {
     VmStructs.readVec3(memory, pointAddress, point);
+    if (originAddress == 0 && anglesAddress == 0) return pointContents(point, model, null, null);
+    return pointContents(
+        point, model, vector(memory, originAddress, origin), vector(memory, anglesAddress, angles));
+  }
+
+  /**
+   * Point contents of {@code model}; {@code origin}/{@code angles} null (or zero) for an
+   * untransformed query. World queries also OR the foreign sources' contents.
+   */
+  public int pointContents(float[] p, int model, float[] at, float[] rotation) {
     CollisionModel cm = collision();
-    if (originAddress == 0 && anglesAddress == 0) return cm.pointContents(work, point, model);
-    vector(memory, originAddress, origin);
-    vector(memory, anglesAddress, angles);
-    return cm.transformedPointContents(work, point, model, origin, angles);
+    if (at == null && rotation == null)
+      return cm.pointContents(work, p, model, joins(model) ? source : null);
+    float[] o = at == null ? ZERO : at, a = rotation == null ? ZERO : rotation;
+    if (joins(model) && isZero(o) && isZero(a)) return cm.pointContents(work, p, model, source);
+    return cm.transformedPointContents(work, p, model, o, a);
   }
 
   /**
@@ -109,26 +155,76 @@ public final class ClientWorld {
     VmStructs.readVec3(memory, endAddress, end);
     float[] boxMins = minsAddress == 0 ? null : vector(memory, minsAddress, mins);
     float[] boxMaxs = maxsAddress == 0 ? null : vector(memory, maxsAddress, maxs);
-    CollisionModel cm = collision();
-    if (transformed) {
-      vector(memory, originAddress, origin);
-      vector(memory, anglesAddress, angles);
-      cm.transformedBoxTrace(
-          work, trace, start, end, boxMins, boxMaxs, model, mask, origin, angles, capsule);
-    } else cm.boxTrace(work, trace, start, end, boxMins, boxMaxs, model, mask, capsule);
+    Trace result =
+        transformed
+            ? trace(
+                start,
+                end,
+                boxMins,
+                boxMaxs,
+                model,
+                mask,
+                vector(memory, originAddress, origin),
+                vector(memory, anglesAddress, angles),
+                capsule)
+            : trace(start, end, boxMins, boxMaxs, model, mask, null, null, capsule);
     TraceLayout.write(
         memory,
         resultAddress,
         new TraceLayout.VmTrace(
-            trace.allSolid(),
-            trace.startSolid(),
-            trace.fraction(),
-            trace.endPos(),
-            trace.planeNormal(),
-            trace.planeDist(),
-            trace.surfaceFlags(),
-            trace.contents(),
-            trace.entityNum()));
+            result.allSolid(),
+            result.startSolid(),
+            result.fraction(),
+            result.endPos(),
+            result.planeNormal(),
+            result.planeDist(),
+            result.surfaceFlags(),
+            result.contents(),
+            result.entityNum()));
+  }
+
+  /**
+   * The trace with host arrays ({@code origin}/{@code angles} null for {@code CM_BoxTrace}). A
+   * world trace at the origin without rotation also clips the foreign sources, as the server's
+   * world traces do. The result is reused by the next trace.
+   */
+  public Trace trace(
+      float[] from,
+      float[] to,
+      float[] boxMins,
+      float[] boxMaxs,
+      int model,
+      int mask,
+      float[] at,
+      float[] rotation,
+      boolean capsule) {
+    CollisionModel cm = collision();
+    boolean transformed = at != null || rotation != null;
+    float[] o = at == null ? ZERO : at, a = rotation == null ? ZERO : rotation;
+    if (transformed && !(joins(model) && isZero(o) && isZero(a)))
+      cm.transformedBoxTrace(work, trace, from, to, boxMins, boxMaxs, model, mask, o, a, capsule);
+    else
+      cm.boxTrace(
+          work,
+          trace,
+          from,
+          to,
+          boxMins,
+          boxMaxs,
+          model,
+          mask,
+          capsule,
+          joins(model) ? source : null);
+    return trace;
+  }
+
+  /** True when traces through {@code model} join the foreign sources: the world, with sources. */
+  private boolean joins(int model) {
+    return source != null && model == CollisionModel.WORLD_MODEL;
+  }
+
+  private static boolean isZero(float[] v) {
+    return v[0] == 0 && v[1] == 0 && v[2] == 0;
   }
 
   private static float[] vector(QvmMemory memory, int address, float[] out) {

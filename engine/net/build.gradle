@@ -1,4 +1,5 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:common')
+    testImplementation project(':engine:testkit')
 }

@@ -211,7 +211,7 @@ public final class CompatSweep {
                 game.profile.name,
                 game.maps.getOrDefault("loaded", "-") + "/" + game.maps.getOrDefault("total", "-"),
                 matchSummary(game),
-                passed(game.demos) + "/" + game.demos.size(),
+                demoSummary(game),
                 passed(game.cinematics) + "/" + game.cinematics.size(),
                 game.degradations,
                 game.failures()));
@@ -222,6 +222,16 @@ public final class CompatSweep {
   private static String matchSummary(GameReport game) {
     if (game.matches.isEmpty()) return "-";
     return passed(game.matches) + "/" + game.matches.size();
+  }
+
+  /** Demo results that 1.32 refuses as well: neither passes nor failures. */
+  static final String UNSUPPORTED = "unsupported";
+
+  /** {@code passed/playable}, plus the unsupported ones: {@code 6/6 (+3 unsupported)}. */
+  static String demoSummary(GameReport game) {
+    long unsupported = game.demos.stream().filter(e -> UNSUPPORTED.equals(e.get("result"))).count();
+    String text = passed(game.demos) + "/" + (game.demos.size() - unsupported);
+    return unsupported == 0 ? text : text + " (+" + unsupported + " unsupported)";
   }
 
   private static long passed(List<Map<String, Object>> entries) {
@@ -654,8 +664,13 @@ public final class CompatSweep {
     if (lower.endsWith(".dm_48") || lower.endsWith(".dm3")) {
       // Quake III 1.27 (48) and pre-1.17 (.dm3) demos: 1.32 cannot play them either.
       boolean refused = !error.isEmpty() && client.session().demosFinished() == finished;
-      entry.put("result", refused ? "ok" : "unexpected");
-      entry.put("note", "refused by design: " + error);
+      entry.put("result", refused ? UNSUPPORTED : "unexpected");
+      entry.put(
+          "reason",
+          (lower.endsWith(".dm3")
+                  ? "protocol 43 (pre-1.17) demo; 1.32 cannot play it either"
+                  : "protocol 48 (1.27) demo; 1.32 cannot play it either")
+              + (refused ? ": " + error : ""));
       if (!refused) game.problem("demo", demo, "an unsupported demo protocol was accepted");
     } else if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
       entry.put("result", "ok");
@@ -802,9 +817,7 @@ public final class CompatSweep {
           .append(" | ")
           .append(matchSummary(game))
           .append(" | ")
-          .append(passed(game.demos))
-          .append('/')
-          .append(game.demos.size())
+          .append(demoSummary(game))
           .append(" | ")
           .append(passed(game.cinematics))
           .append('/')

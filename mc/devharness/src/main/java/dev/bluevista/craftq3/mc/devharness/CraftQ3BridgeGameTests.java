@@ -39,6 +39,8 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -69,7 +71,7 @@ public final class CraftQ3BridgeGameTests {
   private static final int X = 4000, Y = 120, Z = 4000;
   private static final int RAILGUN = 7, MACHINEGUN = 2, GAUNTLET = 1;
 
-  @GameTest(maxTicks = 3600)
+  @GameTest(maxTicks = 9000)
   public void bridgeScenario(GameTestHelper helper) {
     Optional<Q3Content> mounted = RealContent.mount();
     if (mounted.isEmpty()) {
@@ -138,19 +140,19 @@ public final class CraftQ3BridgeGameTests {
           .step("rail a zombie", 400, this::rail)
           .step("zombie hits the player", 200, this::zombieHits)
           .step("an explosion hurts and pushes", 100, this::blast)
-          .step("heal before fire", 100, this::heal)
+          .step("heal before fire", 200, this::heal)
           .step("fire burns the Quake player", 300, this::fire)
-          .step("heal before lava", 100, this::heal)
+          .step("heal before lava", 200, this::heal)
           .step("lava leaves the Quake player burning", 300, this::lava)
-          .step("heal before the burning zombie", 100, this::heal)
-          .step("a burning zombie's hits set the player alight", 400, this::burningZombie)
-          .step("heal before arrows", 100, this::heal)
+          .step("heal before the burning zombie", 200, this::heal)
+          .step("a burning zombie's hits set the player alight", 1500, this::burningZombie)
+          .step("heal before arrows", 200, this::heal)
           .step("a flaming Punch arrow hurts, pushes and ignites", 120, this::arrow)
-          .step("heal before the trident", 100, this::heal)
+          .step("heal before the trident", 200, this::heal)
           .step("a trident hurts and pushes", 120, this::trident)
-          .step("heal before the blaze", 100, this::heal)
+          .step("heal before the blaze", 200, this::heal)
           .step("a blaze fireball hits the bridged body", 120, this::smallFireball)
-          .step("heal before the ghast", 100, this::heal)
+          .step("heal before the ghast", 200, this::heal)
           .step("a ghast fireball hits the bridged body", 120, this::largeFireball)
           .step("pickup placement persists", 5, this::pickup)
           .step("leave saves the loadout", 20, this::leave)
@@ -160,8 +162,30 @@ public final class CraftQ3BridgeGameTests {
           .cleanup(this::cleanup);
     }
 
+    private Boolean spawnedMonsters;
+
     void start() {
+      // The GameTest world keeps its time between runs; at night monsters would spawn around the
+      // arena and join the fight (each one a puppet in the game).
+      spawnedMonsters = level.getGameRules().get(GameRules.SPAWN_MONSTERS);
+      level.getGameRules().set(GameRules.SPAWN_MONSTERS, false, level.getServer());
+      purgeStrays();
+      helper.onEachTick(this::purgeStrays);
       scenario.start();
+    }
+
+    /** Removes mobs the test did not place from the bridge's reach around the arena. */
+    private void purgeStrays() {
+      AABB around = new AABB(X - 192, Y - 80, Z - 96, X + 160, Y + 80, Z + 96);
+      for (Mob mob : level.getEntitiesOfClass(Mob.class, around, Mob::isAlive)) {
+        boolean ours =
+            mob == target
+                || mob == attacker
+                || mob == shooter
+                || mob == burning
+                || crowd.contains(mob);
+        if (!ours) mob.discard();
+      }
     }
 
     private BridgeGame game() {
@@ -169,9 +193,9 @@ public final class CraftQ3BridgeGameTests {
     }
 
     private void arena() {
-      for (int cx = (X >> 4) - 5; cx <= (X >> 4) + 3; cx++)
+      for (int cx = (X >> 4) - 9; cx <= (X >> 4) + 7; cx++)
         for (int cz = (Z >> 4) - 2; cz <= (Z >> 4) + 2; cz++) level.setChunkForced(cx, cz, true);
-      for (int x = X - 64; x <= X + 32; x++)
+      for (int x = X - 128; x <= X + 96; x++)
         for (int z = Z - 12; z <= Z + 12; z++) {
           level.setBlockAndUpdate(new BlockPos(x, Y - 1, z), Blocks.STONE.defaultBlockState());
           for (int y = Y; y < Y + 8; y++)
@@ -371,6 +395,8 @@ public final class CraftQ3BridgeGameTests {
         return false;
       }
       if (session.host().restoring() || ticks < 25) return false;
+      // Standing still on the floor, so the next push is measured from rest.
+      if (!session.grounded() || session.velocity().horizontalDistance() > 1e-3) return false;
       check(client.stat(Loadout.STAT_HEALTH) == 100, "not healed: " + client.stat(0));
       return true;
     }
@@ -514,9 +540,12 @@ public final class CraftQ3BridgeGameTests {
       burning.setRemainingFireTicks(400);
       burning.setHealth(burning.getMaxHealth());
       if (!player.isOnFire()) {
-        if (ticks % 12 == 1) {
+        // Minecraft's chance can take many hits: keep the Quake player alive meanwhile.
+        if (client.stat(Loadout.STAT_HEALTH) < 50 && !session.host().restoring())
+          session.host().restoreLoadout(railLoadout());
+        if (ticks % 11 == 1) {
           // Hits from alternating sides, so their knockback keeps the player on the arena.
-          double side = (ticks / 12) % 2 == 0 ? 1.2 : -1.2;
+          double side = (ticks / 11) % 2 == 0 ? 1.2 : -1.2;
           burning.snapTo(player.getX() + side, Y, player.getZ(), 0, 0);
           burning.doHurtTarget(level, player);
         }
@@ -692,15 +721,15 @@ public final class CraftQ3BridgeGameTests {
       playerTick();
       client.send();
       if (ticks == 0) {
-        Mob ghast = shooter(EntityTypes.GHAST, 14, 3);
+        Mob ghast = shooter(EntityTypes.GHAST, -14, 3);
         LargeFireball ball = new LargeFireball(level, ghast, Vec3.ZERO, 1);
-        ball.setPos(player.getX() + 4, player.getY(0.5), player.getZ());
+        ball.setPos(player.getX() - 4, player.getY(0.5), player.getZ());
         launch(ball, 1.0f);
         return false;
       }
       int lost = shotLanded(ticks, 15);
       if (lost < 0) return false;
-      double pushed = shotStart.x - player.getX();
+      double pushed = player.getX() - shotStart.x;
       scenario.note(
           "ghast fireball: Quake health+armor lost "
               + lost
@@ -708,7 +737,7 @@ public final class CraftQ3BridgeGameTests {
               + (session.incomingHits() - shotHits)
               + ", pushed "
               + pushed
-              + " blocks west");
+              + " blocks east");
       // The direct hit (6 points, 30 Quake) lands first; the blast in the same tick falls inside
       // Minecraft's invulnerability frames, so only its push arrives.
       check(lost >= 30, "the ghast fireball did not hit the bridged body directly: " + lost);
@@ -865,6 +894,8 @@ public final class CraftQ3BridgeGameTests {
     }
 
     private void cleanup() {
+      if (spawnedMonsters != null)
+        level.getGameRules().set(GameRules.SPAWN_MONSTERS, spawnedMonsters, level.getServer());
       BridgeData.savePickups(level, content.game(), List.of());
       TestPlayers.discard(projectile);
       TestPlayers.discard(shooter);

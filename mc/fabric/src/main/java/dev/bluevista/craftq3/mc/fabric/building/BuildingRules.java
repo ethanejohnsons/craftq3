@@ -137,6 +137,110 @@ public final class BuildingRules {
         false);
   }
 
+  // ---- buckets --------------------------------------------------------------------------------
+
+  /**
+   * A bucket's own ray ({@code Item.getPlayerPOVHitResult}, from {@code from} to {@code to}) with
+   * BSP surfaces: {@code original} when a block or fluid comes first, otherwise a hit on the BSP
+   * surface whose block position is the BSP side of the free cell in front of it (the cell must be
+   * free of BSP solid), so {@code BucketItem} places into that cell ({@code pos.relative(face)})
+   * and finds nothing to collect inside the BSP. A BSP surface with no free cell in front is a
+   * miss.
+   */
+  public static BlockHitResult bucketClip(
+      Level level, Vec3 from, Vec3 to, BlockHitResult original) {
+    BuildingQueries queries = at(level, (from.x + to.x) * 0.5);
+    if (queries == null) return original;
+    double bsp = queries.rayFraction(from.x, from.y, from.z, to.x, to.y, to.z);
+    if (bsp >= 1) return original;
+    double length = from.distanceTo(to);
+    if (original.getType() != HitResult.Type.MISS
+        && length > 0
+        && original.getLocation().distanceTo(from) / length <= bsp) return original;
+    Vec3 hit = from.add(to.subtract(from).scale(bsp));
+    BuildingQueries.Placement placement =
+        queries.pick(from.x, from.y, from.z, to.x, to.y, to.z, BuildingQueries.SOLID_MASK);
+    if (placement == null)
+      return BlockHitResult.miss(
+          hit, Direction.getApproximateNearest(from.subtract(to)), BlockPos.containing(hit));
+    Direction face = Direction.values()[placement.face().ordinal()];
+    BlockPos cell = new BlockPos(placement.cellX(), placement.cellY(), placement.cellZ());
+    return new BlockHitResult(
+        new Vec3(placement.x(), placement.y(), placement.z()),
+        face,
+        cell.relative(face.getOpposite()),
+        false);
+  }
+
+  /** True when block cell {@code pos} overlaps BSP solid (no fluid or block may go there). */
+  public static boolean cellInBsp(Level level, BlockPos pos) {
+    BuildingQueries queries = at(level, pos.getX() + 0.5);
+    return queries != null && !queries.cellClear(pos.getX(), pos.getY(), pos.getZ());
+  }
+
+  // ---- hanging entities -----------------------------------------------------------------------
+
+  /**
+   * The block a hanging item ({@code HangingEntityItem.useOn}) was used on: the crosshair's BSP
+   * pick names the empty cell in front of the surface ({@link #clip}), so when that cell is empty
+   * and a BSP face lies on {@code face} of the block behind it, the block behind is the one clicked
+   * and the entity goes into the empty cell ({@code clicked.relative(face)}).
+   */
+  public static BlockPos hangingClicked(Level level, BlockPos clicked, Direction face) {
+    BuildingQueries queries = at(level, clicked.getX() + 0.5);
+    if (queries == null || !level.getBlockState(clicked).isAir()) return clicked;
+    BlockPos behind = clicked.relative(face.getOpposite());
+    return queries.touchesFace(
+            behind.getX(), behind.getY(), behind.getZ(), BlockFace.ofOrdinal(face.ordinal()))
+        ? behind
+        : clicked;
+  }
+
+  // ---- navigation -----------------------------------------------------------------------------
+
+  /** How far below a destination a BSP floor is looked for, in blocks. */
+  private static final double DESTINATION_DROP = 64;
+
+  /** How far above a destination inside BSP solid a free cell is looked for, in blocks. */
+  private static final int DESTINATION_RISE = 8;
+
+  /**
+   * Ground navigation's destination ({@code GroundPathNavigation.findSurfacePosition}) with BSP
+   * floors: Minecraft walks down an air column to the first block, which in a building region goes
+   * straight through BSP floors (they are not blocks). The destination becomes the cell of the
+   * highest BSP floor under {@code pos} (a floor off the block grid, say at y 63.25, gives cell 63)
+   * unless a block surface ({@code surface}, Minecraft's answer) lies higher; a destination inside
+   * BSP solid first moves up to the free cell above it.
+   */
+  public static BlockPos navigationSurface(Level level, BlockPos pos, BlockPos surface) {
+    BuildingQueries queries = at(level, pos.getX() + 0.5);
+    if (queries == null) return surface;
+    double x = pos.getX() + 0.5, z = pos.getZ() + 0.5;
+    int y = pos.getY();
+    for (int rise = 0;
+        rise < DESTINATION_RISE && !queries.cellClear(pos.getX(), y, pos.getZ());
+        rise++) y++;
+    if (!queries.cellClear(pos.getX(), y, pos.getZ())) return surface;
+    double floor = queries.floorBelow(x, y + 1 - BuildingQueries.CELL_INSET, z, DESTINATION_DROP);
+    if (Double.isNaN(floor)) return surface;
+    // The cell whose path node stands on that floor (see floorIn).
+    int floorCell = (int) Math.floor(floor + 0.5);
+    return floorCell >= surface.getY() || surface.getY() > y
+        ? new BlockPos(pos.getX(), floorCell, pos.getZ())
+        : surface;
+  }
+
+  /**
+   * The walkable BSP floor a mob in block cell {@code pos} stands on, as path nodes see it ({@code
+   * BuildingWalkNodeMixin}): within half a block of the cell's bottom, on or off the block grid.
+   * NaN when there is none.
+   */
+  public static double floorIn(Level level, BlockPos pos) {
+    BuildingQueries queries = at(level, pos.getX() + 0.5);
+    if (queries == null) return Double.NaN;
+    return queries.floorBelow(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, 1.0);
+  }
+
   // ---- fluids ---------------------------------------------------------------------------------
 
   /** True when fluid may flow from {@code source} into {@code target}. */

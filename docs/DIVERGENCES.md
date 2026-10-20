@@ -60,7 +60,7 @@ match the original; a mismatch found against the original is a bug.
 | `trap_SetCDKey` | Writes `q3key` | Kept in memory only | Never write key material to disk |
 | `trap_UpdateScreen` | Re-enters the cgame draw | Presents the frame drawn so far | Avoids re-entrant VM calls during loading screens |
 | Fonts (`trap_R_RegisterFont`) | Pre-rendered `.dat` or FreeType | Pre-rendered `fonts/fontImage_N.dat` only | Retail content ships pre-rendered fonts |
-| Protocol 48 (1.27) demos | Not playable by 1.32 either | Refused with a clear message | Layout only partly decoded (see `DemoProtocol.Q3_1_27`) |
+| Protocol 43 (1.09 `.dm3`) and 46/48 (1.25–1.27 `.dm_48`) demos | Not playable by 1.32 | Played through the same snapshot path | Extension; the layouts were measured from the demos (see `DemoProtocol`) |
 
 | Downloaded PK3s | Written into the game directory and mounted from then on | Kept in a host-only cache (`<home>/.downloads`), mounted only while connected to a server that references them; reconnecting takes them from the cache | A server's packs never change local or other servers' games |
 | `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice | The host owns presentation |

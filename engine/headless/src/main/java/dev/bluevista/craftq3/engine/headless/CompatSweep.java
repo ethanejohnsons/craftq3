@@ -661,19 +661,13 @@ public final class CompatSweep {
     entry.put("frames", client.frames().frames() - frames);
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);
     String lower = demo.toLowerCase(Locale.ROOT);
-    if (lower.endsWith(".dm_48") || lower.endsWith(".dm3")) {
-      // Quake III 1.27 (48) and pre-1.17 (.dm3) demos: 1.32 cannot play them either.
-      boolean refused = !error.isEmpty() && client.session().demosFinished() == finished;
-      entry.put("result", refused ? UNSUPPORTED : "unexpected");
-      entry.put(
-          "reason",
-          (lower.endsWith(".dm3")
-                  ? "protocol 43 (pre-1.17) demo; 1.32 cannot play it either"
-                  : "protocol 48 (1.27) demo; 1.32 cannot play it either")
-              + (refused ? ": " + error : ""));
-      if (!refused) game.problem("demo", demo, "an unsupported demo protocol was accepted");
-    } else if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
+    if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
       entry.put("result", "ok");
+    } else if (lower.endsWith(".dm3") && error.contains("game mismatch")) {
+      // A 1.09 (.dm3) gamestate is refused by a 1.32 cgame, as in the original; these demos play
+      // under the retail pak0 profile.
+      entry.put("result", UNSUPPORTED);
+      entry.put("reason", "1.09 demo refused by this game's 1.32 cgame: " + error);
     } else
       fail(
           game, entry, "demo", demo, error.isEmpty() ? "did not finish: " + client.state() : error);

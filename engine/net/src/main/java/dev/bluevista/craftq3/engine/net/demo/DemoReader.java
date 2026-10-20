@@ -62,8 +62,8 @@ public final class DemoReader implements AutoCloseable {
           protocol.number(),
           "Demo protocol "
               + protocol.number()
-              + " is not supported: its uncompressed, per-field-flagged entity and player deltas"
-              + " differ from protocols 66 to 68 (see DemoProtocol.Q3_1_27)");
+              + " is not supported: its entity deltas name change masks from a fixed table that"
+              + " is only partly known (see DemoProtocol.Q3_1_27)");
     records = new DemoRecordReader(input, policy);
     playback = policy == DemoRecordReader.Policy.PLAYBACK;
     reader.coding(protocol.coding());

@@ -77,6 +77,12 @@ match the original; a mismatch found against the original is a bug.
 | Cgame start after a gamestate | Same frame (`CL_InitCGame` from the gamestate) | One or more client frames later, once the map was parsed and its collision built on a worker (same frame for demos and synchronous runs) | Keeps the render thread responsive while the map loads |
 | Host map hooks | Maps come from the game files only | `ClientHostServices.mapOverride` may supply a map, `worldSources` adds collision geometry to client world traces (as the server's map sources do); `GameLocalServer.factory` decorates the local server's map source (server-only additions, checksum kept) | CraftQ3 extension for levels the Minecraft bridge synthesizes and for the host triggers of carried loadouts |
 
+## VM (`engine:vm`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Very deep guest recursion with compiled code (`vm_jit` 1 or 2) | Native recursion until the C stack overflows (crash) | One host stack frame per guest call; if the host thread's stack runs out before the call depth limit (4,096 for qagame), the invocation faults with `STACK` ("Host thread stack exhausted") instead of the interpreter's later "Call depth limit exceeded" | The interpreter keeps guest frames in an array; compiled procedures are JVM methods. Shipped modules recurse a few dozen levels at most |
+
 ## Game server (`engine:game`)
 
 | Behaviour | Original | Rewrite | Why |

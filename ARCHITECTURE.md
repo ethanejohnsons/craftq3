@@ -18,7 +18,7 @@ engine:fs          search path (PK3 + loose, original 1.32 precedence), pure man
 engine:formats     BSP 46/47, AAS, MD3, skins, animation configs, shaders, TGA/JPEG, WAV, RoQ, entities
 engine:console     cvars, commands, command buffer, key bindings, config read/write
 engine:net         protocol-68 Huffman/message/delta codecs, netchan, sessions, demos, UDP/loopback transports
-engine:vm          QVM reader and flat-code interpreter
+engine:vm          QVM reader, flat-code interpreter and QVM-to-JVM bytecode compiler
 engine:vm-abi      struct layouts per ABI profile, import tables and policies, shared VM host services
 engine:collision   CM layer: brush/patch/capsule traces, inline models, PVS, area portals
 engine:botlib      AAS routing, movement, goals, weights, chat, characters, elementary actions, scripts

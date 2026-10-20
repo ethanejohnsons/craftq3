@@ -67,6 +67,23 @@ longer warm-up. The first full run used 3 warm-up iterations, and the interprete
 | Interpreter, memory loads/stores loop | **593 M instr/s** | ~6 B per `vmMain` |
 | pak8 qagame, 8 bots on q3dm17, `BOTAI_START_FRAME` + `GAME_RUN_FRAME` | 1,320 frames/s = **0.76 ms per frame**; **385 M instr/s** and 2.76 M syscalls/s including host time (≈292 k instructions and ≈2,100 syscalls per frame) | 117 KB per frame |
 
+The `compiled` engine (`vm_jit` 2, [QVM.md](formats/QVM.md#execution-modes)) was measured the same
+way, after the compiler landed, with the interpreter re-run alongside it in the same session
+(within 4 % of the numbers above). Instruction rates count the QVM instructions the interpreter
+would have executed:
+
+| Benchmark | Interpreter | Compiled | Speed-up |
+| --- | --- | --- | --- |
+| Procedure-call loop | 563 M instr/s | **17.2 G instr/s** | 30.5× |
+| Syscall loop | 511 M instr/s | **4.86 G instr/s** | 9.5× |
+| Memory loads/stores loop | 590 M instr/s | **40.5 G instr/s** | 68.6× |
+| pak8 qagame, 8 bots on q3dm17 | 1,295 frames/s (0.77 ms), 378 M instr/s | **5,291 frames/s (0.19 ms)**, 1.55 G instr/s, 11.1 M syscalls/s | 4.1× |
+
+The synthetic loops are small enough for the JIT to inline the called procedure and keep the loop
+in registers. The qagame frame includes the host's syscall work (collision, botlib, entity links),
+which is now about half of the frame; 6 of the module's 856 procedures are too large to compile
+and stay interpreted, under 2 % of the frame. Allocation per frame is unchanged (≈118 KB).
+
 ### Collision
 
 All numbers are traces per second. Allocation is in bytes per trace.
@@ -119,7 +136,7 @@ There were 24,935 sampled frames. Bots stay in the game for the whole run.
 
 | Budget (REWRITE.md §3) | Measured | Status |
 | --- | --- | --- |
-| VM: at least 2× the legacy interpreter. The legacy interpreter measured 181 M instr/s on the procedure-call loop and 60 M on the syscall loop (same loops, same machine, during the port). | Current interpreter: 544 M (3.0×) and 519 M (8.6×). | **Met.** |
+| VM: at least 2× the legacy interpreter. The legacy interpreter measured 181 M instr/s on the procedure-call loop and 60 M on the syscall loop (same loops, same machine, during the port). | Current interpreter: 544 M (3.0×) and 519 M (8.6×); compiled code (the default, `vm_jit 1`): 17.2 G (95×) and 4.86 G (81×). | **Met.** |
 | qagame + 8 bots: p99 under 4 ms per frame | p99 1.11 ms (p99.9 1.43 ms) | **Met**, with 3.6× headroom. |
 | Traces: zero allocation | ≈0 B per trace on every map and trace kind | **Met.** |
 | Render: p99 under 8 ms per frame (in-game timedemo at 1080p) | render-ir CPU part p99 17 µs; scene build 7.5 ms at map load. Whole frames measured by the `mc:devharness` client game tests on an RTX 3080 at 1920×1080: render submission p99 ≤ 3.3 ms across seven maps; a real q3dm17 match (session + render) p99 2.65 ms on OpenGL, 1.92 ms on Vulkan. | **Met.** |

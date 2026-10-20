@@ -1,8 +1,9 @@
-# QVM bytecode and the interpreter
+# QVM bytecode, the interpreter and the compiler
 
 The game modules (`vm/qagame.qvm`, `vm/cgame.qvm`, `vm/ui.qvm`) are QVM bytecode produced by
 `q3lcc`/`q3asm`. CraftQ3 reads them from the user's installation and runs them in a Java
-interpreter; native modules (`.so`, `.dll`) are never loaded. Imports (syscalls), their policies
+interpreter or compiles them to JVM bytecode ([execution modes](#execution-modes)); native modules
+(`.so`, `.dll`) are never loaded. Imports (syscalls), their policies
 and the struct layouts of the two ABI profiles are listed in [SYSCALLS.md](../SYSCALLS.md), which
 is generated from the `engine/vm-abi` tables.
 
@@ -10,7 +11,12 @@ Code: `engine/vm`
 [`QvmImage`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmImage.java) (parse,
 validate, decode),
 [`QvmInstance`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmInstance.java)
-(interpreter),
+(interpreter, execution state),
+[`QvmCompiler`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmCompiler.java)
+(QVM to JVM bytecode),
+[`QvmJitRuntime`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmJitRuntime.java),
+[`QvmCode`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmCode.java),
+[`QvmCompileReport`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmCompileReport.java),
 [`QvmMemory`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/QvmMemory.java),
 [`Opcode`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/Opcode.java),
 [`Syscalls`](../../engine/vm/src/main/java/dev/bluevista/craftq3/engine/vm/Syscalls.java),
@@ -112,6 +118,66 @@ handler returns the import's documented neutral value and is logged once; `vm_st
 makes it a fault instead. `TraceRecorder` keeps an opcode histogram and the most recent
 instructions for diagnostics.
 
+## Execution modes
+
+`QvmInstance.ExecutionMode` selects how an instance runs its image; hosts read it from the
+`vm_jit` cvar (registered by the qagame and client hosts):
+
+| Mode | `vm_jit` | Behaviour |
+| --- | ---: | --- |
+| `INTERPRET` | 0 | The interpreter only. |
+| `AUTO` | 1 (default) | Compiled to JVM bytecode; if the image cannot be compiled at all, the whole image is interpreted and a warning is logged once. |
+| `COMPILE` | 2 | Compiled; construction fails if the image cannot be compiled (tests use it to make sure the compiler really ran). |
+
+All modes have the same observable behaviour: results, memory, syscall streams, fault reasons with
+their instruction, opcode and message, instruction counts and the points where budgets, the
+deadline and interruption are checked. The interpreter is the reference; procedures the compiler
+does not handle run in it, and interpreted and compiled procedures call each other freely. A
+tracer (`setTracer`) always runs the interpreter.
+
+`QvmCompiler` compiles the image once, on the first instance that asks, and the result is shared by
+every instance of that image (compiling pak8's qagame takes about 40–120 ms):
+
+- **Procedures.** Each procedure (an `ENTER` up to the next `ENTER`) becomes a private static method
+  `int p<entry>(QvmInstance vm, int ps, int ret, int depth, int base)` in a hidden class
+  (`MethodHandles.Lookup.defineHiddenClassWithClassData`, built with `java.lang.classfile`; about
+  16,384 QVM instructions per class keep constant pools small). Calls within a class are
+  `invokestatic`; calls across classes are `invokedynamic` sites bound to a constant method handle,
+  which the JIT inlines like a direct call. The classes are unloaded with the image.
+- **Operands.** Data flow computes the operand stack depth before every reachable instruction;
+  operands live on the JVM operand stack. `CONST` and `LOCAL` values stay symbolic until consumed,
+  so constant arithmetic folds and a load or store whose address is provably inside the data
+  segment (a constant address, or a frame offset between the frame bottom and the incoming
+  arguments) needs no mask or check. Every other access masks and checks exactly as the
+  interpreter does; block copies call the interpreter's checks.
+- **Control flow.** Conditional branches and constant `JUMP`s are JVM branches. A computed `JUMP`
+  (a `switch` through a jump table) is a JVM `tableswitch` or `lookupswitch` over its possible
+  targets: the version 2 jump table's entries in the procedure, or, for version 1 modules (every
+  retail and mod build in the corpus), the instruction numbers that appear as aligned words in the
+  initialized data, where q3asm puts the tables. A version 1 target outside that set is checked
+  like the interpreter and the rest of the activation runs in the interpreter
+  (`QvmInstance.deoptimizations()` counts these; none occur in the corpus). `CALL` to a constant
+  procedure is a direct call, a computed `CALL` dispatches through the image's method-handle table,
+  and negative addresses are syscalls with the interpreter's argument marshalling.
+- **Accounting.** A local holds the part of the current straight-line run that crossed branch
+  targets, so instructions are charged at exactly the interpreter's control transfers and in the
+  same amounts. The fault paths call back into `QvmInstance` with the faulting instruction number.
+- **Operand stack limit.** A compiled activation whose static maximum depth could pass the
+  operand stack limit runs in the interpreter, which faults at the exact instruction.
+
+A procedure stays in the interpreter (counted by reason in `QvmInstance.compileReport()`) when its
+operand depth is not static, it reads operands below its frame, a version 1 computed jump leaves
+operands below its target, or its method would exceed 8,000 bytes of bytecode (HotSpot's
+`HugeMethodLimit`: larger methods would never be JIT-compiled) or the JVM's 64 KiB limit. Over the
+67 distinct builds in the maintainer's corpus 46,945 of 47,264 procedures compile; 318 exceed
+8,000 bytes and one exceeds 64 KiB. In pak8's qagame 6 of 856 procedures stay interpreted, and they
+account for under 2 % of a bot frame. With 8 bots on q3dm17 a qagame frame takes 0.19 ms compiled
+against 0.77 ms interpreted; see [PERFORMANCE.md](../PERFORMANCE.md).
+
+Compiled code uses one host stack frame per guest call, so very deep guest recursion can exhaust
+the host thread's stack before the call depth limit; that faults the invocation with `STACK`
+("Host thread stack exhausted"), see [DIVERGENCES.md](../DIVERGENCES.md).
+
 ## ABI profiles
 
 The 1999 retail release (`pak0.pk3`) and 1.32 use different import numbering and struct layouts
@@ -122,5 +188,9 @@ of sizes and imports is in [SYSCALLS.md](../SYSCALLS.md).
 
 Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
 `QvmImageTest`, `QvmInstanceTest`, `OpcodeConformanceTest`, `QvmMemoryTest`, `QvmSecurityTest`
-(synthetic bytecode), `AbiDetectorTest`, `ImportTableTest`, `SyscallDocsTest`, and the
-`@RealData` `RealQvmCorpusTest`, which parses every QVM build of an installation.
+(synthetic bytecode; all but `QvmMemoryTest` run again compiled through `CompiledSuitesTest`),
+`QvmCompilerTest` (compiled against interpreted runs: edge cases, every budget exhaustion point of
+the hot loops, 300 random programs), `AbiDetectorTest`, `ImportTableTest`, `SyscallDocsTest`, and
+the `@RealData` `RealQvmCorpusTest`, which parses every QVM build of an installation, and
+`RealQvmCompileTest`, which compiles every build and requires identical syscall streams, results,
+statistics and memory from both modes over a sequence of `vmMain` calls against a recording stub.

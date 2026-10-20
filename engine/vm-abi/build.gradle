@@ -3,4 +3,5 @@ dependencies {
     api project(':engine:vm')
     api project(':engine:console')
     api project(':engine:fs')
+    testImplementation project(':engine:testkit')
 }

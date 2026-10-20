@@ -575,7 +575,7 @@ public final class Q3RenderBackend implements AutoCloseable {
     int[] viewport =
         viewport(
             view.refdef().x(), view.refdef().y(), view.refdef().width(), view.refdef().height());
-    PassRecord main = prepareView(view, definition, viewport, null, -1);
+    PassRecord main = prepareView(view, definition, viewport, null);
     if (main != null) passes.add(main);
   }
 
@@ -587,8 +587,7 @@ public final class Q3RenderBackend implements AutoCloseable {
       CgameFrame.View cgView,
       ViewDefinition definition,
       int[] viewport,
-      Q3RenderTarget portalTarget,
-      int unusedSlot) {
+      Q3RenderTarget portalTarget) {
     int slot = viewsThisFrame++;
     stats.views++;
     VisibleSet visible = visibleSets[slot];
@@ -616,7 +615,7 @@ public final class Q3RenderBackend implements AutoCloseable {
         for (PortalViews.Derived d : derived) {
           if (n == MAX_PORTAL_VIEWS || viewsThisFrame >= MAX_VIEWS) break;
           Q3RenderTarget portal = context.renderTarget(1 + n, targetWidth, targetHeight, true);
-          PassRecord pass = prepareView(cgView, d.view(), viewport, portal, n);
+          PassRecord pass = prepareView(cgView, d.view(), viewport, portal);
           if (pass != null) {
             passes.add(pass);
             portalImages.put(d.surface(), portal.colorView());
@@ -732,7 +731,7 @@ public final class Q3RenderBackend implements AutoCloseable {
                     p,
                     diffuse(p, time, lightmap, white),
                     p.sampler,
-                    lightmapFor(p, lightmap, white),
+                    lightmapFor(lightmap, white),
                     drawBlock,
                     -1);
             staticGeometry(c, front, firstRun, runs);
@@ -771,7 +770,7 @@ public final class Q3RenderBackend implements AutoCloseable {
                     p,
                     diffuse(p, time, lightmap, white),
                     p.sampler,
-                    lightmapFor(p, lightmap, white),
+                    lightmapFor(lightmap, white),
                     null,
                     drawOffset);
             ringGeometry(c, firstIndex, draw.indexCount(), baseVertex);
@@ -811,7 +810,7 @@ public final class Q3RenderBackend implements AutoCloseable {
                     p,
                     diffuse(p, time, lightmap, white),
                     p.sampler,
-                    lightmapFor(p, lightmap, white),
+                    lightmapFor(lightmap, white),
                     null,
                     drawOffset);
             staticRange(c, side, batch.firstIndex(), batch.indexCount());
@@ -902,8 +901,7 @@ public final class Q3RenderBackend implements AutoCloseable {
     return texture(pass, time, white);
   }
 
-  private static GpuTextureView lightmapFor(
-      Q3MaterialTable.Pass pass, GpuTextureView lightmap, GpuTextureView white) {
+  private static GpuTextureView lightmapFor(GpuTextureView lightmap, GpuTextureView white) {
     return lightmap != null ? lightmap : white;
   }
 

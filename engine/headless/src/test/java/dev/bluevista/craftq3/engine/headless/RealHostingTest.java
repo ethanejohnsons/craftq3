@@ -33,7 +33,7 @@ final class RealHostingTest {
                 base.withNetEnabled(true)
                     .withCommandLine(
                         CommandLine.parse(
-                            "+set vm_strictSyscalls 1 +set sv_pure 0 +set net_ip 127.0.0.1 +set net_port 0 +set name Hoster")));
+                            "+set vm_strictSyscalls 1 +set sv_pure 1 +set net_ip 127.0.0.1 +set net_port 0 +set name Hoster")));
         HeadlessClient guest =
             HeadlessClient.start(
                 base.withSeed(43)

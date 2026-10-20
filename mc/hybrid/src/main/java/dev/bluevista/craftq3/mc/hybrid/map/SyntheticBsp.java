@@ -162,8 +162,8 @@ public final class SyntheticBsp {
       }
     }
     ByteBuffer models = buffer(MODEL_BYTES * (boxes.size() + 1));
-    models.putFloat(-WORLD_EXTENT).putFloat(-WORLD_EXTENT).putFloat(-WORLD_EXTENT);
-    models.putFloat(WORLD_EXTENT).putFloat(WORLD_EXTENT).putFloat(WORLD_EXTENT);
+    float[] bounds = worldBounds();
+    for (float value : bounds) models.putFloat(value);
     models.putInt(0).putInt(0).putInt(0).putInt(world.size());
     for (int i = 0; i < boxes.size(); i++) {
       float[][] p = boxes.get(i).planes;
@@ -188,6 +188,41 @@ public final class SyntheticBsp {
     leaf.putInt(0).putInt(0).putInt(0).putInt(world.size());
     lumps.put(BspLump.LEAVES, leaf.array());
     return assemble(lumps);
+  }
+
+  /**
+   * The world model's bounds: the axial extent of the world brushes, or {@link #WORLD_EXTENT} on
+   * every side without them (and on any side a brush leaves unbounded).
+   */
+  private float[] worldBounds() {
+    if (world.isEmpty())
+      return new float[] {
+        -WORLD_EXTENT, -WORLD_EXTENT, -WORLD_EXTENT, WORLD_EXTENT, WORLD_EXTENT, WORLD_EXTENT
+      };
+    float[] out = {
+      Float.POSITIVE_INFINITY,
+      Float.POSITIVE_INFINITY,
+      Float.POSITIVE_INFINITY,
+      Float.NEGATIVE_INFINITY,
+      Float.NEGATIVE_INFINITY,
+      Float.NEGATIVE_INFINITY
+    };
+    for (Brush brush : world) {
+      float[] lo = {Float.NaN, Float.NaN, Float.NaN};
+      float[] hi = {Float.NaN, Float.NaN, Float.NaN};
+      for (float[] p : brush.planes)
+        for (int axis = 0; axis < 3; axis++) {
+          if (p[axis] == 1 && p[(axis + 1) % 3] == 0 && p[(axis + 2) % 3] == 0)
+            hi[axis] = Float.isNaN(hi[axis]) ? p[3] : Math.min(hi[axis], p[3]);
+          if (p[axis] == -1 && p[(axis + 1) % 3] == 0 && p[(axis + 2) % 3] == 0)
+            lo[axis] = Float.isNaN(lo[axis]) ? -p[3] : Math.max(lo[axis], -p[3]);
+        }
+      for (int axis = 0; axis < 3; axis++) {
+        out[axis] = Math.min(out[axis], Float.isNaN(lo[axis]) ? -WORLD_EXTENT : lo[axis]);
+        out[axis + 3] = Math.max(out[axis + 3], Float.isNaN(hi[axis]) ? WORLD_EXTENT : hi[axis]);
+      }
+    }
+    return out;
   }
 
   /** The parsed map. */

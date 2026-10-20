@@ -82,6 +82,27 @@ final class FaceSupportIndex {
     return n;
   }
 
+  /** Receives indexed block faces. */
+  @FunctionalInterface
+  interface FaceVisitor {
+    void face(int x, int y, int z, BlockFace face, int bits);
+  }
+
+  /** Visits every block face with BSP support, in no particular order. */
+  void forEach(FaceVisitor visitor) {
+    for (int i = 0; i < keys.length; i++) {
+      long k = keys[i];
+      if (k == 0) continue;
+      long key = k - 1;
+      visitor.face(
+          (int) (key >> 43) + originX,
+          (int) ((key << 21) >> 43) + originY,
+          (int) ((key << 42) >> 45) + originZ,
+          BlockFace.ofOrdinal((int) (key & 7)),
+          flags[slots[i]]);
+    }
+  }
+
   /** The support bits of block {@code (x, y, z)}'s {@code face}, or 0. */
   int bits(int x, int y, int z, BlockFace face) {
     int dense = find(key(x - originX, y - originY, z - originZ, face));

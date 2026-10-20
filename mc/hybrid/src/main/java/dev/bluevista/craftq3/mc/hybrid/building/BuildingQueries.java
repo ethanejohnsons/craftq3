@@ -357,6 +357,10 @@ public final class BuildingQueries {
     return support.supports(x, y, z, face, shape, host, hostCount);
   }
 
+  FaceSupportIndex supportIndex() {
+    return support;
+  }
+
   /** Per-thread trace scratch. */
   private static final class Scratch {
     final Trace trace = new Trace();

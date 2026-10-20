@@ -57,6 +57,7 @@ class BuildingQueriesTest {
                 new float[] {0, -1, 0, 64},
                 new float[] {0, 1, 0, 64},
                 new float[] {0, 0, -1, 64},
+                new float[] {0, 0, 1, 128},
                 new float[] {-0.70710677f, 0, 0.70710677f, -678.8225f});
     return BuildingQueries.build(bsp.build("building.bsp"), T);
   }

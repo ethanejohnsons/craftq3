@@ -227,23 +227,22 @@ public final class HomeStore implements FileSource, AutoCloseable {
       throw new IOException("Not a regular home file: " + path.key());
     if (attributes.size() > limits.maxFileBytes())
       throw new IOException("Home file exceeds " + limits.maxFileBytes() + " bytes: " + path.key());
-    FileChannel channel =
-        FileChannel.open(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-    try {
+    // Read a snapshot and release the OS handle at once: Windows refuses to replace a file that
+    // any handle has open, and a later atomic save of the same file must still succeed.
+    byte[] data;
+    try (FileChannel channel =
+        FileChannel.open(file, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
       long length = channel.size();
       if (length > limits.maxFileBytes())
         throw new IOException("Home file exceeds its limit: " + path.key());
-      Reader reader = new Reader(channel, length, tracked);
-      if (tracked) readers.add(reader);
-      return Optional.of(reader);
-    } catch (IOException | RuntimeException failure) {
-      try {
-        channel.close();
-      } catch (IOException close) {
-        failure.addSuppressed(close);
-      }
-      throw failure;
+      data = new byte[(int) length];
+      ByteBuffer buffer = ByteBuffer.wrap(data);
+      while (buffer.hasRemaining())
+        if (channel.read(buffer) < 0) throw new IOException("Home file shrank while reading");
     }
+    Reader reader = new Reader(data, tracked);
+    if (tracked) readers.add(reader);
+    return Optional.of(reader);
   }
 
   /** Atomically creates or replaces a file. */
@@ -477,33 +476,27 @@ public final class HomeStore implements FileSource, AutoCloseable {
       } catch (IOException problem) {
         failure = problem;
       }
-    for (Reader reader : List.copyOf(readers))
-      try {
-        reader.close();
-      } catch (IOException problem) {
-        if (failure == null) failure = problem;
-        else failure.addSuppressed(problem);
-      }
+    for (Reader reader : List.copyOf(readers)) reader.close();
     closed = true;
     if (failure != null) throw failure;
   }
 
+  /** A reader over a snapshot taken when the file was opened. */
   private final class Reader extends InputStream {
-    private final FileChannel channel;
-    private final long length;
+    private final byte[] data;
     private final boolean tracked;
+    private int position;
     private boolean ended;
 
-    Reader(FileChannel channel, long length, boolean tracked) {
-      this.channel = channel;
-      this.length = length;
+    Reader(byte[] data, boolean tracked) {
+      this.data = data;
       this.tracked = tracked;
     }
 
     @Override
     public int read() throws IOException {
-      byte[] one = new byte[1];
-      return read(one, 0, 1) < 0 ? -1 : one[0] & 255;
+      if (ended) throw new IOException("Home store reader closed");
+      return position < data.length ? data[position++] & 255 : -1;
     }
 
     @Override
@@ -511,22 +504,21 @@ public final class HomeStore implements FileSource, AutoCloseable {
       Objects.checkFromIndexSize(offset, count, bytes.length);
       if (ended) throw new IOException("Home store reader closed");
       if (count == 0) return 0;
-      long remaining = length - channel.position();
-      if (remaining <= 0) return -1;
-      int read = channel.read(ByteBuffer.wrap(bytes, offset, (int) Math.min(count, remaining)));
-      if (read == 0) throw new IOException("Home store read made no progress");
+      if (position >= data.length) return -1;
+      int read = Math.min(count, data.length - position);
+      System.arraycopy(data, position, bytes, offset, read);
+      position += read;
       return read;
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
       if (ended) return;
       ended = true;
       if (tracked)
         synchronized (HomeStore.this) {
           readers.remove(this);
         }
-      channel.close();
     }
   }
 

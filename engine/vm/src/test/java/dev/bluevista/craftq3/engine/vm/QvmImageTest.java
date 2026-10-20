@@ -92,6 +92,45 @@ final class QvmImageTest {
   }
 
   @Test
+  void nativeStackExtentReachesDownToTheEndOfTheGlobals() {
+    int frame = QvmImage.PROGRAM_STACK_SIZE + 0x800;
+    // q3asm layout with a large BSS: the globals end 64 KiB before the end of BSS (0xF000 here),
+    // and the original lets the stack use everything above them.
+    var deep = new QvmAssembler().bss(0x1F000 - 64).op(ENTER, frame).op(CONST, 42).op(LEAVE, frame);
+    byte[] bytes = deep.bytes();
+    var reserved = QvmImage.parse("deep", bytes, QvmImage.StackPolicy.RESERVED);
+    assertEquals(QvmImage.PROGRAM_STACK_SIZE, reserved.programStackSize());
+    var reservedVm = new QvmInstance(reserved, QvmAssembler.NO_SYSCALLS);
+    var exhausted = assertThrows(QvmException.class, () -> reservedVm.vmMain(0));
+    assertTrue(exhausted.getMessage().contains("stack"), exhausted::getMessage);
+
+    var extended = QvmImage.parse("deep", bytes, QvmImage.StackPolicy.NATIVE_EXTENT);
+    assertEquals(0x20000, extended.memorySize());
+    assertEquals(0xF000, extended.stackBottom());
+    assertEquals(0x11000, extended.programStackSize());
+    assertEquals(reserved.instructionCount(), extended.instructionCount());
+    assertEquals(42, new QvmInstance(extended, QvmAssembler.NO_SYSCALLS).vmMain(0));
+
+    // BSS smaller than the extent: the stack must lie entirely above data, literals and BSS.
+    var above = new QvmAssembler().data(new int[0x8000]).bss(4);
+    above.op(ENTER, 8).op(CONST, 1).op(LEAVE, 8);
+    var image = QvmImage.parse("above", above.bytes(), QvmImage.StackPolicy.NATIVE_EXTENT);
+    assertEquals(0x40000, image.memorySize());
+    assertEquals(0x20004, image.stackBottom());
+
+    // Nothing to gain (BSS holds only the reservation): the reserved stack is kept.
+    var plain = constant().bss(QvmImage.PROGRAM_STACK_SIZE).bytes();
+    assertEquals(
+        QvmImage.PROGRAM_STACK_SIZE,
+        QvmImage.parse("plain", plain, QvmImage.StackPolicy.NATIVE_EXTENT).programStackSize());
+    // Validation is the reserved stack's: what it rejects stays rejected.
+    assertThrows(
+        QvmFormatException.class,
+        () ->
+            QvmImage.parse("tiny", constant().bss(64).bytes(), QvmImage.StackPolicy.NATIVE_EXTENT));
+  }
+
+  @Test
   void oneImageBacksIndependentInstances() {
     var code =
         new QvmAssembler()

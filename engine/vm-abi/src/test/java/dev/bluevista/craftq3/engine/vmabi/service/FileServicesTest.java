@@ -109,7 +109,7 @@ final class FileServicesTest {
           List.of("arena.txt", "bots.txt"), names(count, BUFFER).stream().sorted().toList());
       memory.writeString(EXT, "/", 64);
       count = services.list(vm, args(PATH, EXT, BUFFER, 4096));
-      assertEquals(List.of("sub"), names(count, BUFFER));
+      assertEquals(List.of("sub/"), names(count, BUFFER), "directories keep a trailing slash");
       memory.writeString(PATH, "", 64);
       memory.writeString(EXT, "cfg", 64);
       count = services.list(vm, args(PATH, EXT, BUFFER, 4096));
@@ -120,6 +120,68 @@ final class FileServicesTest {
     } finally {
       home.close();
     }
+  }
+
+  /** Fails every handle operation, so only the handle-0 short cut can succeed. */
+  private static VmFiles noHandles(List<String> directories) {
+    return new VmFiles() {
+      public int length(String path) {
+        return -1;
+      }
+
+      public Opened open(String path, Mode mode) throws IOException {
+        throw new IOException("none");
+      }
+
+      public byte[] read(int handle, int length) throws IOException {
+        throw new IOException("bad handle " + handle);
+      }
+
+      public int write(int handle, byte[] data) throws IOException {
+        throw new IOException("bad handle " + handle);
+      }
+
+      public boolean seek(int handle, int offset, Origin origin) throws IOException {
+        throw new IOException("bad handle " + handle);
+      }
+
+      public void close(int handle) throws IOException {
+        throw new IOException("bad handle " + handle);
+      }
+
+      public List<String> list(String directory, String extension) {
+        return "/".equals(extension) ? directories : List.of("file.cfg");
+      }
+    };
+  }
+
+  @Test
+  void handleZeroReadsWritesAndClosesNothing() {
+    // CPMA passes the 0 a failed open stored; the original returns 0 without touching the buffer.
+    FileServices services = new FileServices(VmModule.QAGAME, noHandles(List.of()));
+    assertEquals(0, services.read(vm, args(BUFFER, 4, 0)));
+    assertEquals(0, services.read(vm, args(-1, 4, 0)), "the buffer is not resolved");
+    assertEquals(0, services.write(vm, args(BUFFER, 4, 0)));
+    assertEquals(0, services.close(vm, args(0)));
+    assertThrows(UncheckedIOException.class, () -> services.read(vm, args(BUFFER, 4, 3)));
+    assertThrows(UncheckedIOException.class, () -> services.write(vm, args(BUFFER, 4, 3)));
+    assertThrows(UncheckedIOException.class, () -> services.close(vm, args(3)));
+  }
+
+  @Test
+  void directoryListingsNameEachSubdirectoryWithATrailingSlash() {
+    // Combat's ui strips the last character of each "/" listing entry without checking it.
+    FileServices services = new FileServices(VmModule.UI, noHandles(List.of("baseq3", "combat")));
+    memory.writeString(PATH, "", 64);
+    memory.writeString(EXT, "/", 64);
+    assertEquals(2, services.list(vm, args(PATH, EXT, BUFFER, 4096)));
+    assertEquals(List.of("baseq3/", "combat/"), names(2, BUFFER));
+    // The slash counts toward the original packing bound: "baseq3/" and its NUL plus the spare.
+    assertEquals(0, services.list(vm, args(PATH, EXT, BUFFER, 9)));
+    assertEquals(1, services.list(vm, args(PATH, EXT, BUFFER, 10)));
+    memory.writeString(EXT, "cfg", 64);
+    assertEquals(1, services.list(vm, args(PATH, EXT, BUFFER, 4096)));
+    assertEquals(List.of("file.cfg"), names(1, BUFFER), "other listings are unchanged");
   }
 
   @Test

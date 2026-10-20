@@ -50,7 +50,6 @@ final class QagameHost {
   VmHost build(SharedServices services, VmHost.Options options) {
     Bindings b = new Bindings(VmModule.QAGAME);
     services.install(b);
-    compatibleFiles(b, services);
     bindEngine(b);
     server.botSupport().bind(b, profile, server);
     return new VmHost(ImportTable.of(VmModule.QAGAME, profile), b, options);
@@ -75,35 +74,6 @@ final class QagameHost {
 
   private int entity(int pointer) {
     return world().entities().number(pointer);
-  }
-
-  /**
-   * The original {@code FS_Read}/{@code FS_Write} return 0 and {@code FS_FCloseFile} does nothing
-   * for handle 0, which guests pass after a failed open (CPMA does); and a {@code "/"} listing
-   * names subdirectories with a trailing slash. Only other invalid handles degrade.
-   */
-  private static void compatibleFiles(Bindings b, SharedServices services) {
-    var files = services.files();
-    b.override(G_FS_READ, (vm, a) -> a[2] == 0 ? 0 : files.read(vm, a));
-    b.override(G_FS_WRITE, (vm, a) -> a[2] == 0 ? 0 : files.write(vm, a));
-    b.override(G_FS_FCLOSE_FILE, (vm, a) -> a[0] == 0 ? 0 : files.close(vm, a));
-    b.override(
-        G_FS_GETFILELIST,
-        (vm, a) -> {
-          String extension = GuestText.readPath(vm.memory(), a[1]);
-          if (!"/".equals(extension)) return files.list(vm, a);
-          if (a[3] < 0) throw new IllegalArgumentException("Negative file list size " + a[3]);
-          vm.memory().resolve(a[2], a[3]);
-          java.util.List<String> names = new java.util.ArrayList<>();
-          try {
-            String directory = GuestText.readPath(vm.memory(), a[0]);
-            for (String name : files.files().list(directory, extension)) names.add(name + "/");
-          } catch (java.io.IOException unreadable) {
-            names.clear();
-          }
-          return dev.bluevista.craftq3.engine.vmabi.service.FileServices.encodeNames(
-              vm.memory(), a[2], a[3], names);
-        });
   }
 
   private void bindEngine(Bindings b) {

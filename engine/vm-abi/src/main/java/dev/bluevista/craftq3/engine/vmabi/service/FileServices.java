@@ -7,18 +7,26 @@ import dev.bluevista.craftq3.engine.vmabi.VmModule;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
 /**
  * The {@code trap_FS_*} imports over {@link VmFiles}. Missing or refused files return the original
- * "not found" results (-1, handle 0) and are not degradations; an invalid handle is a guest error
- * and degrades.
+ * "not found" results (-1, handle 0) and are not degradations. Handle 0 itself, which guests pass
+ * after a failed open (CPMA does), reads and writes nothing and closes as a no-op, as in the
+ * original; any other invalid handle is a guest error and degrades.
  */
 public final class FileServices {
   /** The special directory that lists game directories instead of files. */
   public static final String MOD_LIST = "$modlist";
+
+  /** The extension that lists subdirectories instead of files. */
+  public static final String DIRECTORIES = "/";
+
+  /** The handle a failed open stores; never a real file. */
+  public static final int NO_HANDLE = 0;
 
   private static final Log LOG = Log.get(FileServices.class);
 
@@ -56,8 +64,9 @@ public final class FileServices {
     }
   }
 
-  /** {@code trap_FS_Read(buffer, length, handle)}: returns the bytes read. */
+  /** {@code trap_FS_Read(buffer, length, handle)}: returns the bytes read (0 for handle 0). */
   public int read(QvmInstance vm, int[] a) {
+    if (a[2] == NO_HANDLE) return 0;
     QvmMemory memory = vm.memory();
     memory.resolve(a[0], a[1]);
     try {
@@ -69,8 +78,9 @@ public final class FileServices {
     }
   }
 
-  /** {@code trap_FS_Write(buffer, length, handle)}: returns the bytes written. */
+  /** {@code trap_FS_Write(buffer, length, handle)}: returns the bytes written (0 for handle 0). */
   public int write(QvmInstance vm, int[] a) {
+    if (a[2] == NO_HANDLE) return 0;
     byte[] data = vm.memory().readBytes(a[0], a[1]);
     try {
       return files.write(a[2], data);
@@ -79,8 +89,9 @@ public final class FileServices {
     }
   }
 
-  /** {@code trap_FS_FCloseFile(handle)}. */
+  /** {@code trap_FS_FCloseFile(handle)}; a no-op for handle 0. */
   public int close(QvmInstance vm, int[] a) {
+    if (a[0] == NO_HANDLE) return 0;
     try {
       files.close(a[0]);
       return 0;
@@ -102,7 +113,10 @@ public final class FileServices {
 
   /**
    * {@code trap_FS_GetFileList(path, extension, buffer, size)}: NUL-separated names, or for {@link
-   * #MOD_LIST} name/description pairs; returns the number of entries that fit.
+   * #MOD_LIST} name/description pairs; returns the number of entries that fit. A {@link
+   * #DIRECTORIES} listing names each subdirectory with a trailing slash, as the original's listing
+   * of PK3 directory entries does (guests such as Combat's ui strip that last character, some
+   * without checking it).
    */
   public int list(QvmInstance vm, int[] a) {
     QvmMemory memory = vm.memory();
@@ -112,6 +126,8 @@ public final class FileServices {
     if (size < 0) throw new IllegalArgumentException("Negative file list size " + size);
     memory.resolve(a[2], size);
     try {
+      if (DIRECTORIES.equals(extension))
+        return encodeNames(memory, a[2], size, directories(files.list(directory, extension)));
       if (directory.toLowerCase(Locale.ROOT).equals(MOD_LIST))
         return encodeMods(memory, a[2], size, files.mods());
       return encodeNames(memory, a[2], size, files.list(directory, extension));
@@ -120,6 +136,12 @@ public final class FileServices {
       if (size > 0) memory.writeByte(a[2], 0);
       return 0;
     }
+  }
+
+  private static List<String> directories(List<String> names) {
+    List<String> slashed = new ArrayList<>(names.size());
+    for (String name : names) slashed.add(name + DIRECTORIES);
+    return slashed;
   }
 
   /**

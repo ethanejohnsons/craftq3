@@ -46,30 +46,11 @@ public final class QvmGameProgram implements GameProgram {
     String path = VmModule.QAGAME.path();
     byte[] bytes = files.read(path).orElseThrow(() -> new NoSuchFileException(path));
     return new QvmGameProgram(
-        withNativeStack(QvmImage.parse("qagame", bytes), bytes), bytes, abiOverride, LIMITS, clock);
-  }
-
-  /**
-   * The original interpreter has no stack-bottom check: the program stack starts at the top of the
-   * power-of-two data segment and may use everything down to the end of the guest's globals (the 64
-   * KiB q3asm reserves at the end of BSS plus the rounding slack). Some builds (Q3Rally) need more
-   * than the reservation, so the image is re-parsed with that whole region as its stack.
-   */
-  static QvmImage withNativeStack(QvmImage image, byte[] bytes) {
-    long total = (long) image.dataLength() + image.literalLength() + image.bssLength();
-    long globalsEnd =
-        image.bssLength() >= QvmImage.PROGRAM_STACK_SIZE
-            ? total - QvmImage.PROGRAM_STACK_SIZE
-            : total;
-    long available = (image.memorySize() - globalsEnd) & ~3L;
-    if (available <= image.programStackSize()) return image;
-    if (image.bssLength() < available) available = (image.memorySize() - total) & ~3L;
-    if (available <= image.programStackSize()) return image;
-    try {
-      return QvmImage.parse(image.name(), bytes, (int) available);
-    } catch (RuntimeException rejected) {
-      return image;
-    }
+        QvmImage.parse("qagame", bytes, QvmImage.StackPolicy.NATIVE_EXTENT),
+        bytes,
+        abiOverride,
+        LIMITS,
+        clock);
   }
 
   @Override

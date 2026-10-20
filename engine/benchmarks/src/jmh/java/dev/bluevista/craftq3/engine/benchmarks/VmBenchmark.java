@@ -28,8 +28,9 @@ import org.openjdk.jmh.annotations.Warmup;
  */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
-@Warmup(iterations = 3, time = 1)
-@Measurement(iterations = 5, time = 1)
+// The interpreter's dispatch loop needs several seconds of JIT warm-up to settle.
+@Warmup(iterations = 5, time = 1)
+@Measurement(iterations = 10, time = 1)
 @Fork(1)
 @State(Scope.Thread)
 public class VmBenchmark {

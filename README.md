@@ -106,6 +106,7 @@ need game data run locally only; retail data never goes to CI.
 - [docs/SYSCALLS.md](docs/SYSCALLS.md): every QVM import and how it is handled (generated).
 - [docs/MIXINS.md](docs/MIXINS.md): every Minecraft hook and why.
 - [docs/REWRITE.md](docs/REWRITE.md): the 2026 rewrite plan and its outcome.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): JMH benchmarks, measured results and budgets.
 - [docs/formats/](docs/formats/): file and protocol format notes.
 - [LICENSE-NOTES.md](LICENSE-NOTES.md): provenance and asset rules.
 

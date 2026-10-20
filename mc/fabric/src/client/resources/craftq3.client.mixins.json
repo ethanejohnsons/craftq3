@@ -6,6 +6,7 @@
   "client": [
     "ChannelAccessor",
     "GameRendererMixin",
+    "MouseHandlerMixin",
     "SoundEngineAccessor",
     "SoundEngineMixin",
     "SoundManagerAccessor"

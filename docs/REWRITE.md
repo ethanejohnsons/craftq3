@@ -157,6 +157,12 @@ Each phase ends with CI green and its exit criteria met.
   built pipeline variants, lightmap collapse), `Q3TextureCache` and the `q3_material` shaders.
   `Q3MapRenderClientTest` covers seven maps on both backends; backend CPU p99 at 1080p was 0.3–3.2
   ms (OpenGL) and 0.2–1.4 ms (Vulkan) on the maintainer's RTX 3080. `/q3debug map <name>` views a map.
+  Entity effects follow the original's surface shapes (rail core along its length, rail rings,
+  `RT_BEAM`, `RT_LIGHTNING`), per-view `RF_*` rules, `RF_SHADOW_PLANE` projected shadows and Q3's
+  entity lighting; `RDF_NOWORLDMODEL` views (menu player models) render with no map loaded;
+  `RDF_HYPERSPACE` clears to the time's grey; `videoMap` stages stream their RoQ on a worker
+  (`Q3VideoMaps`); every pipeline variant a map needs is compiled during `loadMap`.
+  `Q3EffectsRenderClientTest` checks these on both backends.
 - Audio: pooled buffers and an executor owned by the lifecycle.
 - Turn the smoke classes into devharness client tests.
 - Exit: screenshots within tolerance of the Phase 0 references on Vulkan and OpenGL; a dedicated Minecraft server boots with the mod; the frame-time budget is met.

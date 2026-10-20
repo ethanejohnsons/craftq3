@@ -42,6 +42,15 @@ match the original; a mismatch found against the original is a bug.
 | --- | --- | --- | --- |
 | `noise` wave function | Engine noise table | 32-bit GPU-reproducible hash | Must evaluate identically in GLSL |
 | Patch tessellation | Error-based LOD (`r_subdivisions`) | Uniform 8 subdivisions | Static upload once per map; tracked as a gap |
+| `RT_BEAM` placement | Tube offsets transformed by the entity's axes (usually left zero by cgames) | Tube from `origin` to `oldorigin` in world space | The original's result depends on unset axes; no retail cgame submits `RT_BEAM` |
+| Stencil shadows (`cg_shadows 2`) | Shadow volumes through the stencil buffer | Not drawn, so `RF_NOSHADOW` has no effect | No stencil attachment in the Blaze3D targets; tracked as a gap |
+| Projected shadows (`cg_shadows 3`) | Enabled by the renderer reading `cg_shadows`, drawn for `RF_SHADOW_PLANE` | Drawn for `RF_SHADOW_PLANE` (`FrameBuilder.Options.projectionShadows`) | The renderer has no cvars; cgames set the flag only for `cg_shadows 3`, so the result is the same |
+| Entity light direction without a world | The last loaded map's sun, or none before any map loaded (ambient only) | The default sun `(0.45, 0.3, 0.9)` | Menu models before the first map would otherwise lose their directed light |
+| Dynamic lights on entities | `16 r² / d²` bytes, doubled by hardware overbright only in full screen | Always doubled (`r_overBrightBits 1` with gamma) | Matches the overbright the light grid and lightmaps already assume |
+| `skyparms` inner (near) box | Images loaded but never drawn | Not drawn by default; `Q3RenderBackend.drawSkyNearBox(true)` draws it alpha-blended over the clouds | The opt-in is an extension for maps authored for engines that draw it |
+| `videoMap` timing | Advanced by the client's real-time clock, uploaded into a 256×256 scratch image | Frame `floor(shaderTime × rate)`, wrapped at the file's length, at the RoQ's own size | GPU-side shader time already drives every other stage |
+| A view without `RDF_NOWORLDMODEL` while no map is loaded | `ERR_DROP` ("NULL worldmodel") | View skipped with a warning | Never kill a session over one view |
+| `RDF_HYPERSPACE` | Clears the view's colour to the time's grey | Also clears the view's depth (already cleared for every view) | Blaze3D clears colour and depth regions together |
 
 ## Client (`engine:client`)
 

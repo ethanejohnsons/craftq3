@@ -2,8 +2,9 @@
 // they run on demand:
 //   ./gradlew :engine:benchmarks:jmh
 // Real-data benchmarks (classes named Real*Benchmark) need CRAFTQ3_Q3ROOT and are excluded
-// without it. Optional overrides: -Pjmh.includes=<regex,...> -Pjmh.wi=<n> -Pjmh.i=<n> -Pjmh.f=<n>
-// -Pjmh.w=<time> -Pjmh.r=<time> -Pjmh.prof=<profiler,...> (default gc; empty for none).
+// without it. Optional overrides: -Pjmh.includes=<regex, e.g. 'Net|Collision'> -Pjmh.wi=<n>
+// -Pjmh.i=<n> -Pjmh.f=<n> -Pjmh.w=<time> -Pjmh.r=<time> -Pjmh.prof=<profiler,...> (default gc;
+// empty for none).
 plugins {
     id 'craftq3.engine-module'
     id 'me.champeau.jmh' version '0.7.3'
@@ -18,7 +19,7 @@ jmh {
     jmhVersion = '1.37'
     def q3Root = providers.environmentVariable('CRAFTQ3_Q3ROOT')
     def p = { String name -> providers.gradleProperty(name) }
-    if (p('jmh.includes').isPresent()) includes = p('jmh.includes').get().split(',').toList()
+    if (p('jmh.includes').isPresent()) includes = [p('jmh.includes').get()]
     if (!q3Root.isPresent() || q3Root.get().isBlank()) excludes = ['.*\\.Real[A-Za-z]*Benchmark\\..*']
     if (p('jmh.wi').isPresent()) warmupIterations = p('jmh.wi').get() as int
     if (p('jmh.i').isPresent()) iterations = p('jmh.i').get() as int

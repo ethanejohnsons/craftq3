@@ -92,9 +92,13 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     Baseline baseline = context.computeOnClient(Q3PureModeClientTest::baseline);
     try {
       menu(context, tag);
+      errorDrop(context, tag);
       game(context, tag);
       demo(context, tag);
       escapeHatch(context, tag, baseline);
+      resizeAndQuit(context, tag);
+      missingInstallationScreen(context, tag);
+      inWorld(context, tag);
     } catch (RuntimeException | AssertionError e) {
       context.takeScreenshot("craftq3-pure-" + tag + "-failure");
       failures.add("aborted: " + e);
@@ -172,6 +176,32 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
             "menu navigation: single player diff %.1f, multiplayer diff %.1f%n",
             singleDiff,
             multiDiff));
+  }
+
+  /** A level that cannot load ends with ERR_DROP semantics: back at the menu, screen still up. */
+  private void errorDrop(ClientGameTestContext context, String tag) {
+    command(context, "map cq3_no_such_map");
+    context.waitTicks(SECOND_TICKS);
+    waitFor(
+        context,
+        "the session is back at the menu",
+        c -> Q3Screen.current(c).session().state() == SessionState.MENU,
+        30 * SECOND_TICKS);
+    String error =
+        context.computeOnClient(
+            c -> Q3Screen.current(c).session().cvars().string("com_errorMessage"));
+    List<String> lines =
+        context.computeOnClient(c -> Q3Screen.current(c).session().output().lines());
+    String last = lines.isEmpty() ? "" : lines.get(lines.size() - 1);
+    report.append("map cq3_no_such_map: menu again; com_errorMessage '")
+        .append(error)
+        .append("', console '")
+        .append(last)
+        .append("'\n");
+    screenshot(context, "craftq3-pure-" + tag + "-error");
+    // Dismiss whatever the ui shows (an error box) so the next steps start from the menu.
+    if (!error.isEmpty()) context.getInput().pressKey(GLFW.GLFW_KEY_ESCAPE);
+    context.waitTicks(5);
   }
 
   private void game(ClientGameTestContext context, String tag) {
@@ -278,6 +308,18 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     context.waitTicks(10);
     screenshot(context, "craftq3-pure-" + tag + "-scores");
     input.releaseKey(GLFW.GLFW_KEY_TAB);
+
+    // Escape is Quake's own: the in-game menu opens and closes; the screen stays.
+    input.pressKey(GLFW.GLFW_KEY_ESCAPE);
+    context.waitTicks(10);
+    check(
+        context.computeOnClient(c -> (catchers(c) & 2) != 0), "Escape did not open the ingame menu");
+    screenshot(context, "craftq3-pure-" + tag + "-ingame-menu");
+    input.pressKey(GLFW.GLFW_KEY_ESCAPE);
+    context.waitTicks(10);
+    check(
+        context.computeOnClient(c -> (catchers(c) & 2) == 0), "Escape did not close the ingame menu");
+    check(context.computeOnClient(c -> Q3Screen.current(c) != null), "Escape left Quake III");
   }
 
   private void demo(ClientGameTestContext context, String tag) {
@@ -350,6 +392,88 @@ public final class Q3PureModeClientTest implements FabricClientGameTest {
     check(
         Files.exists(config) && modified(config) >= configBefore,
         "q3config.cfg was not written to " + config);
+  }
+
+  /**
+   * The window shrinks: once the size settles the VMs get it ({@code vid_restart}) and the menu
+   * still draws; {@code quit} in the console returns to the title screen.
+   */
+  private void resizeAndQuit(ClientGameTestContext context, String tag) {
+    context.clickScreenButton(CraftQ3ClientMod.TITLE_BUTTON);
+    waitFor(
+        context,
+        "the menu draws again",
+        c -> {
+          Q3Screen screen = Q3Screen.current(c);
+          return screen != null
+              && screen.session() != null
+              && screen.session().state() == SessionState.MENU
+              && screen.presenter().framesDrawn() > 10;
+        },
+        60 * SECOND_TICKS);
+    context.getInput().resizeWindow(1280, 720);
+    waitMillis(context, 1200);
+    int videoWidth = context.computeOnClient(c -> Q3Screen.current(c).host().windowWidth());
+    check(videoWidth == 1280, "vid_restart after resize: video width " + videoWidth);
+    BufferedImage small = screenshot(context, "craftq3-pure-" + tag + "-menu-1280");
+    check(deviation(small) >= MIN_DEVIATION, "menu after resize is flat");
+    context.getInput().resizeWindow(WIDTH, HEIGHT);
+    waitMillis(context, 1200);
+    TestInput input = context.getInput();
+    input.pressKey(GLFW.GLFW_KEY_GRAVE_ACCENT);
+    context.waitTicks(2);
+    input.typeChars("quit");
+    input.pressKey(GLFW.GLFW_KEY_ENTER);
+    context.waitForScreen(TitleScreen.class);
+    report.append("resize to 1280x720: vid_restart; quit: back to the title screen\n");
+  }
+
+  /** The screen shown without an installation. */
+  private void missingInstallationScreen(ClientGameTestContext context, String tag) {
+    context.setScreen(
+        () ->
+            new Q3MissingInstallationScreen(
+                new TitleScreen(), "No Quake III installation is configured yet."));
+    context.waitForScreen(Q3MissingInstallationScreen.class);
+    context.takeScreenshot("craftq3-pure-" + tag + "-missing-installation");
+    context.getInput().pressKey(GLFW.GLFW_KEY_ESCAPE);
+    context.waitForScreen(TitleScreen.class);
+  }
+
+  /**
+   * In a singleplayer world: {@code /q3 menu} from chat opens Quake III and pauses the world;
+   * Shift+Escape returns to the world.
+   */
+  private void inWorld(ClientGameTestContext context, String tag) {
+    try (var world = context.worldBuilder().create()) {
+      world.getClientWorld().waitForChunksRender();
+      TestInput input = context.getInput();
+      input.pressKey(GLFW.GLFW_KEY_T);
+      context.waitTicks(2);
+      input.typeChars("/q3 menu");
+      input.pressKey(GLFW.GLFW_KEY_ENTER);
+      context.waitForScreen(Q3Screen.class);
+      waitFor(
+          context,
+          "the menu draws over the world",
+          c -> {
+            Q3Screen screen = Q3Screen.current(c);
+            return screen != null
+                && screen.session() != null
+                && screen.presenter().framesDrawn() > 10;
+          },
+          60 * SECOND_TICKS);
+      check(context.computeOnClient(Minecraft::isPaused), "the world is not paused");
+      screenshot(context, "craftq3-pure-" + tag + "-over-world");
+      input.holdShift();
+      input.pressKey(GLFW.GLFW_KEY_ESCAPE);
+      input.releaseShift();
+      context.waitFor(c -> c.gui.screen() == null, 10 * SECOND_TICKS);
+      check(!context.computeOnClient(Minecraft::isPaused), "the world stayed paused");
+      context.waitTicks(5);
+      screenshot(context, "craftq3-pure-" + tag + "-world-after");
+      report.append("in a world: /q3 menu pauses it, Shift+Escape returns to it\n");
+    }
   }
 
   // ------------------------------------------------------------------ helpers

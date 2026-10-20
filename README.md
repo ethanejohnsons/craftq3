@@ -95,10 +95,8 @@ agreed to the [Minecraft EULA](https://aka.ms/MinecraftEULA) by putting `eula=tr
 `mc/devharness/build/run/clientGameTest/eula.txt` (and `clientGameTestVulkan/`); the build never
 agrees on your behalf.
 
-CI runs `portableCheck` on Windows, Linux and macOS for every push, and nightly runs the full
-build with the dedicated-server GameTests (`.github/workflows/nightly.yml`). Tests that need game
-data run nightly only on a self-hosted runner labelled `craftq3-q3data` once you set the
-repository variable `CRAFTQ3_Q3ROOT`; retail data never goes to hosted CI.
+CI runs the full build and `portableCheck` (Windows, Linux and macOS) on every push. Tests that
+need game data run locally only; retail data never goes to CI.
 
 ## Documentation
 

@@ -27,7 +27,7 @@ installation working (section 4).
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done. Blaze3D spike passed on OpenGL and Vulkan. Licence: no ioquake3 translation (PORTING.md). Not done: reference screenshots from `main` (visual checks used the new screenshots instead). Nightly CI (`nightly.yml`): full build + dedicated-server GameTests on hosted runners; real-data tests, the compatibility sweep and GPU client tests on an opt-in self-hosted runner, since the retail EULA keeps game data out of hosted CI |
+| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done. Blaze3D spike passed on OpenGL and Vulkan. Licence: no ioquake3 translation (PORTING.md). Not done: reference screenshots from `main` (visual checks used the new screenshots instead). CI is push builds only (full build + `portableCheck` on Windows, Linux, macOS); real-data tests run locally |
 | 1 | common, fs, formats, net, console, testkit | Done. Every PK3 entry in the reference install parses; codec native-capture tests unchanged |
 | 2 | vm, vm-abi | Done. All 67 QVM builds parse and detect; interpreter 3–9× faster than legacy |
 | 3 | collision, botlib | Done. Q3-style patch facets; 1.08M real-data traces; routing on 229 AAS maps; all travel types |

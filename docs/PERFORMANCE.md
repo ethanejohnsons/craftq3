@@ -123,7 +123,14 @@ The map has 544 routable areas. 216 of the 256 seeded pairs have a route.
 | --- | --- | --- | --- | --- | --- |
 | **0.79 ms** | 0.93 ms | **1.11 ms** | 1.43 ms | 0.80 ms | 266 KB per frame |
 
-There were 24,935 sampled frames. Bots stay in the game for the whole run.
+There were 24,935 sampled frames. Bots stay in the game for the whole run. That run interpreted
+the qagame. The benchmark uses the server's default `vm_jit 1` and so now runs it compiled:
+
+| p50 | p90 | p99 | p99.9 | Mean | Allocation |
+| --- | --- | --- | --- | --- | --- |
+| **0.20 ms** | 0.25 ms | **0.32 ms** | 0.64 ms | 0.20 ms | 267 KB per frame |
+
+There were 100,005 sampled frames (measured after the compiler landed).
 
 ### Render IR (q3dm17)
 
@@ -137,7 +144,7 @@ There were 24,935 sampled frames. Bots stay in the game for the whole run.
 | Budget (REWRITE.md §3) | Measured | Status |
 | --- | --- | --- |
 | VM: at least 2× the legacy interpreter. The legacy interpreter measured 181 M instr/s on the procedure-call loop and 60 M on the syscall loop (same loops, same machine, during the port). | Current interpreter: 544 M (3.0×) and 519 M (8.6×); compiled code (the default, `vm_jit 1`): 17.2 G (95×) and 4.86 G (81×). | **Met.** |
-| qagame + 8 bots: p99 under 4 ms per frame | p99 1.11 ms (p99.9 1.43 ms) | **Met**, with 3.6× headroom. |
+| qagame + 8 bots: p99 under 4 ms per frame | p99 1.11 ms (p99.9 1.43 ms) interpreted; p99 0.32 ms (p99.9 0.64 ms) compiled | **Met**, with 3.6× headroom (12× compiled). |
 | Traces: zero allocation | ≈0 B per trace on every map and trace kind | **Met.** |
 | Render: p99 under 8 ms per frame (in-game timedemo at 1080p) | render-ir CPU part p99 17 µs; scene build 7.5 ms at map load. Whole frames measured by the `mc:devharness` client game tests on an RTX 3080 at 1920×1080: render submission p99 ≤ 3.3 ms across seven maps; a real q3dm17 match (session + render) p99 2.65 ms on OpenGL, 1.92 ms on Vulkan. | **Met.** |
 

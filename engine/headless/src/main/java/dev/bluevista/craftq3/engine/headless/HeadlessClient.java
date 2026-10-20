@@ -55,68 +55,159 @@ public final class HeadlessClient implements AutoCloseable {
       Objects.requireNonNull(install);
       Objects.requireNonNull(game);
       if (frameMillis < 1 || frameMillis > EngineSession.MAX_FRAME_MILLIS)
-        throw new IllegalArgumentException("frameMillis must be 1.." + EngineSession.MAX_FRAME_MILLIS);
+        throw new IllegalArgumentException(
+            "frameMillis must be 1.." + EngineSession.MAX_FRAME_MILLIS);
       commandLine = List.copyOf(commandLine);
     }
 
     public Options withGame(String value) {
       return new Options(
-          install, value, home, seed, manualClock, frameMillis, keepFrames, commandLine, servers,
-          netEnabled, log);
+          install,
+          value,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withHome(Path value) {
       return new Options(
-          install, game, value, seed, manualClock, frameMillis, keepFrames, commandLine, servers,
-          netEnabled, log);
+          install,
+          game,
+          value,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withSeed(long value) {
       return new Options(
-          install, game, home, value, manualClock, frameMillis, keepFrames, commandLine, servers,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          value,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withManualClock(boolean value) {
       return new Options(
-          install, game, home, seed, value, frameMillis, keepFrames, commandLine, servers,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          seed,
+          value,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withFrameMillis(int value) {
       return new Options(
-          install, game, home, seed, manualClock, value, keepFrames, commandLine, servers,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          value,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withKeepFrames(int value) {
       return new Options(
-          install, game, home, seed, manualClock, frameMillis, value, commandLine, servers,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          value,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withCommandLine(List<String> value) {
       return new Options(
-          install, game, home, seed, manualClock, frameMillis, keepFrames, value, servers,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          value,
+          servers,
+          netEnabled,
+          log);
     }
 
     public Options withServers(LocalServer.Factory value) {
       return new Options(
-          install, game, home, seed, manualClock, frameMillis, keepFrames, commandLine, value,
-          netEnabled, log);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          value,
+          netEnabled,
+          log);
     }
 
     public Options withNetEnabled(boolean value) {
       return new Options(
-          install, game, home, seed, manualClock, frameMillis, keepFrames, commandLine, servers,
-          value, log);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          value,
+          log);
     }
 
     public Options withLog(Consumer<String> value) {
       return new Options(
-          install, game, home, seed, manualClock, frameMillis, keepFrames, commandLine, servers,
-          netEnabled, value);
+          install,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          value);
     }
   }
 

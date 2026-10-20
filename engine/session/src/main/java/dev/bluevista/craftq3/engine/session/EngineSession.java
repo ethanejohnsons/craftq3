@@ -1228,6 +1228,7 @@ public final class EngineSession implements AutoCloseable {
       drop(failure.getMessage());
     } catch (RuntimeException failure) {
       LOG.warn("Frame failed", failure);
+      print("Engine fault " + failure.getClass().getSimpleName() + where(failure));
       drop(message(failure));
     } catch (IOException failure) {
       drop(message(failure));
@@ -1673,6 +1674,22 @@ public final class EngineSession implements AutoCloseable {
 
   private void print(String line) {
     output.print(line);
+  }
+
+  /** Where an unexpected engine exception came from, for the console (VM faults say it already). */
+  private static String where(Throwable failure) {
+    StringBuilder text = new StringBuilder();
+    int shown = 0;
+    for (StackTraceElement frame : failure.getStackTrace()) {
+      if (shown++ == 4) break;
+      text.append(" at ")
+          .append(frame.getClassName().replaceAll(".*\\.", ""))
+          .append('.')
+          .append(frame.getMethodName())
+          .append(':')
+          .append(frame.getLineNumber());
+    }
+    return text.toString();
   }
 
   private static String message(Throwable failure) {

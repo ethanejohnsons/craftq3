@@ -78,7 +78,8 @@ final class RealClientFlowTest {
       session.keyEvent(KeyNames.SPACE, false);
       assertTrue(until(SessionState.MENU, 10), "a key skips the cinematic");
       assertEquals(0, session.degradations(), host.tail(30));
-      System.out.println("frames " + host.framesSeen + " quads " + host.quads + "\n" + host.tail(25));
+      System.out.println(
+          "frames " + host.framesSeen + " quads " + host.quads + "\n" + host.tail(25));
     } finally {
       session.close();
     }

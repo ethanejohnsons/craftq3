@@ -166,7 +166,10 @@ public final class CompatSweep {
 
     public String summary() {
       StringBuilder text = new StringBuilder("Compatibility sweep: ");
-      text.append(games.size()).append(" game directories, ").append(failures()).append(" problems\n");
+      text.append(games.size())
+          .append(" game directories, ")
+          .append(failures())
+          .append(" problems\n");
       for (GameReport game : games)
         text.append(
             String.format(
@@ -199,7 +202,8 @@ public final class CompatSweep {
     Report report = new Report(settings);
     for (Profile profile : profiles()) {
       if (!settings.games().isEmpty() && !settings.games().contains(profile.name())) continue;
-      progress("== " + profile.name() + (profile.note().isEmpty() ? "" : " (" + profile.note() + ")"));
+      progress(
+          "== " + profile.name() + (profile.note().isEmpty() ? "" : " (" + profile.note() + ")"));
       GameReport game = new GameReport(profile);
       long start = System.nanoTime();
       try {
@@ -273,7 +277,8 @@ public final class CompatSweep {
 
   private static boolean hasPacks(Path dir) throws IOException {
     try (var files = Files.list(dir)) {
-      return files.anyMatch(f -> f.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".pk3"));
+      return files.anyMatch(
+          f -> f.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".pk3"));
     }
   }
 
@@ -334,7 +339,8 @@ public final class CompatSweep {
           match(game, client, map, botNames);
         }
       }
-      if (!settings.skip().contains("demos")) for (String demo : demoNames) demo(game, client, demo);
+      if (!settings.skip().contains("demos"))
+        for (String demo : demoNames) demo(game, client, demo);
       if (!settings.skip().contains("cinematics"))
         for (String video : videoNames) cinematic(game, client, video);
       game.degradations = client.session().degradations();
@@ -390,7 +396,8 @@ public final class CompatSweep {
       if (view.exists(VirtualPath.of("maps/" + base + ".aas"))) withAas.add(base);
       else without.add(base);
     }
-    withAas.sort((a, b) -> Boolean.compare(!a.equalsIgnoreCase("q3dm17"), !b.equalsIgnoreCase("q3dm17")));
+    withAas.sort(
+        (a, b) -> Boolean.compare(!a.equalsIgnoreCase("q3dm17"), !b.equalsIgnoreCase("q3dm17")));
     withAas.addAll(without);
     return withAas;
   }
@@ -459,9 +466,20 @@ public final class CompatSweep {
     game.maps.put("missingModels", List.copyOf(missingModels));
     game.maps.put("shaderDiagnostics", shaders.diagnostics().size());
     progress(
-        "  maps " + loaded + "/" + maps.size() + ", aas " + aasLoaded + " (+" + aasMissing
-            + " without), scenes " + scenes + ", missing textures " + missingTextures.size()
-            + ", missing models " + missingModels.size());
+        "  maps "
+            + loaded
+            + "/"
+            + maps.size()
+            + ", aas "
+            + aasLoaded
+            + " (+"
+            + aasMissing
+            + " without), scenes "
+            + scenes
+            + ", missing textures "
+            + missingTextures.size()
+            + ", missing models "
+            + missingModels.size());
   }
 
   private static boolean image(FileViewAssets assets, String name, Map<String, Boolean> cache) {
@@ -469,15 +487,13 @@ public final class CompatSweep {
         name.toLowerCase(Locale.ROOT), key -> ImageLoader.find(assets, key).isPresent());
   }
 
-  private static final Pattern MODEL = Pattern.compile("\"model\"\\s+\"([^\"*][^\"]*)\"");
-
   /** {@code misc_model} and other file models named in the entity lump. */
   private static List<String> entityModels(BspMap bsp) {
     List<String> models = new ArrayList<>();
-    Matcher m = MODEL.matcher(bsp.entities());
-    while (m.find()) {
-      String model = m.group(1).replace('\\', '/');
-      if (!models.contains(model)) models.add(model);
+    for (var entity : bsp.entities()) {
+      String model = entity.getOrDefault("model", "").replace('\\', '/');
+      if (model.isEmpty() || model.startsWith("*") || models.contains(model)) continue;
+      models.add(model);
     }
     return models;
   }
@@ -493,7 +509,12 @@ public final class CompatSweep {
     long start = System.nanoTime();
     client.command("map " + map);
     if (!client.runUntil(SessionState.LOCAL, 120_000)) {
-      fail(game, entry, "match", map, "did not reach LOCAL: " + client.state() + "\n" + client.tail(8));
+      fail(
+          game,
+          entry,
+          "match",
+          map,
+          "did not reach LOCAL: " + client.state() + "\n" + client.tail(8));
       client.command("disconnect");
       client.runUntil(SessionState.MENU, 2_000);
       return;
@@ -512,9 +533,22 @@ public final class CompatSweep {
     entry.put("abi", client.session().cgame().map(c -> c.profile().key()).orElse("-"));
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);
     if (client.state() != SessionState.LOCAL) {
-      fail(game, entry, "match", map, "left the game: " + client.session().cvars().string("com_errorMessage") + "\n" + client.tail(8));
+      fail(
+          game,
+          entry,
+          "match",
+          map,
+          "left the game: "
+              + client.session().cvars().string("com_errorMessage")
+              + "\n"
+              + client.tail(8));
     } else if (status.map(LocalServer.Status::bots).orElse(0) < bots.size()) {
-      fail(game, entry, "match", map, "only " + entry.get("bots") + " of " + bots.size() + " bots joined\n" + client.tail(8));
+      fail(
+          game,
+          entry,
+          "match",
+          map,
+          "only " + entry.get("bots") + " of " + bots.size() + " bots joined\n" + client.tail(8));
     } else entry.put("result", "ok");
     entry.put("degradations", client.session().degradations() - degradationsBefore);
     client.command("disconnect");
@@ -530,12 +564,20 @@ public final class CompatSweep {
     long frames = client.frames().frames();
     long start = System.nanoTime();
     client.command("set com_errorMessage \"\"; timedemo 1; demo " + demo);
-    boolean started = client.runUntil(() -> client.state() == SessionState.DEMO || client.session().demosFinished() > finished || !client.session().cvars().string("com_errorMessage").isEmpty(), 60_000);
+    boolean started =
+        client.runUntil(
+            () ->
+                client.state() == SessionState.DEMO
+                    || client.session().demosFinished() > finished
+                    || !client.session().cvars().string("com_errorMessage").isEmpty(),
+            60_000);
     boolean ended =
         started
             && client.runUntil(
-                () -> client.state() == SessionState.MENU && client.session().demosFinished() > finished
-                    || !client.session().cvars().string("com_errorMessage").isEmpty(),
+                () ->
+                    client.state() == SessionState.MENU
+                            && client.session().demosFinished() > finished
+                        || !client.session().cvars().string("com_errorMessage").isEmpty(),
                 3_600_000);
     String error = client.session().cvars().string("com_errorMessage");
     entry.put("frames", client.frames().frames() - frames);
@@ -545,7 +587,9 @@ public final class CompatSweep {
       entry.put("note", "protocol 48 is refused by design");
     } else if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
       entry.put("result", "ok");
-    } else fail(game, entry, "demo", demo, error.isEmpty() ? "did not finish: " + client.state() : error);
+    } else
+      fail(
+          game, entry, "demo", demo, error.isEmpty() ? "did not finish: " + client.state() : error);
     client.command("timedemo 0; disconnect");
     client.runUntil(SessionState.MENU, 2_000);
     progress("  demo " + demo + ": " + entry);
@@ -564,7 +608,13 @@ public final class CompatSweep {
     entry.put("frames", drawn);
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);
     if (ended && drawn > 0) entry.put("result", "ok");
-    else fail(game, entry, "cinematic", video, started ? "did not end (" + drawn + " frames)" : "did not start: " + client.tail(3));
+    else
+      fail(
+          game,
+          entry,
+          "cinematic",
+          video,
+          started ? "did not end (" + drawn + " frames)" : "did not start: " + client.tail(3));
     client.command("disconnect");
     client.runUntil(SessionState.MENU, 1_000);
     progress("  roq " + video + ": " + entry);
@@ -580,8 +630,10 @@ public final class CompatSweep {
   // ---------------------------------------------------------------- output
 
   private void write(Report report) throws IOException {
-    Files.writeString(settings.output().resolve("report.json"), json(report), StandardCharsets.UTF_8);
-    Files.writeString(settings.output().resolve("report.md"), markdown(report), StandardCharsets.UTF_8);
+    Files.writeString(
+        settings.output().resolve("report.json"), json(report), StandardCharsets.UTF_8);
+    Files.writeString(
+        settings.output().resolve("report.md"), markdown(report), StandardCharsets.UTF_8);
   }
 
   private static String json(Report report) {
@@ -601,7 +653,14 @@ public final class CompatSweep {
       g.put("seconds", game.millis / 1000.0);
       List<Object> problems = new ArrayList<>();
       for (Problem problem : game.problems)
-        problems.add(Map.of("area", problem.area(), "subject", problem.subject(), "message", problem.message()));
+        problems.add(
+            Map.of(
+                "area",
+                problem.area(),
+                "subject",
+                problem.subject(),
+                "message",
+                problem.message()));
       g.put("problems", problems);
       games.add(g);
     }
@@ -616,25 +675,52 @@ public final class CompatSweep {
 
   private static String markdown(Report report) {
     StringBuilder md = new StringBuilder("# CraftQ3 compatibility sweep\n\n");
-    md.append("Match length: ").append(report.settings.seconds()).append(" s of game time with ")
-        .append(report.settings.bots()).append(" bots. Problems: ").append(report.failures()).append(".\n\n");
-    md.append("| Game | PK3s | Skipped | Maps | AAS | Scenes | Missing textures | ui | Match | Demos | RoQ | Degradations | Problems |\n");
-    md.append("| --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: | ---: |\n");
+    md.append("Match length: ")
+        .append(report.settings.seconds())
+        .append(" s of game time with ")
+        .append(report.settings.bots())
+        .append(" bots. Problems: ")
+        .append(report.failures())
+        .append(".\n\n");
+    md.append(
+        "| Game | PK3s | Skipped | Maps | AAS | Scenes | Missing textures | ui | Match | Demos | RoQ | Degradations | Problems |\n");
+    md.append(
+        "| --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: | ---: |\n");
     for (GameReport game : report.games) {
       Object skipped = game.mount.get("skipped");
-      md.append("| ").append(game.profile.name)
-          .append(" | ").append(game.mount.getOrDefault("packs", "-"))
-          .append(" | ").append(skipped instanceof List<?> list ? list.size() : 0)
-          .append(" | ").append(game.maps.getOrDefault("loaded", "-")).append('/').append(game.maps.getOrDefault("total", "-"))
-          .append(" | ").append(game.maps.getOrDefault("aas", "-"))
-          .append(" | ").append(game.maps.getOrDefault("scenes", "-"))
-          .append(" | ").append(game.maps.get("missingTextures") instanceof List<?> l ? l.size() : "-")
-          .append(" | ").append(game.boot.getOrDefault("uiAbi", game.boot.getOrDefault("ui", "-")))
-          .append(" | ").append(matchSummary(game))
-          .append(" | ").append(passed(game.demos)).append('/').append(game.demos.size())
-          .append(" | ").append(passed(game.cinematics)).append('/').append(game.cinematics.size())
-          .append(" | ").append(game.degradations)
-          .append(" | ").append(game.problems.size()).append(" |\n");
+      md.append("| ")
+          .append(game.profile.name)
+          .append(" | ")
+          .append(game.mount.getOrDefault("packs", "-"))
+          .append(" | ")
+          .append(skipped instanceof List<?> list ? list.size() : 0)
+          .append(" | ")
+          .append(game.maps.getOrDefault("loaded", "-"))
+          .append('/')
+          .append(game.maps.getOrDefault("total", "-"))
+          .append(" | ")
+          .append(game.maps.getOrDefault("aas", "-"))
+          .append(" | ")
+          .append(game.maps.getOrDefault("scenes", "-"))
+          .append(" | ")
+          .append(game.maps.get("missingTextures") instanceof List<?> l ? l.size() : "-")
+          .append(" | ")
+          .append(game.boot.getOrDefault("uiAbi", game.boot.getOrDefault("ui", "-")))
+          .append(" | ")
+          .append(matchSummary(game))
+          .append(" | ")
+          .append(passed(game.demos))
+          .append('/')
+          .append(game.demos.size())
+          .append(" | ")
+          .append(passed(game.cinematics))
+          .append('/')
+          .append(game.cinematics.size())
+          .append(" | ")
+          .append(game.degradations)
+          .append(" | ")
+          .append(game.problems.size())
+          .append(" |\n");
     }
     for (GameReport game : report.games) {
       if (game.problems.isEmpty()) continue;
@@ -647,7 +733,13 @@ public final class CompatSweep {
         }
         String message = problem.message().replace("\n", " / ");
         if (message.length() > 400) message = message.substring(0, 400) + "...";
-        md.append("- **").append(problem.area()).append("** ").append(problem.subject()).append(": ").append(message).append('\n');
+        md.append("- **")
+            .append(problem.area())
+            .append("** ")
+            .append(problem.subject())
+            .append(": ")
+            .append(message)
+            .append('\n');
       }
     }
     return md.toString();

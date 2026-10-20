@@ -60,6 +60,20 @@ public final class TestQvm {
     return out.array();
   }
 
+  /** A module whose {@code vmMain(0)} returns {@code value} and every other command 0. */
+  public static byte[] returning(int value) {
+    TestQvm q = new TestQvm();
+    int frame = 16;
+    q.op(Opcode.ENTER, frame);
+    q.op(Opcode.LOCAL, frame + 8).op(Opcode.LOAD4).op(Opcode.CONST, 0);
+    int other = q.here();
+    q.op(Opcode.NE, 0);
+    q.op(Opcode.CONST, value).op(Opcode.LEAVE, frame);
+    q.patch(other, q.here());
+    q.op(Opcode.CONST, 0).op(Opcode.LEAVE, frame);
+    return q.bytes();
+  }
+
   /** Address of the snapshot buffer of {@link #snapshotCgame()}. */
   public static final int SNAPSHOT = 1024;
 

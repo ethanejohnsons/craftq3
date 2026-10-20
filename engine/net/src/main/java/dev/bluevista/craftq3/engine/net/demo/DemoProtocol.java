@@ -24,24 +24,70 @@ import java.util.regex.Pattern;
  */
 public enum DemoProtocol {
   /**
-   * Protocol 48. Measured differences from 68 on {@code pak4.pk3:demos/demo000.dm_48}, {@code
-   * demo001.dm_48} and {@code pak5.pk3:demos/demo127.dm_48}:
+   * Protocol 48. Measured on {@code pak4.pk3:demos/demo000.dm_48}, {@code demo001.dm_48} (both
+   * written by 1.25 servers announcing protocol 46) and {@code pak5.pk3:demos/demo127.dm_48}
+   * (announcing 48). Everything below was derived from those files, using map item and speaker
+   * origins, server times and entity numbers as anchors.
+   *
+   * <p><b>Messages.</b>
    *
    * <ul>
-   *   <li>The container framing is identical.
+   *   <li>The container framing is identical to 68.
    *   <li>Messages are not Huffman coded: every bit is raw, least significant first ({@link
-   *       MessageReader.Coding#RAW}). The envelope, svc opcode numbers, gamestate configstrings and
-   *       the snapshot header (serverTime, deltaNum, snapFlags, area mask) are otherwise identical.
-   *   <li>Deltas have no leading changed-field count byte: every field of the table carries its own
-   *       change bit. The player-state scalar fields follow {@code playerState_t} declaration order
-   *       without {@code grapplePoint} (42 fields, 1.32 widths), confirmed against decoded values
-   *       (origin, gravity 800, speed 320, groundEntityNum 1022, LEGS_IDLE, TORSO_STAND,
-   *       machinegun, viewheight 26).
-   *   <li>Unresolved: the encoding after those player fields (stats, persistant, ammo and powerups
-   *       arrays) and the entity-state field order and value encoding. Neither 1.32's order nor
-   *       {@code entityState_t} declaration order, with or without a no-delta bit or the zero
-   *       shortcut, reproduces the consecutive gamestate baselines, so baselines and snapshots
-   *       cannot be parsed and the reader refuses the protocol.
+   *       MessageReader.Coding#RAW}). The acknowledge word, the svc opcode numbers (nop 1,
+   *       gamestate 2, configstring 3, baseline 4, server command 5, snapshot 7), configstrings and
+   *       the snapshot header (serverTime, deltaNum, snapFlags, area mask) are as in 68.
+   *   <li>No message carries {@code svc_EOF}: a snapshot message ends when fewer than 8 bits, all
+   *       zero, are left after its entity list. The gamestate's baseline list ends with a zero byte
+   *       and then the message ends: no client number and no checksum feed.
+   * </ul>
+   *
+   * <p><b>Player state</b> (every snapshot of the three demos that is not blocked by an entity
+   * selector below parses to its end with this layout).
+   *
+   * <ul>
+   *   <li>Each scalar field has its own change bit followed, when set, by the value: no field count
+   *       and no zero shortcut. Floats are a 0 bit and 13 bits of {@code value + 4096} for integral
+   *       values in [-4096, 4095], else a 1 bit and the 32-bit IEEE pattern (as in 68).
+   *   <li>The order is {@code playerState_t} declaration order with 1.32 widths, except that the
+   *       two animation timers come before the animations ({@code groundEntityNum, legsTimer,
+   *       torsoTimer, legsAnim, torsoAnim, movementDir}) and {@code grapplePoint} is absent; it
+   *       ends at {@code damageCount} (42 fields). Decoded values: commandTime equal to serverTime,
+   *       gravity 800, speed 320, groundEntityNum 1022, LEGS_IDLE/LEGS_RUN with the toggle bit,
+   *       TORSO_STAND, machinegun, viewheight 26.
+   *   <li>Then further change bits whose fields are unknown: five in the protocol-46 demos, six in
+   *       demo127. They are clear in every delta snapshot; demo127's first full snapshot sets one,
+   *       so its position and width there are unresolved.
+   *   <li>Then the arrays stats, persistant, ammo, powerups, each as a change bit, a 16-bit mask
+   *       and one signed 16-bit value per set mask bit (decoded: health 123, weapons 6, max health
+   *       100; PERS_ATTACKER 1022; ammo -1, 100 ... -1).
+   * </ul>
+   *
+   * <p><b>Entity state</b>.
+   *
+   * <ul>
+   *   <li>Entity number (10 bits, 1023 ends the list) and a remove bit, as in 68. A kept entity
+   *       continues with a 6-bit <i>mask selector</i>, then the values of the fields it selects in
+   *       field order, with no per-field bits. Field values use the 1.32 widths and the float
+   *       encoding above; a field changed to zero is sent as a zero value.
+   *   <li>Field order is {@code entityState_t} declaration order with {@code frame} before {@code
+   *       clientNum} (51 fields: eType, eFlags, pos, apos, time, time2, origin, origin2, angles,
+   *       angles2, otherEntityNum, otherEntityNum2, groundEntityNum, constantLight, loopSound,
+   *       modelindex, modelindex2, frame, clientNum, solid, event, eventParm, powerups, weapon,
+   *       legsAnim, torsoAnim, generic1).
+   *   <li>Selector 63 is followed by an explicit 51-bit change mask in that order. Every gamestate
+   *       baseline of demo000 (81), demo001 (48) and demo127 (44) decodes this way, ending exactly
+   *       at the message end: items, speakers, triggers, movers, all with plausible values.
+   *   <li>Selectors 0 to 62 name masks from a fixed table that the message does not carry. Measured
+   *       entries: 7 = eType, pos.trBase, eventParm (bullet impact without a shooter number); 15 =
+   *       event; 23 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, weapon (new missile);
+   *       39 = eType, pos.trBase, otherEntityNum, eventParm (bullet impact); 41 = eType,
+   *       pos.trBase, origin, loopSound, eventParm (looped speaker). With these five, 1344 of
+   *       demo000's 1691 snapshots parse structurally to their end. About thirty other selectors
+   *       occur (most often 29, which carries a single float, and 27, both on corpses and exploding
+   *       missiles; then 58, 32, 46, 0, 44, 40, 60, 52). Each unresolved selector stops its
+   *       snapshot's parse and later deltas lose their base, so baselines decode but complete
+   *       snapshot playback is not possible and the reader refuses the protocol.
    * </ul>
    */
   Q3_1_27(48, false),

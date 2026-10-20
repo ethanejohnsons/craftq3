@@ -60,6 +60,21 @@ public final class HeadlessClient implements AutoCloseable {
       commandLine = List.copyOf(commandLine);
     }
 
+    public Options withInstall(Path value) {
+      return new Options(
+          value,
+          game,
+          home,
+          seed,
+          manualClock,
+          frameMillis,
+          keepFrames,
+          commandLine,
+          servers,
+          netEnabled,
+          log);
+    }
+
     public Options withGame(String value) {
       return new Options(
           install,

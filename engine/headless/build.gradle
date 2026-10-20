@@ -43,3 +43,26 @@ tasks.register('compatSweep', JavaExec) {
     // Never up to date: the installation lives outside the build.
     outputs.upToDateWhen { false }
 }
+
+// A long real-time soak (local game, bots, heap after a full GC sampled at an interval):
+// ./gradlew :engine:headless:soak -Psoak.minutes=60 -Psoak.sampleMinutes=5 -Psoak.map=q3dm17
+// -Psoak.bots=4; writes build/soak/heap.csv and summary.txt.
+tasks.register('soak', JavaExec) {
+    group = 'verification'
+    description = 'Plays a local game with bots in real time on $CRAFTQ3_Q3ROOT and records the retained heap.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.bluevista.craftq3.engine.headless.Soak'
+    maxHeapSize = '2g'
+    jvmArgs '-ea'
+    def out = layout.buildDirectory.dir('soak')
+    def minutes = providers.gradleProperty('soak.minutes').getOrElse('60')
+    def sample = providers.gradleProperty('soak.sampleMinutes').getOrElse('5')
+    def map = providers.gradleProperty('soak.map').getOrElse('q3dm17')
+    def bots = providers.gradleProperty('soak.bots').getOrElse('4')
+    def q3Root = providers.environmentVariable('CRAFTQ3_Q3ROOT')
+    if (q3Root.isPresent()) environment 'CRAFTQ3_Q3ROOT', q3Root.get()
+    argumentProviders.add({ ->
+        ['--out', out.get().asFile.path, '--minutes', minutes, '--sample-minutes', sample, '--map', map, '--bots', bots]
+    } as CommandLineArgumentProvider)
+    outputs.upToDateWhen { false }
+}

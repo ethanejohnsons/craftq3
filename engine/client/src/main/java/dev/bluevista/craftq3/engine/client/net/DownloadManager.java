@@ -22,8 +22,12 @@ import java.util.function.Consumer;
  * bit 1 set (and bit 4 clear, which forbids downloading from the game server) each missing pack is
  * requested in turn ({@code download}, {@code nextdl} per block), verified against its checksum and
  * committed to the cache; when all are in, the {@link Content} remounts the search path with them
- * and the server is asked for a fresh gamestate ({@code donedl}). Without permission the connection
- * fails with the list of missing packs. Progress is shown in the {@code cl_download*} cvars.
+ * and the server is asked for a fresh gamestate ({@code donedl}). Packs already in the cache are
+ * mounted whatever the policy. Without permission the original engine's behaviour applies: a
+ * warning lists the missing packs and the level loads anyway (a pure server then refuses the
+ * client, or the map fails to load). Official packs ({@code baseq3/pak0..8}, {@code
+ * missionpack/pak0..3}) are never downloaded: a server referencing one the client lacks ends the
+ * connection when downloads are enabled. Progress is shown in the {@code cl_download*} cvars.
  */
 public final class DownloadManager implements AutoCloseable {
   /** {@code cl_allowDownload} bit: downloads allowed. */
@@ -52,6 +56,7 @@ public final class DownloadManager implements AutoCloseable {
   private final DownloadCache cache;
   private final CvarTable cvars;
   private final Consumer<String> reliable;
+  private final Consumer<String> print;
   private final Runnable begin;
   private final ArrayDeque<DownloadCache.Request> queue = new ArrayDeque<>();
   private final List<DownloadCache.Entry> completed = new ArrayList<>();
@@ -63,18 +68,27 @@ public final class DownloadManager implements AutoCloseable {
    * @param cache the download cache, or null when downloads are impossible
    * @param reliable sends a reliable client command
    * @param begin resets the session's download block numbering ({@code beginDownload})
+   * @param print the console, for the missing-packs warning
    */
   public DownloadManager(
       Content content,
       DownloadCache cache,
       CvarTable cvars,
       Consumer<String> reliable,
-      Runnable begin) {
+      Runnable begin,
+      Consumer<String> print) {
     this.content = Objects.requireNonNull(content);
     this.cache = cache;
     this.cvars = Objects.requireNonNull(cvars);
     this.reliable = Objects.requireNonNull(reliable);
     this.begin = Objects.requireNonNull(begin);
+    this.print = Objects.requireNonNull(print);
+  }
+
+  /** True when {@code cl_allowDownload} permits downloading from the game server. */
+  public boolean allowed() {
+    int policy = cvars.integer("cl_allowDownload");
+    return cache != null && (policy & ALLOW) != 0 && (policy & NO_UDP) == 0;
   }
 
   public boolean active() {
@@ -84,26 +98,35 @@ public final class DownloadManager implements AutoCloseable {
   /**
    * Plans a gamestate's downloads.
    *
-   * @throws IOException when packs are missing and may not be downloaded, or the lists are bad
+   * @throws IOException when downloads are enabled and the server's lists are malformed or name a
+   *     pack that may not be downloaded (an official one, another game's), or mounting failed
    */
   public Outcome plan(ServerMessageCodec.GameState gameState, int time) throws IOException {
     close();
+    boolean allowed = allowed();
     String systemInfo = gameState.configstrings().getOrDefault(Protocol68.CS_SYSTEMINFO, "");
-    var info = InfoString.parse(systemInfo, Protocol68.BIG_INFO_STRING);
-    DownloadPlanner.Plan plan =
-        DownloadPlanner.plan(
-            content.searchPath(),
-            info.getOrDefault("sv_referencedPaks", ""),
-            info.getOrDefault("sv_referencedPakNames", ""),
-            cache == null ? List.of() : cache.entries());
+    DownloadPlanner.Plan plan;
+    try {
+      var info = InfoString.parse(systemInfo, Protocol68.BIG_INFO_STRING);
+      plan =
+          DownloadPlanner.plan(
+              content.searchPath(),
+              info.getOrDefault("sv_referencedPaks", ""),
+              info.getOrDefault("sv_referencedPakNames", ""),
+              cache == null ? List.of() : cache.entries());
+    } catch (IOException | IllegalArgumentException refused) {
+      if (allowed) throw refused instanceof IOException io ? io : new IOException(refused);
+      warnMissing(refused.getMessage());
+      return Outcome.READY;
+    }
     if (!plan.fromCache().isEmpty()) content.mount(plan.fromCache());
     if (plan.complete()) return Outcome.READY;
-    int policy = cvars.integer("cl_allowDownload");
-    if (cache == null || (policy & ALLOW) == 0 || (policy & NO_UDP) != 0)
-      throw new IOException(
-          "Missing server PK3s: "
-              + plan.downloads().stream().map(DownloadCache.Request::remoteName).toList()
-              + (cache == null ? "; no download cache" : "; set cl_allowDownload 1 to download"));
+    if (!allowed) {
+      warnMissing(
+          String.join(
+              " ", plan.downloads().stream().map(DownloadCache.Request::remoteName).toList()));
+      return Outcome.READY;
+    }
     queue.addAll(plan.downloads());
     startTime = time;
     next();
@@ -142,6 +165,14 @@ public final class DownloadManager implements AutoCloseable {
     pending = null;
     completed.add(finished.verifyAndCommit());
     next();
+  }
+
+  private void warnMissing(String what) {
+    print.accept("WARNING: You are missing some files referenced by the server: " + what);
+    print.accept(
+        cache == null
+            ? "You might not be able to join the game (no download cache)"
+            : "You might not be able to join the game; set cl_allowDownload 1 to download them");
   }
 
   private void clearDisplay() {

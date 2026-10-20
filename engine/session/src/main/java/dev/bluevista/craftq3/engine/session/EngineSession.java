@@ -9,6 +9,7 @@ import dev.bluevista.craftq3.engine.client.host.UiHost;
 import dev.bluevista.craftq3.engine.client.input.ClientInput;
 import dev.bluevista.craftq3.engine.client.input.KeyTarget;
 import dev.bluevista.craftq3.engine.client.net.ClientConnection;
+import dev.bluevista.craftq3.engine.client.net.DownloadManager;
 import dev.bluevista.craftq3.engine.client.net.RemoteAddress;
 import dev.bluevista.craftq3.engine.client.net.ServerBrowser;
 import dev.bluevista.craftq3.engine.client.net.UiBrowser;
@@ -29,6 +30,7 @@ import dev.bluevista.craftq3.engine.fs.PureManifest;
 import dev.bluevista.craftq3.engine.fs.SearchPath;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
 import dev.bluevista.craftq3.engine.net.Protocol68;
+import dev.bluevista.craftq3.engine.net.chan.Protocol68ClientSession;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.oob.ConnectionlessMessage;
 import dev.bluevista.craftq3.engine.net.oob.ConnectionlessPacket;
@@ -141,8 +143,7 @@ public final class EngineSession implements AutoCloseable {
   private final ThreadOwner owner = new ThreadOwner("client");
   private final ClientConsole output = new ClientConsole();
   private final Console console;
-  private final SearchPath searchPath;
-  private final PureManifest manifest;
+  private final SessionPaks paks;
   private final SessionFiles files;
   private final HomeStore home;
   private final TimeServices time;
@@ -195,16 +196,16 @@ public final class EngineSession implements AutoCloseable {
     long seed = options.seed() != 0 ? options.seed() : System.nanoTime();
     random = new Random(seed);
     qport = random.nextInt(65536);
-    searchPath = SearchPath.mount(host.installRoot(), host.game());
-    manifest = new PureManifest(searchPath);
+    paks = new SessionPaks(host.installRoot(), host.game(), host.homeDirectory());
     home = SessionFiles.openHome(host.homeDirectory(), host.game(), output::print);
-    files = new SessionFiles(home, () -> content == null ? manifest.view() : content.view);
+    files = new SessionFiles(home, () -> content == null ? paks.manifest().view() : content.view);
     console = Console.client(owner, output, files.configSource(), files.configSink());
+    output.attach(console.buffer(), this::chatting);
     time = new TimeServices(host.clock(), host.wallClock());
     startMillis = host.clock().millis();
     lastFrame = startMillis;
     registerCvars();
-    content = newContent(manifest.view());
+    content = newContent(paks.manifest().view());
     browser = new ServerBrowser(console.cvars(), savedFiles(), output::print);
     browser.registerCommands(console.commands());
     registerCommands();
@@ -303,19 +304,16 @@ public final class EngineSession implements AutoCloseable {
   // ================================================================ content
 
   private ClientContent newContent(FileView view) {
-    ClientContent next =
-        new ClientContent(
-            console,
-            output,
-            view,
-            home,
-            host.installRoot(),
-            host,
-            time,
-            options.decodeImages(),
-            uiLink());
-    output.attach(console.buffer(), this::chatting);
-    return next;
+    return new ClientContent(
+        console,
+        output,
+        view,
+        home,
+        host.installRoot(),
+        host,
+        time,
+        options.decodeImages(),
+        uiLink());
   }
 
   /** Rebuilds the content for another file view (a pure server's packs), restarting the ui. */
@@ -324,6 +322,7 @@ public final class EngineSession implements AutoCloseable {
     int catchers = oldInput.catchers();
     content.close();
     content = newContent(view);
+    paks.releaseRetired();
     ClientInput input = services().input();
     input.setConsoleTarget(output);
     input.setHooks(inputHooks());
@@ -628,7 +627,7 @@ public final class EngineSession implements AutoCloseable {
               .servers()
               .create(
                   new LocalServer.Context(
-                      searchPath,
+                      paks.searchPath(),
                       home,
                       host.installRoot(),
                       host.game(),
@@ -785,10 +784,26 @@ public final class EngineSession implements AutoCloseable {
                       ClientConnection.Settings.DEFAULT,
                       listener,
                       lastFrame));
+      game.connection().ifPresent(this::enableDownloads);
     } catch (RuntimeException failure) {
       socket.close();
       throw failure;
     }
+  }
+
+  /**
+   * Gives a remote connection its {@link DownloadManager}: cached packs the server references are
+   * mounted, missing ones downloaded when {@code cl_allowDownload} permits.
+   */
+  private void enableDownloads(ClientConnection connection) {
+    connection.setDownloads(
+        new DownloadManager(
+            paks.downloadContent(),
+            paks.cache(this::print),
+            console.cvars(),
+            connection::command,
+            () -> connection.session().ifPresent(Protocol68ClientSession::beginDownload),
+            this::print));
   }
 
   private Map<String, String> userInfo() {
@@ -1053,12 +1068,13 @@ public final class EngineSession implements AutoCloseable {
     services().input().setCgameTarget(KeyTarget.NONE);
     mirror.resetServerInfo();
     stopAllSounds();
-    if (contentPure) {
-      manifest.setServerPaks(List.of());
-      manifest.restart(0);
+    boolean remounted = paks.unmountDownloads();
+    if (contentPure || remounted || paks.takeChanged()) {
+      paks.manifest().setServerPaks(List.of());
+      paks.manifest().restart(0);
       contentPure = false;
       contentPaks = List.of();
-      rebuildContent(manifest.view(), UiHost.Menu.MAIN);
+      rebuildContent(paks.manifest().view(), UiHost.Menu.MAIN);
     }
   }
 
@@ -1135,7 +1151,7 @@ public final class EngineSession implements AutoCloseable {
       @Override
       public String pureChecksums() {
         try {
-          return manifest.referencedPureChecksums();
+          return paks.manifest().referencedPureChecksums();
         } catch (IllegalStateException tooMany) {
           return null;
         }
@@ -1157,16 +1173,18 @@ public final class EngineSession implements AutoCloseable {
     } catch (IllegalArgumentException malformed) {
       values = Map.of();
     }
-    List<Integer> paks = new ArrayList<>();
+    List<Integer> serverPaks = new ArrayList<>();
     if (starting.kind == GameClient.Kind.REMOTE && parseInt(values.get("sv_pure")) != 0)
       for (String word : values.getOrDefault("sv_paks", "").trim().split("\\s+"))
-        if (!word.isEmpty()) paks.add(parseInt(word));
-    manifest.setServerPaks(paks);
+        if (!word.isEmpty()) serverPaks.add(parseInt(word));
+    PureManifest manifest = paks.manifest();
+    manifest.setServerPaks(serverPaks);
     manifest.restart(gameState.checksumFeed());
-    boolean pure = !paks.isEmpty();
-    if (pure != contentPure || (pure && !paks.equals(contentPaks))) {
+    boolean pure = !serverPaks.isEmpty();
+    boolean remounted = paks.takeChanged();
+    if (remounted || pure != contentPure || (pure && !serverPaks.equals(contentPaks))) {
       contentPure = pure;
-      contentPaks = List.copyOf(paks);
+      contentPaks = List.copyOf(serverPaks);
       rebuildContent(manifest.view(), UiHost.Menu.NONE);
     }
     // The restart cleared references; the running ui module counts as referenced again.
@@ -1651,9 +1669,12 @@ public final class EngineSession implements AutoCloseable {
     return total;
   }
 
-  /** The search path the session mounted (shared with the local server). */
+  /**
+   * The search path the session mounted (shared with the local server); while a remote game runs it
+   * includes the PK3s downloaded for that server.
+   */
   public SearchPath searchPath() {
-    return searchPath;
+    return paks.searchPath();
   }
 
   /** Milliseconds since the session started, as the VMs see them ({@code cls.realtime}). */
@@ -1731,11 +1752,7 @@ public final class EngineSession implements AutoCloseable {
     } catch (IOException failure) {
       LOG.debug("Home store close failed");
     }
-    try {
-      searchPath.close();
-    } catch (IOException failure) {
-      LOG.debug("Search path close failed");
-    }
+    paks.close();
     owner.release();
   }
 }

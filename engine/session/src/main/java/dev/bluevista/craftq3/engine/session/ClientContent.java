@@ -11,7 +11,6 @@ import dev.bluevista.craftq3.engine.fs.HomeStore;
 import dev.bluevista.craftq3.engine.vmabi.service.TimeServices;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
 
 /**
  * The client's content-bound services for one file view: the shared VM host services (assets,
@@ -21,9 +20,6 @@ import java.util.List;
  * <p>Owned by the client thread.
  */
 final class ClientContent implements AutoCloseable {
-  /** Commands {@link HostServices} registers that a rebuild must release first. */
-  private static final List<String> HOST_COMMANDS = List.of("play", "music", "stopsound");
-
   final FileView view;
   final HostServices services;
   final UiHost ui;
@@ -39,7 +35,6 @@ final class ClientContent implements AutoCloseable {
       TimeServices time,
       boolean decodeImages,
       UiHost.Link link) {
-    for (String command : HOST_COMMANDS) console.commands().unregister(command);
     this.view = view;
     this.services =
         new HostServices(console, output, view, home, installRoot, platform, time, decodeImages);

@@ -8,6 +8,7 @@ import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.client.render.ClientRenderer;
 import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.console.CommandArgs;
+import dev.bluevista.craftq3.engine.console.CommandHandler;
 import dev.bluevista.craftq3.engine.console.Console;
 import dev.bluevista.craftq3.engine.console.CvarFlags;
 import dev.bluevista.craftq3.engine.console.CvarTable;
@@ -46,7 +47,10 @@ import java.util.function.Consumer;
  * <p>Owned by the render thread.
  */
 public final class HostServices implements AutoCloseable {
-  /** The cvar naming a CD key file is never logged; the key lives in {@code baseq3/q3key}. */
+  /**
+   * The CD key file: {@code baseq3/q3key} of the installation (where the original keeps it) or
+   * {@code q3key} at the root of the game's home store. Its contents are never logged.
+   */
   public static final String CD_KEY_FILE = "q3key";
 
   /** CD key characters {@code trap_GetCDKey} reports. */
@@ -72,6 +76,7 @@ public final class HostServices implements AutoCloseable {
   private final ClientRenderer renderer;
   private final SoundSystem sound;
   private final ClientInput input;
+  private final List<String> ownCommands = new ArrayList<>();
   private String cdKey;
 
   /**
@@ -111,7 +116,7 @@ public final class HostServices implements AutoCloseable {
             console
                 .bindings()
                 .orElseThrow(() -> new IllegalArgumentException("A client console is required")));
-    output.attach(console.buffer(), () -> false);
+    output.attachKeepingPredicate(console.buffer());
     CvarTable cvars = console.cvars();
     EngineCvars.register(cvars);
     registerSoundCommands();
@@ -131,10 +136,13 @@ public final class HostServices implements AutoCloseable {
   /** {@code CHAN_LOCAL_SOUND}: the channel the {@code play} command uses. */
   private static final int CHAN_LOCAL_SOUND = 6;
 
-  /** The sound system's console commands: {@code play}, {@code music}, {@code stopsound}. */
+  /**
+   * The sound system's console commands: {@code play}, {@code music}, {@code stopsound}. Each name
+   * this instance registers is unregistered again by {@link #close()}, so a rebuilt instance (a
+   * content restart) binds its own sound system.
+   */
   private void registerSoundCommands() {
-    var commands = console.commands();
-    commands.register(
+    register(
         "play",
         args -> {
           if (args.argc() < 2) {
@@ -146,7 +154,7 @@ public final class HostServices implements AutoCloseable {
             if (handle != 0) sound.startLocalSound(handle, CHAN_LOCAL_SOUND);
           }
         });
-    commands.register(
+    register(
         "music",
         args -> {
           if (args.argc() < 2 || args.argc() > 3) {
@@ -155,7 +163,16 @@ public final class HostServices implements AutoCloseable {
           }
           startBackgroundTrack(args.argv(1), args.argc() == 3 ? args.argv(2) : args.argv(1));
         });
-    commands.register("stopsound", args -> sound.stopAllSounds());
+    register("stopsound", args -> sound.stopAllSounds());
+  }
+
+  private void register(String name, CommandHandler handler) {
+    if (console.commands().register(name, handler)) ownCommands.add(name);
+  }
+
+  /** The console commands this instance registered (and {@link #close()} removes). */
+  public List<String> ownCommands() {
+    return List.copyOf(ownCommands);
   }
 
   private String gameDirectory() {
@@ -330,8 +347,8 @@ public final class HostServices implements AutoCloseable {
   // ---------------------------------------------------------------- CD key
 
   /**
-   * The CD key the ui shows: set by {@code trap_SetCDKey}, else read once from {@code baseq3/q3key}
-   * of the installation (or the home store). Never logged.
+   * The CD key the ui shows: set by {@code trap_SetCDKey}, else read once from {@code q3key} in the
+   * game's home store, else from the installation's {@code baseq3/q3key}. Never logged.
    */
   public String cdKey() {
     if (cdKey == null) cdKey = readCdKey();
@@ -345,7 +362,8 @@ public final class HostServices implements AutoCloseable {
 
   private String readCdKey() {
     List<Path> candidates = new ArrayList<>();
-    if (home != null) candidates.add(home.root().resolve("baseq3").resolve(CD_KEY_FILE));
+    // The home store is already the game's directory (e.g. ~/.craftq3/cpma).
+    if (home != null) candidates.add(home.root().resolve(CD_KEY_FILE));
     if (installRoot != null) candidates.add(installRoot.resolve("baseq3").resolve(CD_KEY_FILE));
     for (Path file : candidates) {
       try {
@@ -366,6 +384,8 @@ public final class HostServices implements AutoCloseable {
 
   @Override
   public void close() {
+    for (String name : ownCommands) console.commands().unregister(name);
+    ownCommands.clear();
     input.close();
     sound.stopAllSounds();
   }

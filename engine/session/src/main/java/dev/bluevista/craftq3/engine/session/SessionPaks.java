@@ -54,6 +54,15 @@ final class SessionPaks implements AutoCloseable {
     manifest = new PureManifest(searchPath);
   }
 
+  /** Over an installation the host already mounted (owned from now on). */
+  SessionPaks(SearchPath mounted, Path installRoot, String game, Path homeRoot) {
+    this.installRoot = installRoot;
+    this.game = game;
+    this.homeRoot = homeRoot;
+    searchPath = mounted;
+    manifest = new PureManifest(mounted);
+  }
+
   SearchPath searchPath() {
     return searchPath;
   }

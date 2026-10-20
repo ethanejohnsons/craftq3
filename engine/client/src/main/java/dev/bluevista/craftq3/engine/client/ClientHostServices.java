@@ -2,6 +2,7 @@ package dev.bluevista.craftq3.engine.client;
 
 import dev.bluevista.craftq3.engine.audio.AudioDevice;
 import dev.bluevista.craftq3.engine.audio.NullAudioDevice;
+import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import java.util.List;
@@ -56,6 +57,17 @@ public interface ClientHostServices {
   default List<CollisionSource> worldSources(String mapName) {
     return List.of();
   }
+
+  /**
+   * The client loaded a new world map ({@code trap_CM_LoadMap}/{@code trap_R_LoadWorldMap}): {@code
+   * map} is what collision and the renderer use and {@code assets} the content it was loaded with
+   * (its file view and shader scripts), so a presenter can build the render scene without polling.
+   * Called on the client thread, inside the cgame's map load.
+   */
+  default void worldLoaded(String normalizedPath, BspMap map, ClientAssets assets) {}
+
+  /** The client released its world map (the game ended). */
+  default void worldUnloaded() {}
 
   /** Services with no output: a null audio device and the given sink and size. */
   static ClientHostServices headless(RenderSink sink, int width, int height) {

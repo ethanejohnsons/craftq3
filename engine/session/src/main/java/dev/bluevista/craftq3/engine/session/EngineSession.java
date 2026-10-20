@@ -114,6 +114,10 @@ public final class EngineSession implements AutoCloseable {
   static final ClientConnection.Settings LOOPBACK_SETTINGS =
       new ClientConnection.Settings(100, 30_000, 256, 64);
 
+  /** Runs world preloads ({@link HostServices#preloadWorld}) on virtual threads. */
+  private static final java.util.concurrent.Executor PRELOADER =
+      command -> Thread.ofVirtual().name("cq3-world-preload").start(command);
+
   /** The commands that run on the server's console (forwarded there as text). */
   static final List<String> SERVER_COMMANDS =
       List.of(
@@ -191,7 +195,8 @@ public final class EngineSession implements AutoCloseable {
   private record Resolving(
       String name, CompletableFuture<InetSocketAddress> address, long started) {}
 
-  private EngineSession(SessionHost host, SessionOptions options) throws IOException {
+  private EngineSession(SessionHost host, SessionOptions options, SearchPath mounted)
+      throws IOException {
     this.host = Objects.requireNonNull(host);
     this.options = Objects.requireNonNull(options);
     owner.claim();
@@ -199,7 +204,10 @@ public final class EngineSession implements AutoCloseable {
     long seed = options.seed() != 0 ? options.seed() : System.nanoTime();
     random = new Random(seed);
     qport = random.nextInt(65536);
-    paks = new SessionPaks(host.installRoot(), host.game(), host.homeDirectory());
+    paks =
+        mounted == null
+            ? new SessionPaks(host.installRoot(), host.game(), host.homeDirectory())
+            : new SessionPaks(mounted, host.installRoot(), host.game(), host.homeDirectory());
     home = SessionFiles.openHome(host.homeDirectory(), host.game(), output::print);
     files = new SessionFiles(home, () -> content == null ? paks.manifest().view() : content.view);
     console = Console.client(owner, output, files.configSource(), files.configSink());
@@ -225,7 +233,47 @@ public final class EngineSession implements AutoCloseable {
    * @throws IOException when the installation cannot be mounted
    */
   public static EngineSession start(SessionHost host, SessionOptions options) throws IOException {
-    EngineSession session = new EngineSession(host, options);
+    return start(host, options, null);
+  }
+
+  /**
+   * As {@link #start(SessionHost, SessionOptions)} over a search path the host already mounted
+   * ({@link SearchPath#mount(java.nio.file.Path, String)} of {@code host.installRoot()} and {@code
+   * host.game()}, typically on a worker so the render thread does not block on it). The session
+   * takes ownership and closes it, also when starting fails.
+   *
+   * @param mounted the mounted installation, or null to mount it here
+   * @throws IllegalArgumentException when {@code mounted} is of another game
+   */
+  public static EngineSession start(SessionHost host, SessionOptions options, SearchPath mounted)
+      throws IOException {
+    if (mounted != null
+        && !mounted
+            .game()
+            .equals(
+                VirtualPath.gameDirectory(
+                    host.game() == null || host.game().isBlank() ? "baseq3" : host.game()))) {
+      try {
+        mounted.close();
+      } catch (IOException ignored) {
+        LOG.debug("Search path close failed");
+      }
+      throw new IllegalArgumentException(
+          "The mounted search path is " + mounted.game() + ", the host plays " + host.game());
+    }
+    EngineSession session;
+    try {
+      session = new EngineSession(host, options, mounted);
+    } catch (IOException | RuntimeException failure) {
+      if (mounted != null) {
+        try {
+          mounted.close();
+        } catch (IOException suppressed) {
+          failure.addSuppressed(suppressed);
+        }
+      }
+      throw failure;
+    }
     try {
       session.boot();
     } catch (RuntimeException failure) {
@@ -610,6 +658,7 @@ public final class EngineSession implements AutoCloseable {
   /** {@code map}: makes sure the local server runs, then hands it the command. */
   private void startLevel(String commandText, String map, boolean singlePlayer) {
     stopCinematicSilently();
+    closeConsole();
     if (game != null && game.kind != GameClient.Kind.LOCAL) closeGame(true);
     if (resolving != null) resolving = null;
     if (server == null && !startServer(singlePlayer)) return;
@@ -690,9 +739,20 @@ public final class EngineSession implements AutoCloseable {
     print("Couldn't open a server socket on " + ip + ":" + port + "; playing locally only");
   }
 
+  /**
+   * {@code Con_Close}, as the original runs when a map starts loading or a connect begins: the
+   * console closes and its input line is cleared.
+   */
+  private void closeConsole() {
+    ClientInput input = services().input();
+    input.setCatchers(input.catchers() & ~ClientInput.KEYCATCH_CONSOLE);
+    output.field().clear();
+  }
+
   /** {@code connect}: a remote server (resolved off-thread) or the local one. */
   private void connect(String name) {
     stopCinematicSilently();
+    closeConsole();
     console.cvars().set("com_errorMessage", "");
     if (isLocalName(name)) {
       if (server == null) {
@@ -1146,6 +1206,12 @@ public final class EngineSession implements AutoCloseable {
       @Override
       public void levelStarting(GameClient starting, ServerMessageCodec.GameState gameState) {
         prepareLevel(starting, gameState);
+        preloadWorld(starting, gameState);
+      }
+
+      @Override
+      public boolean levelWaiting(GameClient waiting) {
+        return waiting.kind != GameClient.Kind.DEMO && services().preloading();
       }
 
       @Override
@@ -1163,6 +1229,24 @@ public final class EngineSession implements AutoCloseable {
         }
       }
     };
+  }
+
+  /**
+   * Starts parsing the level's map and building its collision model on a worker while the client
+   * keeps presenting frames; the cgame starts once it is done (its own map load then only takes the
+   * result). Demos and reproducible runs (synchronous server) build it in place.
+   */
+  private void preloadWorld(GameClient starting, ServerMessageCodec.GameState gameState) {
+    String serverInfo = gameState.configstrings().getOrDefault(Protocol68.CS_SERVERINFO, "");
+    String map;
+    try {
+      map = InfoString.parse(serverInfo, Protocol68.BIG_INFO_STRING).getOrDefault("mapname", "");
+    } catch (IllegalArgumentException malformed) {
+      return;
+    }
+    if (map.isBlank()) return;
+    boolean inPlace = starting.kind == GameClient.Kind.DEMO || options.synchronousServer();
+    services().preloadWorld("maps/" + map + ".bsp", inPlace ? Runnable::run : PRELOADER);
   }
 
   /** {@code CL_ParseGamestate} and the pure pack setup before a cgame loads. */

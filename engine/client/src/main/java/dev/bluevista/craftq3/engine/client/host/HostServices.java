@@ -6,6 +6,7 @@ import dev.bluevista.craftq3.engine.client.console.ClientConsole;
 import dev.bluevista.craftq3.engine.client.input.ClientInput;
 import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.client.render.ClientRenderer;
+import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.console.CommandArgs;
 import dev.bluevista.craftq3.engine.console.CommandHandler;
@@ -15,6 +16,7 @@ import dev.bluevista.craftq3.engine.console.CvarTable;
 import dev.bluevista.craftq3.engine.formats.FileViewAssets;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import dev.bluevista.craftq3.engine.formats.bsp.BspReader;
+import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
 import dev.bluevista.craftq3.engine.fs.FileView;
 import dev.bluevista.craftq3.engine.fs.HomeStore;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
@@ -37,6 +39,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 /**
@@ -276,27 +281,100 @@ public final class HostServices implements AutoCloseable {
   }
 
   private ClientWorld world;
+  private Preload preload;
+
+  /** A world being parsed and built on a worker for {@link #loadWorld}. */
+  private record Preload(String name, CompletableFuture<ClientWorld> world) {}
 
   /**
    * The map {@code name} for {@code trap_CM_LoadMap} and {@code trap_R_LoadWorldMap}, read once and
    * shared by collision and the renderer until another map is loaded. The host's {@link
    * ClientHostServices#mapOverride} is consulted first; its {@link ClientHostServices#worldSources}
-   * join the world's collision.
+   * join the world's collision. A {@link #preloadWorld preloaded} world is taken over (waiting for
+   * the rest of its build). The host hears {@link ClientHostServices#worldLoaded}.
    *
    * @throws IOException when the map is missing or malformed
    */
   public ClientWorld loadWorld(String name) throws IOException {
     String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
     if (world != null && world.name().equals(normalized)) return world;
-    Optional<BspMap> override = platform.mapOverride(normalized);
-    BspMap map;
-    if (override.isPresent()) map = override.get();
-    else map = BspReader.read(view.read(VirtualPath.of(normalized)), normalized);
-    world =
-        new ClientWorld(
-            normalized, map, assets.library(), platform.worldSources(mapName(normalized)));
-    renderer.loadWorld(normalized, map);
+    ClientWorld loaded;
+    if (preload != null && preload.name().equals(normalized)) {
+      CompletableFuture<ClientWorld> pending = preload.world();
+      preload = null;
+      try {
+        loaded = pending.join();
+      } catch (CompletionException failed) {
+        Throwable cause = failed.getCause() == null ? failed : failed.getCause();
+        if (cause instanceof IOException io) throw io;
+        if (cause instanceof RuntimeException runtime) throw runtime;
+        throw new IOException("Couldn't build " + normalized, cause);
+      }
+    } else {
+      loaded = build(normalized, readMap(normalized), sourcesFor(normalized));
+    }
+    world = loaded;
+    renderer.loadWorld(normalized, loaded.map());
+    platform.worldLoaded(normalized, loaded.map(), assets);
     return world;
+  }
+
+  /**
+   * Starts building the map {@code name} off this thread ({@code executor}): the file is read here
+   * (so pure reference tracking stays on the client thread), parsed and given its collision model
+   * on the worker. The next {@link #loadWorld} of the same name takes it over; the cgame's own map
+   * load is then shorter. Does nothing for the loaded map or one already preloading.
+   */
+  public void preloadWorld(String name, Executor executor) {
+    String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
+    if (world != null && world.name().equals(normalized)) return;
+    if (preload != null && preload.name().equals(normalized)) return;
+    CompletableFuture<ClientWorld> pending;
+    try {
+      Object source = mapSource(normalized);
+      List<CollisionSource> sources = sourcesFor(normalized);
+      ShaderLibrary library = assets.library();
+      pending =
+          CompletableFuture.supplyAsync(
+              () -> {
+                BspMap map =
+                    source instanceof BspMap given
+                        ? given
+                        : BspReader.read((byte[]) source, normalized);
+                ClientWorld built = new ClientWorld(normalized, map, library, sources);
+                built.collision();
+                return built;
+              },
+              executor);
+    } catch (IOException | RuntimeException failure) {
+      pending = CompletableFuture.failedFuture(failure);
+    }
+    preload = new Preload(normalized, pending);
+  }
+
+  /** True while a {@link #preloadWorld preloaded} world is still being built. */
+  public boolean preloading() {
+    return preload != null && !preload.world().isDone();
+  }
+
+  private BspMap readMap(String normalized) throws IOException {
+    Object source = mapSource(normalized);
+    return source instanceof BspMap given ? given : BspReader.read((byte[]) source, normalized);
+  }
+
+  /** The host's map, else the file's bytes. */
+  private Object mapSource(String normalized) throws IOException {
+    Optional<BspMap> override = platform.mapOverride(normalized);
+    if (override.isPresent()) return override.get();
+    return view.read(VirtualPath.of(normalized));
+  }
+
+  private List<CollisionSource> sourcesFor(String normalized) {
+    return List.copyOf(platform.worldSources(mapName(normalized)));
+  }
+
+  private ClientWorld build(String normalized, BspMap map, List<CollisionSource> sources) {
+    return new ClientWorld(normalized, map, assets.library(), sources);
   }
 
   /** {@code maps/q3dm17.bsp} → {@code q3dm17}. */
@@ -316,8 +394,12 @@ public final class HostServices implements AutoCloseable {
 
   /** Forgets the loaded map (disconnect). */
   public void unloadWorld() {
+    if (preload != null) preload.world().cancel(false);
+    preload = null;
+    boolean had = world != null;
     world = null;
     renderer.loadWorld("", null);
+    if (had) platform.worldUnloaded();
   }
 
   /** A script or text file, ISO-8859-1, for the precompiler. */

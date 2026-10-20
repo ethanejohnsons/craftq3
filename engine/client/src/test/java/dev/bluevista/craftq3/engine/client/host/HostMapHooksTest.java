@@ -86,6 +86,19 @@ final class HostMapHooksTest {
       asked.add("sources " + mapName);
       return sources;
     }
+
+    @Override
+    public void worldLoaded(
+        String normalizedPath,
+        BspMap map,
+        dev.bluevista.craftq3.engine.client.render.ClientAssets a) {
+      asked.add("loaded " + normalizedPath + (map == override ? " (override)" : ""));
+    }
+
+    @Override
+    public void worldUnloaded() {
+      asked.add("unloaded");
+    }
   }
 
   private HostServices services(SearchPath path, Host host) {
@@ -119,10 +132,43 @@ final class HostMapHooksTest {
       assertSame(bridge, world.map(), "collision uses the host's map");
       assertSame(bridge, services.assets().world().orElseThrow(), "so does the renderer");
       assertEquals(BRIDGE, services.assets().worldName());
-      assertEquals(List.of("override " + BRIDGE, "sources craftq3_bridge"), host.asked);
+      assertEquals(
+          List.of(
+              "override " + BRIDGE, "sources craftq3_bridge", "loaded " + BRIDGE + " (override)"),
+          host.asked);
       RenderScene scene = RenderScene.build(BRIDGE, bridge, services.assets().library()::resolve);
       assertNotNull(scene.world());
       assertSame(world, services.loadWorld(BRIDGE), "loaded once");
+      assertThrows(java.io.IOException.class, () -> services.loadWorld("maps/missing.bsp"));
+      services.close();
+    }
+  }
+
+  @Test
+  void aPreloadedWorldIsBuiltOnTheWorkerAndTakenOver() throws Exception {
+    BspMap bridge = BspReader.read(BspFixture.map(false), BRIDGE);
+    Host host = new Host(bridge, List.of());
+    List<Runnable> worker = new ArrayList<>();
+    try (SearchPath path = mount()) {
+      HostServices services = services(path, host);
+      services.preloadWorld(BRIDGE, worker::add);
+      assertTrue(services.preloading(), "waiting for the worker");
+      assertEquals(1, worker.size());
+      worker.getFirst().run();
+      assertFalse(services.preloading());
+      assertTrue(services.world().isEmpty(), "taken over only by the cgame's load");
+      ClientWorld world = services.loadWorld(BRIDGE);
+      assertSame(bridge, world.map());
+      assertSame(bridge, services.assets().world().orElseThrow());
+      assertEquals(
+          List.of(
+              "override " + BRIDGE, "sources craftq3_bridge", "loaded " + BRIDGE + " (override)"),
+          host.asked,
+          "the host is asked once, on the client thread");
+      services.unloadWorld();
+      assertEquals("unloaded", host.asked.getLast());
+      services.preloadWorld("maps/missing.bsp", worker::add);
+      assertFalse(services.preloading(), "a missing file fails at once");
       assertThrows(java.io.IOException.class, () -> services.loadWorld("maps/missing.bsp"));
       services.close();
     }

@@ -25,8 +25,9 @@ import java.util.Optional;
 
 /**
  * A headless bridge: the installation's baseq3 qagame on the {@link SyntheticMapSource} over
- * synthetic Minecraft terrain, with one local player driven by user commands. No network: the
- * player's reliable commands are acknowledged and dropped.
+ * synthetic Minecraft terrain, with one local player driven by user commands, and optionally more
+ * ({@link #join}) that idle in every tick after it. No network: the players' reliable commands are
+ * acknowledged and dropped.
  */
 final class BridgeSimulation implements AutoCloseable {
   static final int TICK = 50;
@@ -51,6 +52,12 @@ final class BridgeSimulation implements AutoCloseable {
   long now;
   int player = -1;
   private int commandTime;
+  private Vec3f spawn = Vec3f.ZERO;
+
+  /** Further players ({@link #join}), with their command times. */
+  final List<Integer> others = new ArrayList<>();
+
+  private final List<int[]> otherTimes = new ArrayList<>();
 
   BridgeSimulation(Path root, TerrainCells cells, CoordinateTransform transform)
       throws IOException {
@@ -114,6 +121,7 @@ final class BridgeSimulation implements AutoCloseable {
 
   /** Spawns the bridge level with the player at {@code spawn} and the given items. */
   boolean start(Vec3f spawn, List<SyntheticMapSource.ItemSpawn> items) {
+    this.spawn = spawn;
     maps.prepare(new SyntheticMapSource.World(terrain, spawn, 0, items, "test bridge"));
     return startMap(SyntheticMapSource.MAP_NAME);
   }
@@ -129,9 +137,47 @@ final class BridgeSimulation implements AutoCloseable {
       player = admission.client();
     }
     server.gamestateSent(player);
-    host.setPlayer(player);
     commandTime = server.levelTime();
     return true;
+  }
+
+  /** The bridge host's handle for the player. */
+  BridgeHost.Client self() {
+    return host.client(player);
+  }
+
+  /**
+   * Connects another player that enters the world at {@code at} (the spawn point is moved there for
+   * its first think, then put back) and idles in every later tick; returns its slot.
+   */
+  int join(String name, Vec3f at) {
+    host.moveSpawn(at.x(), at.y(), at.z());
+    GameServer.Admission admission =
+        server.connect(
+            "\\name\\" + name + "\\model\\sarge\\handicap\\100\\snaps\\20", "localhost", true, -1);
+    if (!admission.accepted()) throw new IllegalStateException(admission.denied());
+    int client = admission.client();
+    server.gamestateSent(client);
+    int[] time = {server.levelTime()};
+    others.add(client);
+    otherTimes.add(time);
+    think(client, time);
+    host.moveSpawn(spawn.x(), spawn.y(), spawn.z());
+    return client;
+  }
+
+  private void think(int client, int[] time) {
+    time[0] = Math.max(time[0] + TICK, server.levelTime());
+    server.userMove(client, List.of(UserCmd.idle(time[0])));
+    acknowledge(client);
+  }
+
+  private void acknowledge(int client) {
+    if (server.state() == GameServer.State.RUNNING
+        && server.client(client).state() != ServerClient.State.FREE) {
+      ServerClient slot = server.client(client);
+      slot.acknowledgeReliable(slot.reliableSequence());
+    }
   }
 
   /** One Minecraft tick with the given input. */
@@ -142,16 +188,13 @@ final class BridgeSimulation implements AutoCloseable {
     server.userMove(
         player,
         List.of(new UserCmd(commandTime, pitch, yaw, 0, buttons, weapon, forward, right, up)));
+    for (int i = 0; i < others.size(); i++) think(others.get(i), otherTimes.get(i));
     now += TICK;
     clock.advance(TICK);
     server.frame(now);
     if (server.state() == GameServer.State.RUNNING) afterServerFrame.run();
     mobDamage.addAll(host.afterFrame());
-    if (server.state() == GameServer.State.RUNNING
-        && server.client(player).state() != ServerClient.State.FREE) {
-      ServerClient slot = server.client(player);
-      slot.acknowledgeReliable(slot.reliableSequence());
-    }
+    acknowledge(player);
   }
 
   void idle(int ticks) {
@@ -169,7 +212,11 @@ final class BridgeSimulation implements AutoCloseable {
   }
 
   int stat(int index) {
-    return entities().playerInt(player, PlayerStateLayout.STATS + index * 4);
+    return stat(player, index);
+  }
+
+  int stat(int client, int index) {
+    return entities().playerInt(client, PlayerStateLayout.STATS + index * 4);
   }
 
   int ammo(int weapon) {

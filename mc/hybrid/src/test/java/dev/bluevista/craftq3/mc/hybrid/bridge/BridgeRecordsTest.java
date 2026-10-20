@@ -88,6 +88,25 @@ class BridgeRecordsTest {
   }
 
   @Test
+  void externalDamageUsesOnlyArmedTriggers() {
+    ExternalDamage damage = new ExternalDamage();
+    damage.add(37);
+    // Triggers 1, 2, 4 and 8 were touched by another client in this window: 32 now, 5 later.
+    assertEquals(32, damage.take(1000, 0b1111_0000));
+    assertEquals(5, damage.queued());
+    assertEquals(0, damage.take(1050, 0xff));
+    // Only 2 is armed: as much as fits.
+    assertEquals(4, damage.take(1100, 0b0000_0100));
+    assertEquals(1, damage.take(1200, 0xff));
+    damage.add(3);
+    assertEquals(0, damage.take(1300, 0b1111_1000), "nothing armed fits in 3");
+    assertEquals(3, damage.queued());
+    assertEquals(44, ExternalDamage.largestWithin(44, 0xff));
+    assertEquals(42, ExternalDamage.largestWithin(44, 0b1111_1010));
+    assertEquals(0, ExternalDamage.largestWithin(44, 0));
+  }
+
+  @Test
   void hostTriggerEntitiesParseAsTheGameReadsThem() {
     float[] park = {0, 0, -60000};
     List<BspEntity> entities = HostTriggers.entities(4, park);

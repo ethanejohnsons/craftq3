@@ -40,7 +40,9 @@ original game module on the Minecraft server, one Quake frame per server tick.
   it and other players see you move. You are in Adventure mode while bridged; your game mode and
   abilities are restored when you leave, also after a crash or server stop (on your next join).
 - **Several players**: everyone bridged in the same dimension plays in one Quake game and can
-  fight each other with Quake weapons. Players more than 900 blocks from where the dimension's
+  fight each other with Quake weapons. When several of you are hurt by Minecraft in the same
+  moment, part of the damage can reach some players a tenth or two of a second later (see
+  [DIVERGENCES.md](DIVERGENCES.md)). Players more than 900 blocks from where the dimension's
   bridge started cannot join it until everyone has left.
 
 ### Loadouts

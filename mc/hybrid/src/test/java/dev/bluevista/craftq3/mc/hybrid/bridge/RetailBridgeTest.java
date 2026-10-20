@@ -45,10 +45,10 @@ class RetailBridgeTest {
       ammo[7] = 5;
       int[] powerups = new int[16];
       Loadout loadout = new Loadout(90, 25, 1 << 1 | 1 << 2 | 1 << 7, 7, 0, ammo, powerups);
-      sim.host.restoreLoadout(loadout);
-      for (int i = 0; i < 40 && sim.host.restoring(); i++) sim.idle(1);
-      assertFalse(sim.host.restoring());
-      Loadout restored = sim.host.captureLoadout().orElseThrow();
+      sim.self().restoreLoadout(loadout);
+      for (int i = 0; i < 40 && sim.self().restoring(); i++) sim.idle(1);
+      assertFalse(sim.self().restoring());
+      Loadout restored = sim.self().captureLoadout().orElseThrow();
       assertEquals(90, restored.health());
       assertEquals(25, restored.armor());
       assertEquals(loadout.weapons(), restored.weapons());
@@ -70,7 +70,7 @@ class RetailBridgeTest {
       assertTrue(sim.tail(200).contains("Creeper"), sim::tail);
 
       int before = sim.stat(Loadout.STAT_HEALTH);
-      sim.host.damage(20);
+      sim.self().damage(20);
       sim.idle(3);
       // Armor absorbs part of it, as the original rules say.
       int lost = before - sim.stat(Loadout.STAT_HEALTH);

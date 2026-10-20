@@ -9,12 +9,22 @@ import java.util.Arrays;
  * spawns, kept unlinked (so nothing ever touches them), and linked onto one client only for the
  * duration of that client's think ({@code GameServer.Listener#beforeClientThink} to {@code
  * afterClientThink}).
+ *
+ * <p>The triggers are shared by every client, and each re-arms on its own game-side timer once
+ * touched ({@code trigger_hurt}'s {@code FRAMETIME} timestamp, {@code trigger_multiple}'s {@code
+ * wait}), so the pool remembers when each one fires and reports which are {@linkplain #armed armed}
+ * for the next think, whichever client it belongs to.
  */
 final class HostTriggerPool {
   private static final Log LOG = Log.get(HostTriggerPool.class);
 
+  /** The heal trigger is used at most this often ({@code wait 0.1}, cleared by the next frame). */
+  static final int HEAL_REARM_MILLIS = 200;
+
   private final int[] hurt = new int[ExternalDamage.TRIGGERS];
+  private final int[] hurtArmedAt = new int[ExternalDamage.TRIGGERS];
   private int heal = -1;
+  private int healArmedAt = Integer.MIN_VALUE;
   private boolean ready;
   private final float[] origin = new float[3];
 
@@ -22,6 +32,9 @@ final class HostTriggerPool {
   boolean locate(GameAccess game, int firstModel) {
     ready = false;
     Arrays.fill(hurt, -1);
+    // Fresh entities: every trigger is armed.
+    Arrays.fill(hurtArmedAt, Integer.MIN_VALUE);
+    healArmedAt = Integer.MIN_VALUE;
     heal = -1;
     if (firstModel <= 0 || !game.ready()) return false;
     GameEntities g = game.entities();
@@ -55,16 +68,36 @@ final class HostTriggerPool {
     ready = false;
   }
 
+  /** The hurt triggers (bit {@code i} for the one dealing {@code 1 << i}) armed at {@code time}. */
+  int armed(int levelTime) {
+    int mask = 0;
+    for (int bit = 0; bit < ExternalDamage.TRIGGERS; bit++)
+      if (levelTime >= hurtArmedAt[bit]) mask |= 1 << bit;
+    return mask;
+  }
+
+  /** Whether the heal trigger is armed at {@code levelTime}. */
+  boolean healArmed(int levelTime) {
+    return levelTime >= healArmedAt;
+  }
+
   /**
    * Links the hurt triggers of {@code hurtMask} (and the heal trigger) onto {@code client}, which
-   * must be about to think; {@link #unlink} parks them again right after that think.
+   * must be about to think at {@code levelTime}; {@link #unlink} parks them again right after that
+   * think. They count as fired from then on.
    */
-  void link(GameAccess game, int client, int hurtMask, boolean healOnce) {
+  void link(GameAccess game, int client, int hurtMask, boolean healOnce, int levelTime) {
     if (!ready || (hurtMask == 0 && !healOnce)) return;
     game.playerOrigin(client, origin);
     for (int bit = 0; bit < ExternalDamage.TRIGGERS; bit++)
-      if ((hurtMask & (1 << bit)) != 0) place(game, hurt[bit]);
-    if (healOnce) place(game, heal);
+      if ((hurtMask & (1 << bit)) != 0) {
+        place(game, hurt[bit]);
+        hurtArmedAt[bit] = levelTime + ExternalDamage.REARM_MILLIS;
+      }
+    if (healOnce) {
+      place(game, heal);
+      healArmedAt = levelTime + HEAL_REARM_MILLIS;
+    }
   }
 
   /** Unlinks what {@link #link} linked. */

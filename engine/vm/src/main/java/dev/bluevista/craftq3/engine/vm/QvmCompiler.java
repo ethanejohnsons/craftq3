@@ -375,9 +375,13 @@ final class QvmCompiler {
       return true;
     } catch (RuntimeException failure) {
       chunk.bytes = null;
-      if (chunk.procedures.size() == 1)
+      if (chunk.procedures.size() == 1) {
+        String message = String.valueOf(failure.getMessage());
         procedures[chunk.procedures.getFirst()].failure =
-            "code generation failed (" + failure.getClass().getSimpleName() + ")";
+            message.startsWith("Code length")
+                ? "method over the JVM's 65535-byte limit"
+                : "code generation failed (" + failure.getClass().getSimpleName() + ")";
+      }
       return false;
     }
   }
@@ -502,9 +506,13 @@ final class QvmCompiler {
         if (ops[pc] == Op.JUMP && (ops[pc - 1] != Op.CONST || label[pc - entry]))
           anyComputed = true;
       List<Integer> candidates = new ArrayList<>();
+      // A version 1 data word naming the JUMP of a CONST/JUMP pair is a coincidence (case labels
+      // start statements); honouring it would turn the constant jump into a computed one. Should
+      // a computed jump land there after all, the interpreter takes over.
       if (anyComputed)
         for (int pc = entry + 1; pc < end; pc++)
-          if (candidate(pc)) {
+          if (candidate(pc)
+              && (v2 || ops[pc] != Op.JUMP || ops[pc - 1] != Op.CONST || label[pc - entry])) {
             candidates.add(pc);
             label[pc - entry] = true;
           }

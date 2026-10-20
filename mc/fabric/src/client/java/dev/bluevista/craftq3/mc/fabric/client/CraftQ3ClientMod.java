@@ -46,16 +46,10 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   /** The title screen button's label. */
   public static final String TITLE_BUTTON = "CraftQ3";
 
-  /** Until {@code engine:session} is wired in, starting a session reports why it cannot. */
-  private static final Q3SessionFactory UNAVAILABLE =
-      host -> {
-        throw new UnsupportedOperationException("engine:session is not available in this build");
-      };
-
   private Q3RenderContext renderContext;
   private MinecraftAudio audio;
   private Q3Launcher launcher;
-  private volatile Q3SessionFactory sessionFactory = UNAVAILABLE;
+  private volatile Q3SessionFactory sessionFactory = Q3SessionFactory.DEFAULT;
 
   @Override
   public void onInitializeClient() {

@@ -122,6 +122,11 @@ public final class Q3FramePresenter implements AutoCloseable {
     return loadedName;
   }
 
+  /** The map being prepared, else the map shown, else empty. */
+  public String requestedMap() {
+    return pending != null ? pendingName : loadedName;
+  }
+
   /** Waits (blocking) for a pending load; for tests. */
   public void awaitLoad() {
     CompletableFuture<Prepared> load = pending;

@@ -3,11 +3,10 @@ package dev.bluevista.craftq3.mc.fabric.client.session;
 import com.mojang.blaze3d.platform.Window;
 import com.mojang.logging.LogUtils;
 import dev.bluevista.craftq3.engine.audio.AudioDevice;
-import dev.bluevista.craftq3.engine.client.ClientHostServices;
 import dev.bluevista.craftq3.engine.client.RenderSink;
-import dev.bluevista.craftq3.engine.formats.AssetLookup;
-import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
-import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
+import dev.bluevista.craftq3.engine.common.time.Clock;
+import dev.bluevista.craftq3.engine.session.SessionHost;
+import dev.bluevista.craftq3.engine.session.SessionState;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudio;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudioDevice;
 import java.nio.file.Path;
@@ -16,19 +15,27 @@ import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 
 /**
- * What Minecraft provides to one Quake III session: frames go to a {@link Q3FramePresenter} (and
- * from there to {@code Q3RenderBackend}), sound to a {@link MinecraftAudioDevice} on Minecraft's
- * sound engine, the clipboard through Minecraft's keyboard handler, the window size from
- * Minecraft's window, the installation and game directory from the mod's config, and the home
- * directory {@code <gameDir>/craftq3/home/<game>}.
+ * What Minecraft provides to one {@link dev.bluevista.craftq3.engine.session.EngineSession}:
+ *
+ * <ul>
+ *   <li>frames go to a {@link Q3FramePresenter} (and from there to {@code Q3RenderBackend});
+ *   <li>sound goes to a {@link MinecraftAudioDevice} on Minecraft's sound engine;
+ *   <li>the clipboard is read through Minecraft's keyboard handler;
+ *   <li>the video size ({@code glconfig}) is Minecraft's framebuffer size as of the last {@link
+ *       #applyVideoSize}, so the VMs' layout only changes at a {@code vid_restart}; the presenter
+ *       scales frames to the real framebuffer in between;
+ *   <li>the installation and game directory come from the mod's config, the home root is {@code
+ *       <gameDir>/craftq3/home} (the session writes under {@code <home>/<game>/});
+ *   <li>sockets are real UDP ({@code engine:net}); console lines go to Minecraft's log.
+ * </ul>
  *
  * <p>{@code quit} only raises {@link #quitRequested()}: the screen closes after the session's frame
  * returns, never from inside a VM call. Render thread only.
  */
-public final class MinecraftSessionHost implements ClientHostServices, AutoCloseable {
+public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   private static final Logger LOGGER = LogUtils.getLogger();
 
-  /** Where the per-game home directories live, under Minecraft's game directory. */
+  /** Where the home root lives, under Minecraft's game directory. */
   public static final String HOME_DIRECTORY = "craftq3/home";
 
   private final Minecraft minecraft;
@@ -36,10 +43,14 @@ public final class MinecraftSessionHost implements ClientHostServices, AutoClose
   private final Q3FramePresenter presenter;
   private final Path installRoot;
   private final String game;
-  private final Path homeDirectory;
+  private final Path homeRoot;
+  private final Clock clock;
   private final RenderSink sink;
   private MinecraftAudioDevice device;
+  private int videoWidth, videoHeight;
+  private SessionState state = SessionState.MENU;
   private boolean quitRequested;
+  private boolean hostUiRequested;
   private boolean closed;
 
   /**
@@ -53,19 +64,22 @@ public final class MinecraftSessionHost implements ClientHostServices, AutoClose
       Q3FramePresenter presenter,
       Path installRoot,
       String game,
-      Path gameDirectory) {
+      Path gameDirectory,
+      Clock clock) {
     this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
     this.audio = Objects.requireNonNull(audio, "audio");
     this.presenter = Objects.requireNonNull(presenter, "presenter");
     this.installRoot = Objects.requireNonNull(installRoot, "installRoot");
     this.game = Objects.requireNonNull(game, "game");
-    this.homeDirectory = homeDirectory(gameDirectory, game);
+    this.homeRoot = homeRoot(gameDirectory);
+    this.clock = Objects.requireNonNull(clock, "clock");
     this.sink = presenter::submit;
+    applyVideoSize();
   }
 
-  /** {@code <gameDirectory>/craftq3/home/<game>}. */
-  public static Path homeDirectory(Path gameDirectory, String game) {
-    return gameDirectory.resolve(HOME_DIRECTORY).resolve(game).toAbsolutePath().normalize();
+  /** {@code <gameDirectory>/craftq3/home}. */
+  public static Path homeRoot(Path gameDirectory) {
+    return gameDirectory.resolve(HOME_DIRECTORY).toAbsolutePath().normalize();
   }
 
   // ------------------------------------------------------------------ ClientHostServices
@@ -95,14 +109,12 @@ public final class MinecraftSessionHost implements ClientHostServices, AutoClose
 
   @Override
   public int windowWidth() {
-    Window window = minecraft.getWindow();
-    return Math.max(1, window.getWidth());
+    return videoWidth;
   }
 
   @Override
   public int windowHeight() {
-    Window window = minecraft.getWindow();
-    return Math.max(1, window.getHeight());
+    return videoHeight;
   }
 
   @Override
@@ -110,36 +122,77 @@ public final class MinecraftSessionHost implements ClientHostServices, AutoClose
     quitRequested = true;
   }
 
-  // ------------------------------------------------------------------ session platform
+  // ------------------------------------------------------------------ SessionHost
 
-  /** The installation (the directory containing {@code baseq3}). */
+  @Override
   public Path installRoot() {
     return installRoot;
   }
 
-  /** The game directory mounted over {@code baseq3} ({@code fs_game}, or {@code baseq3}). */
+  @Override
   public String game() {
     return game;
   }
 
-  /** The writable home directory: configs, demos, screenshots, downloads. */
+  @Override
   public Path homeDirectory() {
-    return homeDirectory;
+    return homeRoot;
   }
 
-  /** The session's file view and shader scripts, before its first frame. */
-  public void attachAssets(AssetLookup assets, ShaderLibrary shaders) {
-    presenter.attachAssets(assets, shaders);
+  @Override
+  public Clock clock() {
+    return clock;
   }
 
-  /** The session loaded a map ({@code trap_R_LoadWorldMap}): the renderer prepares it. */
-  public void mapLoaded(String name, BspMap map) {
-    presenter.mapLoaded(name, map);
+  @Override
+  public void log(String line) {
+    LOGGER.info("[Q3] {}", line.stripTrailing());
   }
 
-  /** The session left its map. */
-  public void mapUnloaded() {
-    presenter.mapUnloaded();
+  @Override
+  public void onStateChanged(SessionState previous, SessionState current) {
+    state = current;
+    LOGGER.info("CraftQ3: session {} -> {}", previous, current);
+  }
+
+  @Override
+  public void requestHostUi(boolean visible) {
+    hostUiRequested = visible;
+  }
+
+  // ------------------------------------------------------------------ platform state
+
+  /** Minecraft's framebuffer size now. */
+  public int framebufferWidth() {
+    Window window = minecraft.getWindow();
+    return Math.max(1, window.getWidth());
+  }
+
+  public int framebufferHeight() {
+    Window window = minecraft.getWindow();
+    return Math.max(1, window.getHeight());
+  }
+
+  /**
+   * Takes the framebuffer's size as the video size the VMs see; the caller then runs {@code
+   * vid_restart}. Returns whether it changed.
+   */
+  public boolean applyVideoSize() {
+    int width = framebufferWidth(), height = framebufferHeight();
+    if (width == videoWidth && height == videoHeight) return false;
+    videoWidth = width;
+    videoHeight = height;
+    return true;
+  }
+
+  /** The game's directory under the home root: configs, demos, screenshots. */
+  public Path gameHome() {
+    return homeRoot.resolve(game);
+  }
+
+  /** The session's state as last reported. */
+  public SessionState state() {
+    return state;
   }
 
   /** Whether the game asked to quit since the last {@link #clearQuit}. */
@@ -149,6 +202,11 @@ public final class MinecraftSessionHost implements ClientHostServices, AutoClose
 
   public void clearQuit() {
     quitRequested = false;
+  }
+
+  /** Whether the session asked for the host's own user interface (the ui VM cannot run). */
+  public boolean hostUiRequested() {
+    return hostUiRequested;
   }
 
   public Q3FramePresenter presenter() {

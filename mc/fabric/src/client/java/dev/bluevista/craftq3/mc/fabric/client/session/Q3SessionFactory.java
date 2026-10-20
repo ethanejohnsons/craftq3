@@ -1,13 +1,24 @@
 package dev.bluevista.craftq3.mc.fabric.client.session;
 
-/** Opens a {@link Q3Session} on a host. Called on the render thread. */
+import dev.bluevista.craftq3.engine.session.EngineSession;
+import dev.bluevista.craftq3.engine.session.GameLocalServer;
+import dev.bluevista.craftq3.engine.session.SessionOptions;
+import java.util.List;
+
+/** Starts an {@link EngineSession} on a host. Called on the render thread (the client thread). */
 @FunctionalInterface
 public interface Q3SessionFactory {
   /**
-   * Starts a session at the main menu. Mounting and loading may continue in the session's own
-   * workers; the session reports frames through the host as they become available.
+   * Starts a session at the main menu, with {@code commandLine} queued after the configs ({@code
+   * +map q3dm17} style lines without the {@code +}).
    *
-   * @throws Exception when the session cannot start (missing QVMs, unreadable installation)
+   * @throws Exception when the session cannot start (unreadable installation, no ui)
    */
-  Q3Session open(MinecraftSessionHost host) throws Exception;
+  EngineSession open(MinecraftSessionHost host, List<String> commandLine) throws Exception;
+
+  /** Interactive play: a threaded {@code engine:game} server, configs written, UDP hosting on. */
+  Q3SessionFactory DEFAULT =
+      (host, commandLine) ->
+          EngineSession.start(
+              host, SessionOptions.defaults(GameLocalServer.FACTORY).withCommandLine(commandLine));
 }

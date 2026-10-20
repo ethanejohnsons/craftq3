@@ -192,7 +192,11 @@ The reference installation archive (`Quake III Arena.zip`, user-owned, never com
 **What the sweep checks, per game directory:**
 1. Mount every PK3.
 2. Load every map: BSP, AAS, and resolution of every referenced shader, texture and model.
-3. Boot every distinct QVM triple by forcing each one, not just the winning pak8. Run 2 minutes with 4 bots in FFA, plus CTF/team modes where the map supports them.
+3. Boot the effective QVM triple of every game directory (the one the original search order
+   selects: pak8 for baseq3, the latest pak for each mod), plus the retail pak0-only profile, and
+   run 2 minutes with 4 bots in FFA, plus CTF/team modes where the map supports them. Older
+   builds shadowed in pak1–pak7 are never executed by the original engine; they only have to
+   parse and validate.
 4. Play every demo to the end.
 5. Play every RoQ.
 6. Record zero DEGRADE events under `vm_strictSyscalls 1`.

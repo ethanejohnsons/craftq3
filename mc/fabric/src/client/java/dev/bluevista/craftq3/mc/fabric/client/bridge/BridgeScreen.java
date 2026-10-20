@@ -79,6 +79,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
   private final Path gameDirectory;
   private final CoordinateTransform transform;
   private final Runnable leave;
+  private final java.util.function.BiConsumer<BridgeScreen, EngineSession> consoleCommands;
   private final InputForwarder input;
   private final PayloadClientTransport.Factory transports = new PayloadClientTransport.Factory();
 
@@ -99,6 +100,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
       String game,
       Path gameDirectory,
       CoordinateTransform transform,
+      java.util.function.BiConsumer<BridgeScreen, EngineSession> commands,
       Runnable leave,
       InputForwarder input) {
     super(Component.literal("Quake III in Minecraft"), input, Clock.system());
@@ -109,12 +111,14 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
     this.gameDirectory = Objects.requireNonNull(gameDirectory);
     this.transform = Objects.requireNonNull(transform);
     this.leave = Objects.requireNonNull(leave);
+    this.consoleCommands = Objects.requireNonNull(commands);
     this.input = input;
     input.screen = this;
   }
 
   /**
-   * A bridge screen for the server's bridge anchored by {@code transform}; {@code leave} asks the
+   * A bridge screen for the server's bridge anchored by {@code transform}; {@code commands} adds
+   * console commands to its session once started ({@code quake <map>}); {@code leave} asks the
    * server to end the bridge (it runs when the screen closes).
    */
   public static BridgeScreen create(
@@ -124,6 +128,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
       String game,
       Path gameDirectory,
       CoordinateTransform transform,
+      java.util.function.BiConsumer<BridgeScreen, EngineSession> commands,
       Runnable leave) {
     return new BridgeScreen(
         renderContext,
@@ -132,6 +137,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
         game,
         gameDirectory,
         transform,
+        commands,
         leave,
         new InputForwarder());
   }
@@ -198,6 +204,7 @@ public final class BridgeScreen extends Q3InputScreen implements Q3LevelOverlay 
               SessionOptions.defaults(GameLocalServer.FACTORY)
                   .withNetEnabled(false)
                   .withCommandLine(commands));
+      consoleCommands.accept(this, session);
       LOGGER.info("CraftQ3: bridge session started, home {}", host.gameHome());
     } catch (Exception | LinkageError e) {
       fail("the bridge could not start", e);

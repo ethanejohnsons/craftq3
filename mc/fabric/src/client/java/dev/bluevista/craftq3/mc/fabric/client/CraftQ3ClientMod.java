@@ -62,6 +62,8 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   private Q3Launcher launcher;
   private volatile Q3SessionFactory sessionFactory = Q3SessionFactory.DEFAULT;
   private BridgeClient bridge;
+  private final dev.bluevista.craftq3.mc.fabric.client.transfer.QuakeTransfers transfers =
+      new dev.bluevista.craftq3.mc.fabric.client.transfer.QuakeTransfers();
   private BuildingClient building;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(CraftQ3ClientMod.class);
@@ -81,9 +83,22 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
             this::audio,
             () -> sessionFactory,
             FabricLoader.getInstance().getGameDir());
+    // Pure-Quake sessions run their local server through the transfers, so a live loadout can
+    // move between a local match and the bridge (quake <map> / minecraft).
+    sessionFactory =
+        (host, commandLine) ->
+            dev.bluevista.craftq3.engine.session.EngineSession.start(
+                host,
+                dev.bluevista.craftq3.engine.session.SessionOptions.defaults(transfers)
+                    .withCommandLine(commandLine));
     bridge =
         new BridgeClient(
-            installation, renderContext, this::audio, FabricLoader.getInstance().getGameDir());
+            installation,
+            renderContext,
+            this::audio,
+            FabricLoader.getInstance().getGameDir(),
+            transfers,
+            (client, launch) -> launcher.open(client, null, launch));
     bridge.register();
     building = new BuildingClient(installation, renderContext);
     building.register();
@@ -222,6 +237,11 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   /** Replaces the session factory (devharness). */
   public void sessionFactory(Q3SessionFactory factory) {
     sessionFactory = Objects.requireNonNull(factory, "factory");
+  }
+
+  /** Loadout transfers between local matches and the bridge. */
+  public dev.bluevista.craftq3.mc.fabric.client.transfer.QuakeTransfers transfers() {
+    return transfers;
   }
 
   /** The client's building-mode state. */

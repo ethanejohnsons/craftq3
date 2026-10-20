@@ -52,12 +52,22 @@ public final class BridgeClient {
   private final Q3RenderContext renderContext;
   private final Supplier<MinecraftAudio> audio;
   private final Path gameDirectory;
+  private final dev.bluevista.craftq3.mc.fabric.client.transfer.QuakeTransfers transfers;
+  private final java.util.function.BiConsumer<
+          Minecraft, dev.bluevista.craftq3.mc.fabric.client.screen.Q3Launch>
+      openQuake;
 
   public BridgeClient(
       Q3Installation installation,
       Q3RenderContext renderContext,
       Supplier<MinecraftAudio> audio,
-      Path gameDirectory) {
+      Path gameDirectory,
+      dev.bluevista.craftq3.mc.fabric.client.transfer.QuakeTransfers transfers,
+      java.util.function.BiConsumer<
+              Minecraft, dev.bluevista.craftq3.mc.fabric.client.screen.Q3Launch>
+          openQuake) {
+    this.transfers = Objects.requireNonNull(transfers);
+    this.openQuake = Objects.requireNonNull(openQuake);
     this.installation = Objects.requireNonNull(installation);
     this.renderContext = Objects.requireNonNull(renderContext);
     this.audio = Objects.requireNonNull(audio);
@@ -127,6 +137,7 @@ public final class BridgeClient {
             game,
             gameDirectory,
             transform,
+            (opened, session) -> transfers.registerQuake(client, opened, session, openQuake),
             () -> {
               if (ClientPlayNetworking.canSend(BridgeRequestPayload.TYPE))
                 ClientPlayNetworking.send(

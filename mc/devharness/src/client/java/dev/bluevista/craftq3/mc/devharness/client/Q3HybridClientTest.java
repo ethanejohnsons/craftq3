@@ -223,6 +223,8 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
     report.append(
         String.format(Locale.ROOT, "bridge server: average tick %.3f ms%n", serverTick / 1e6));
 
+    transfers(context, tag);
+
     input.holdShift();
     input.pressKey(GLFW.GLFW_KEY_ESCAPE);
     input.releaseShift();
@@ -236,6 +238,92 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
     check(restored, "the bridge did not end after Shift+Escape");
     world.getServer().runOnServer(server -> discard(server, zombie));
     report.append("bridge: Shift+Escape ended the bridge\n");
+  }
+
+  /** Machinegun ammo of the session's latest snapshot, or -1. */
+  private static int machinegunAmmo(dev.bluevista.craftq3.engine.session.EngineSession session) {
+    if (session == null) return -1;
+    return session
+        .pipeline()
+        .flatMap(p -> p.latestSnapshot())
+        .map(
+            snap -> {
+              byte[] ps = snap.snapshot().player();
+              int at = dev.bluevista.craftq3.engine.vmabi.layout.PlayerStateLayout.AMMO + 4 * 2;
+              return (ps[at] & 255)
+                  | (ps[at + 1] & 255) << 8
+                  | (ps[at + 2] & 255) << 16
+                  | ps[at + 3] << 24;
+            })
+        .orElse(-1);
+  }
+
+  /**
+   * {@code quake q3dm17} in the bridge console starts a local match carrying the bridge loadout
+   * (the machinegun ammo spent on the zombie); {@code minecraft} in the match's console returns to
+   * the bridge with it.
+   */
+  private void transfers(ClientGameTestContext context, String tag) {
+    int bridgeAmmo =
+        context.computeOnClient(c -> machinegunAmmo(BridgeScreen.current(c).session()));
+    context.runOnClient(c -> BridgeScreen.current(c).session().command("quake q3dm17\n"));
+    waitFor(
+        context,
+        "the local match starts",
+        c -> {
+          var screen = dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c);
+          return screen != null
+              && screen.session() != null
+              && screen.session().state() == SessionState.LOCAL
+              && screen.presenter().framesDrawn() > 60
+              && machinegunAmmo(screen.session()) >= 0;
+        },
+        90 * SECOND_TICKS);
+    context.waitTicks(20);
+    int matchAmmo =
+        context.computeOnClient(
+            c ->
+                machinegunAmmo(
+                    dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c).session()));
+    screenshot(context, "craftq3-transfer-" + tag + "-match");
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "transfer: quake q3dm17 carried machinegun ammo %d -> %d%n",
+            bridgeAmmo,
+            matchAmmo));
+    check(
+        bridgeAmmo > 0 && bridgeAmmo < 100,
+        "the bridge machinegun ammo was not spent: " + bridgeAmmo);
+    check(matchAmmo == bridgeAmmo, "the match did not receive the bridge loadout");
+    context.runOnClient(
+        c ->
+            dev.bluevista.craftq3.mc.fabric.client.screen.Q3Screen.current(c)
+                .session()
+                .command("minecraft\n"));
+    waitFor(
+        context,
+        "the bridge reopens",
+        c -> {
+          BridgeScreen screen = BridgeScreen.current(c);
+          return screen != null
+              && screen.session() != null
+              && screen.session().state() == SessionState.REMOTE
+              && screen.presenter() != null
+              && screen.presenter().framesDrawn() > 60
+              && machinegunAmmo(screen.session()) >= 0;
+        },
+        90 * SECOND_TICKS);
+    context.waitTicks(20);
+    int backAmmo = context.computeOnClient(c -> machinegunAmmo(BridgeScreen.current(c).session()));
+    screenshot(context, "craftq3-transfer-" + tag + "-back");
+    report.append(
+        String.format(
+            Locale.ROOT,
+            "transfer: minecraft carried machinegun ammo %d -> %d%n",
+            matchAmmo,
+            backAmmo));
+    check(backAmmo == matchAmmo, "the bridge did not receive the match loadout");
   }
 
   private void building(ClientGameTestContext context, TestSingleplayerContext world, String tag) {

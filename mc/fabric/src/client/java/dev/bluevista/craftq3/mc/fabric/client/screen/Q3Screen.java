@@ -167,6 +167,10 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       List<String> commandLine = launch.command().map(List::of).orElse(List.of());
       session = factory.open(host, commandLine);
       startNanos = System.nanoTime() - start;
+      if (minecraft.getSingleplayerServer() != null)
+        dev.bluevista.craftq3.mc.fabric.client.CraftQ3ClientMod.current()
+            .transfers()
+            .registerMinecraft(minecraft, this, session);
       LOGGER.info(
           "CraftQ3: session started on {} ({}) in {} ms, home {}",
           installRoot,

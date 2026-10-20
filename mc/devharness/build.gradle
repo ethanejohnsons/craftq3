@@ -30,6 +30,7 @@ loom {
             runDir 'build/run/gameTest'
             property 'fabric-api.gametest'
             property 'fabric-api.gametest.report-file', file('build/test-results/gameTest/TEST-gametest.xml').absolutePath
+            if (q3Root) property 'craftq3.installation', q3Root
             ideConfigGenerated false
         }
         clientGameTest {
@@ -73,6 +74,7 @@ dependencies {
     implementation project(':engine:client') // snapshots and input catchers
     implementation project(':engine:net') // snapshot player state bytes
     implementation project(':engine:vm-abi') // playerState_t offsets
+    implementation project(':mc:hybrid') // bridge loadouts and building queries in the GameTests
 }
 
 // -PclientTests=Q3PureMode,Q3Input keeps only the client game tests whose class names contain one

@@ -97,8 +97,13 @@ public final class CraftQ3ServerGameTests {
       CraftQ3Config reloaded = CraftQ3Config.load(configDir);
       helper.assertTrue(
           reloaded.storedInstallation().equals("../q3"), "relative installation not kept");
+      // With CRAFTQ3_Q3ROOT the run passes -Dcraftq3.installation, which takes precedence.
       helper.assertTrue(
-          reloaded.installationPath().orElseThrow().equals(configDir.resolve("../q3").normalize()),
+          reloaded.overridden()
+              || reloaded
+                  .installationPath()
+                  .orElseThrow()
+                  .equals(configDir.resolve("../q3").normalize()),
           "relative installation does not resolve against the config dir");
       helper.assertTrue(reloaded.game().equals("baseq3"), "default game is not baseq3");
 

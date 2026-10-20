@@ -3,7 +3,27 @@
   "minVersion": "0.8",
   "package": "dev.bluevista.craftq3.mc.fabric.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": [],
+  "mixins": [
+    "BridgeFoodMixin",
+    "BridgeKnockbackMixin",
+    "BridgeMovePacketMixin",
+    "BridgePlayerHurtMixin",
+    "BuildingArrowMixin",
+    "BuildingBlockItemMixin",
+    "BuildingEntityMixin",
+    "BuildingExplosionMixin",
+    "BuildingFallingBlockEntityMixin",
+    "BuildingFallingBlockMixin",
+    "BuildingFluidMixin",
+    "BuildingHangingMixin",
+    "BuildingProjectileMixin",
+    "BuildingSightMixin",
+    "BuildingSupportMixin",
+    "BuildingWalkNodeMixin",
+    "EntityAvatarMixin",
+    "LevelMixin",
+    "ServerPlayerMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

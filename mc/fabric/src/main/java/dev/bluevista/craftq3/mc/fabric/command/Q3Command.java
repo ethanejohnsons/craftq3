@@ -33,13 +33,28 @@ public final class Q3Command {
 
   public static <S> LiteralArgumentBuilder<S> build(
       Q3Installation installation, Feedback<S> feedback, Predicate<S> requirement) {
+    return build(installation, feedback, requirement, source -> true);
+  }
+
+  /**
+   * The tree with {@code requirement} on the root and {@code configRequirement} on {@code status}
+   * and {@code path} (a dedicated server opens the root to everyone for the bridge commands but
+   * keeps the installation settings for admins).
+   */
+  public static <S> LiteralArgumentBuilder<S> build(
+      Q3Installation installation,
+      Feedback<S> feedback,
+      Predicate<S> requirement,
+      Predicate<S> configRequirement) {
     return LiteralArgumentBuilder.<S>literal(NAME)
         .requires(requirement)
         .then(
             LiteralArgumentBuilder.<S>literal("status")
+                .requires(configRequirement)
                 .executes(c -> status(c.getSource(), installation, feedback)))
         .then(
             LiteralArgumentBuilder.<S>literal("path")
+                .requires(configRequirement)
                 .executes(c -> showPath(c.getSource(), installation, feedback))
                 .then(
                     RequiredArgumentBuilder.<S, String>argument(

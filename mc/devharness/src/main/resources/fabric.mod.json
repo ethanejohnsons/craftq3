@@ -7,7 +7,11 @@
   "environment": "*",
   "license": "GPL-3.0-only",
   "entrypoints": {
-    "fabric-gametest": ["dev.bluevista.craftq3.mc.devharness.CraftQ3ServerGameTests"],
+    "fabric-gametest": [
+      "dev.bluevista.craftq3.mc.devharness.CraftQ3ServerGameTests",
+      "dev.bluevista.craftq3.mc.devharness.CraftQ3BridgeGameTests",
+      "dev.bluevista.craftq3.mc.devharness.CraftQ3BuildingGameTests"
+    ],
     "fabric-client-gametest": [
       "dev.bluevista.craftq3.mc.devharness.client.Q3SpikeClientTest",
       "dev.bluevista.craftq3.mc.devharness.client.Q3AudioClientTest",

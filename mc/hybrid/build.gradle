@@ -1,4 +1,10 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:game')
+    testImplementation project(':engine:testkit')
+    testImplementation testFixtures(project(':engine:formats'))
+}
+tasks.named('test') {
+    // The opt-in real-data tests build several maps' collision and building queries.
+    maxHeapSize = '2g'
 }

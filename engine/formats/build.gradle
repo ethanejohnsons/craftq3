@@ -1,4 +1,12 @@
-plugins { id 'craftq3.engine-module' }
+plugins {
+    id 'craftq3.engine-module'
+    id 'java-test-fixtures'
+}
 dependencies {
     api project(':engine:fs')
+    testImplementation project(':engine:testkit')
+}
+tasks.named('test') {
+    // The opt-in real-data sweep decodes every image and sound in the installation.
+    maxHeapSize = '2g'
 }

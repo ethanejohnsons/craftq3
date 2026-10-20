@@ -13,5 +13,6 @@ include ':engine:common', ':engine:fs', ':engine:formats', ':engine:console', ':
 include ':engine:vm', ':engine:vm-abi', ':engine:collision', ':engine:botlib', ':engine:game'
 include ':engine:render-ir', ':engine:audio', ':engine:client', ':engine:session'
 include ':engine:headless', ':engine:testkit'
+include ':engine:benchmarks'
 include ':mc:hybrid', ':mc:fabric', ':mc:devharness'
 include ':tools:arch-check'

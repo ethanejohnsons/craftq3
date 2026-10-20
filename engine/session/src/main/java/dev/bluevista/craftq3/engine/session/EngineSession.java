@@ -131,8 +131,7 @@ public final class EngineSession implements AutoCloseable {
           "removeip",
           "listip",
           "heartbeat",
-          "abort_podium",
-          "say");
+          "abort_podium");
 
   private static final Log LOG = Log.get(EngineSession.class);
   private static final int UI_RESTARTS = 3;

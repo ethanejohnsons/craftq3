@@ -491,6 +491,8 @@ public final class CompatSweep {
   private static List<String> entityModels(BspMap bsp) {
     List<String> models = new ArrayList<>();
     for (var entity : bsp.entities()) {
+      // q3map compiles misc_model geometry into the BSP; only runtime models count.
+      if (entity.classname().orElse("").equalsIgnoreCase("misc_model")) continue;
       String model = entity.getOrDefault("model", "").replace('\\', '/');
       if (model.isEmpty() || model.startsWith("*") || models.contains(model)) continue;
       models.add(model);

@@ -42,3 +42,25 @@ match the original; a mismatch found against the original is a bug.
 | --- | --- | --- | --- |
 | `noise` wave function | Engine noise table | 32-bit GPU-reproducible hash | Must evaluate identically in GLSL |
 | Patch tessellation | Error-based LOD (`r_subdivisions`) | Uniform 8 subdivisions | Static upload once per map; tracked as a gap |
+
+## Client (`engine:client`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Server-sent systeminfo cvars | Any cvar may be set | Only SYSTEMINFO-flagged or user-created cvars | A malicious server could otherwise rewrite arbitrary client cvars |
+| `trap_SetCDKey` | Writes `q3key` | Kept in memory only | Never write key material to disk |
+| `trap_UpdateScreen` | Re-enters the cgame draw | Presents the frame drawn so far | Avoids re-entrant VM calls during loading screens |
+| Fonts (`trap_R_RegisterFont`) | Pre-rendered `.dat` or FreeType | Pre-rendered `fonts/fontImage_N.dat` only | Retail content ships pre-rendered fonts |
+| Protocol 48 (1.27) demos | Not playable by 1.32 either | Refused with a clear message | Layout only partly decoded (see `DemoProtocol.Q3_1_27`) |
+
+## Game server (`engine:game`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| `map_restart` entity links and portal counts | Stale links kept | Cleared | Avoids ghost links after restart |
+| Level drop (ERR_DROP) | Remote clients time out | Clients receive `disconnect` | Clear feedback |
+| View cluster -1 | PVS row 0 | Sees everything | Avoids invisible entities when the viewer is outside the map |
+| Inverted `bot_goal_t` bounds (Q3Rally) | Undefined | Collapsed to the midpoint | Robustness |
+| Bot move goal outside the AAS (Q3Rally) | Botlib call | Original failed-move result returned directly | Same observable result |
+| QVM program stack | No bottom check | May extend down to the end of the guest's globals | Q3Rally needs more than 64 KiB, as on the original |
+| File handle 0 to FS_Read/Write/FCloseFile | Returns 0 | Returns 0 (not a degradation) | CPMA relies on it |

@@ -3,4 +3,11 @@ dependencies {
     api project(':engine:vm-abi')
     api project(':engine:botlib')
     api project(':engine:net')
+    testImplementation project(':engine:testkit')
+    testImplementation testFixtures(project(':engine:formats'))
+}
+tasks.named('test') {
+    // The opt-in real-data matches run original qagame builds with bots for minutes of game time.
+    maxHeapSize = '3g'
+    testLogging { showStandardStreams = providers.environmentVariable('CRAFTQ3_Q3ROOT').isPresent() }
 }

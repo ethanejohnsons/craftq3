@@ -1,99 +1,95 @@
-# Protocol-68 connectionless envelopes
+# Protocol 68 connectionless packets
 
-`ConnectionlessPacket` already supplies the four `ff` marker bytes and bounded,
-owned raw payloads. The new `Protocol68Datagram` and `ConnectionlessMessage`
-provide the classification and command-line envelope needed before future
-connectionless dispatch. They do not send packets or execute commands.
+Connectionless (out-of-band) datagrams start with the four bytes `ff ff ff ff` and carry a text
+command line, optionally followed by binary data. They are used for the connection handshake,
+server queries, rcon and master-server lists. Sequenced netchan traffic is in
+[NETWORK68.md](NETWORK68.md).
 
-## API and bounds
+Code (`engine/net`, package `net.oob`):
+[`Protocol68Datagram`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/oob/Protocol68Datagram.java),
+[`ConnectionlessPacket`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/oob/ConnectionlessPacket.java),
+[`ConnectionlessMessage`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/oob/ConnectionlessMessage.java),
+[`ConnectPacketCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/oob/ConnectPacketCodec.java)
+(with [`AdaptiveHuffmanTree`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/huffman/AdaptiveHuffmanTree.java)),
+[`MasterServerResponse`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/oob/MasterServerResponse.java).
+Handlers: server
+[`Protocol68Host`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/net/Protocol68Host.java),
+[`RconAuthenticator`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/net/RconAuthenticator.java),
+[`MasterHeartbeat`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/net/MasterHeartbeat.java);
+client
+[`Protocol68Handshake`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/Protocol68Handshake.java),
+[`ClientConnection`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/net/ClientConnection.java),
+[`ServerBrowser`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/net/ServerBrowser.java).
 
-`Protocol68Datagram.classify(byte[])` is stateless. It returns `CONNECTIONLESS`
-for the complete `ff ff ff ff` marker within the 16,384-byte message bound;
-`SEQUENCED` for another four-byte prefix within the existing channel's 1,400-byte
-packet bound; otherwise `MALFORMED`. Sequenced means a framing candidate:
-endpoint-specific qport/header/fragment/sequence checks remain with
-`Protocol68Channel.receive`. Classification cannot mutate a channel's fragment
-assembly. A truncated native `MSG_ReadLong` returns the same `-1` value as the
-connectionless marker, so the explicit four-byte length check is necessary.
+## Framing
 
-`ConnectionlessMessage.parse(byte[])` rejects a malformed or sequenced input and
-returns an immutable envelope:
+`Protocol68Datagram.classify` looks only at the marker and size: 4 to 16,384 bytes with the
+marker is `CONNECTIONLESS`; any other prefix up to 1,400 bytes is a `SEQUENCED` candidate for the
+channel; everything else is `MALFORMED`. A sequenced packet's own checks happen in the channel.
 
-- `line()` is the first raw `MSG_ReadStringLine` result after the marker.
-- `body()` is an owned copy of every remaining byte. It preserves binary bytes,
-  additional newlines, percent signs and NULs for a later response-body parser.
-- `readCount()` is the native byte cursor including the marker.
-- `bitPosition()` is the native bit cursor including the marker.
+`ConnectionlessPacket.text` sends Latin-1 text without an implicit terminator or newline (callers
+add protocol newlines), up to 16,380 payload bytes, and refuses NUL or characters above 255.
 
-The reader reuses `MessageStrings.sanitize`, already verified by the compressed
-wire-string corpus in [NETWORK68.md](NETWORK68.md#wire-strings). Percent signs
-and bytes 128–255 become dots in the line only. Byte 127 and carriage return are
-retained. Newline or NUL ends the line and is consumed. EOF also ends the line:
-the unsuccessful read leaves `readCount` one past the packet length while the
-bit cursor stays at the actual packet end. The returned line has at most 1,023
-characters. At that limit the native reader consumes one more byte, discards it,
-and leaves subsequent bytes in the body. This layer preserves that behavior; it
-does not reinterpret a capped line as a complete command.
+`ConnectionlessMessage.parse` reads the command line the way the native raw line reader does:
 
-For example, raw `ff ff ff ff` plus `statusResponse\n` followed by arbitrary bytes
-produces line `statusResponse`, byte cursor 19, bit cursor 152 and exactly those
-arbitrary bytes as its body. An empty marker-only datagram produces an empty
-line/body, byte cursor 5 and bit cursor 32.
+- The line ends at newline, NUL or the end of the packet (the terminator is consumed).
+- `%` and bytes 128-255 become `.` in the line; byte 127 and carriage return are kept.
+- At 1,023 characters the reader consumes and drops one more byte; the remaining bytes stay in
+  the body.
+- `body()` is every byte after the line, untouched (binary data, further newlines, NULs).
+- `readCount()` and `bitPosition()` reproduce the native byte and bit cursors (an unsuccessful
+  read at the end advances the byte cursor one past the packet but not the bit cursor).
 
-`ConnectionlessPacket.text` remains exact non-NUL Latin-1 framing, with no
-implicit newline or terminator. It accepts up to 16,380 payload bytes. Native
-`NET_OutOfBandPrint("%s", text)` is a different formatting operation: it stops at
-the first C NUL and truncates to 16,379 payload bytes, sending no terminator.
-The oracle establishes this distinction; the Java framing API does not silently
-truncate the caller's text.
+## Compressed connect
 
-## Native comparison
+A `connect` datagram is `ff ff ff ff connect ` (12 bytes) followed by a big-endian 16-bit byte
+count and the rest of the command (`"<userinfo>"`) coded with a fresh adaptive Huffman tree: each
+byte is the tree path of its node, or of the not-yet-transmitted node followed by the 8-bit
+literal; the tree updates after every byte. `ConnectPacketCodec.decompress` rejects a count past
+the message limit and truncated bit streams; `compress` refuses inputs the native encoder would
+truncate. The server decompresses before parsing the line.
 
-The authored `ConnectionlessOracle.c` calls unchanged public
-`NET_OutOfBandPrint`, `MSG_InitOOB`, `MSG_BeginReadingOOB`, `MSG_ReadLong` and
-`MSG_ReadStringLine` exports. Its inherited `Sys_SendPacket` callback only prints
-captured bytes; no socket opens and no external server receives traffic. Native
-`q_shared.c` supplies the original formatting helpers. The build uses unchanged
-official ioquake3 source at commit
-`588393618dbc82e7207c21c6ddecca229944a03a`; the relevant API declarations are in
-the [public qcommon header](https://github.com/ioquake/ioq3/blob/588393618dbc82e7207c21c6ddecca229944a03a/code/qcommon/qcommon.h).
-No engine routine bodies were used as implementation recipes. The audit binaries
-and source checkout are ignored local artifacts, outside the mod bundle.
+## Server commands
 
-`AuditConnectionless.java` passes with zero differences:
+`Protocol68Host` handles, while the server is running:
 
-| Comparison | Cases |
-| --- | ---: |
-| Raw lines, both cursors and remaining body bytes | 14,583 |
-| Captured native printf packet bytes | 2,265 |
-| Raw prefix values and bounded classification | 10,260 |
+| Request | Reply |
+| --- | --- |
+| `getchallenge [<nonce>]` | `challengeResponse <challenge> [<nonce> 68]`; at most 1,024 challenges kept, oldest replaced |
+| `connect "<userinfo>"` | `connectResponse`, or `print` with the reason (userinfo of 1,024 bytes or more, protocol not 68, no or bad challenge, admission refused) |
+| `getinfo <challenge>` | `infoResponse\n` and an info string: `challenge`, `protocol`, `hostname`, `mapname`, `clients`, `sv_maxclients` (minus private slots), `gametype`, `pure`, optional `minPing`, `maxPing`, `game` |
+| `getstatus <challenge>` | `statusResponse\n`, the serverinfo string with `challenge`, a newline, then `<score> <ping> "<name>"` per connected client |
+| `rcon <password> <command>` | `print` with the command's output in chunks of 1,008 bytes |
 
-The matrix covers every byte at five positions around the line-capacity
-boundary, all payload lengths 0–1,100 with EOF/NUL/newline endings, seeded random
-packets through the maximum message size, long unterminated lines, formatting
-size boundaries, embedded NULs and truncated prefixes. Classification includes
-the documented Java transport-size policy; it is not a claim that every native
-network entry point enforces that same policy.
+Notes:
 
-Eight authored tests additionally cover raw status-body preservation, filtering,
-EOF/capacity cursor behavior, input/output ownership, malformed/oversized
-datagrams and channel assembly isolation. These and the existing eight channel
-and five wire-string tests pass under Java 25.
+- Single-player servers (`g_gametype 0`) ignore `getchallenge`, `getinfo` and `getstatus` from
+  remote addresses.
+- A retransmitted `connect` from an existing connection with the same challenge, within
+  `sv_reconnectlimit`, just gets `connectResponse` again.
+- A sequenced packet from an unknown address and qport is answered with `disconnect`.
+- Rate limits: 10 connectionless packets per address and 100 in total per second; rcon requests
+  at most one per 500 ms. An empty `rconPassword` refuses rcon ("No rconpassword set on the
+  server."), and passwords are compared in constant time.
+- With `dedicated 2` and `sv_master1`..`sv_master5` set, the server sends
+  `heartbeat QuakeArena-1` to each master (port 27950 by default) every 300 seconds; this is off
+  by default.
 
-```sh
-python3 scripts/BuildConnectionlessOracle.py
-java -cp craftq3-core/build/classes/java/main scripts/AuditConnectionless.java
-```
+## Client side
 
-The build command currently targets macOS/Clang's dead-strip linker. It reads the
-existing ignored source checkout and creates only `.tools/connectionless-oracle`.
+The handshake (`getchallenge`, `challengeResponse`, `connect`, `connectResponse`) is described in
+[NETWORK68.md](NETWORK68.md#handshake). An established `ClientConnection` acts on `print` and
+`disconnect` from its server. The server browser sends `getinfo xxx` and `getstatus` and parses
+`infoResponse` and `statusResponse`. It asks masters (`sv_master1` defaults to
+`master.quake3arena.com`, port 27950) through the original `globalservers <master> <protocol>
+[filters]` command with `getservers <protocol> [filters]`, or
+`getserversExt Quake3Arena <protocol> [filters]` over IPv6, and scans the LAN by IPv4 broadcast.
 
-## Remaining scope
+`MasterServerResponse.parse` reads `getserversResponse` (records `\` + 4-byte IPv4 address +
+big-endian port) and `getserversExtResponse` (also `/` + 16-byte IPv6 address + port). A record
+counts only when another `\` or `/` follows it, so a malformed final record is dropped; at most
+256 records per packet, duplicates kept. Addresses are never resolved.
 
-No challenge, status body, connect/session, pure-pack, authentication, timeout,
-address or socket policy is implemented here. Adaptive compressed `connect`
-payloads share the OOB marker but require their own decoder before raw command
-parsing; this envelope API does not perform that decoding. Command tokenization
-and dispatch also remain outside this layer. These checks establish framing and
-raw-reader behavior, not complete network interoperability or hostile-network
-readiness.
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
+`ConnectionlessMessageTest`, `ConnectPacketCodecTest`, `MasterServerResponseTest`,
+`Protocol68HandshakeTest`.

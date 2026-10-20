@@ -1,85 +1,211 @@
-# Protocol 68 framing and message codec
+# Protocol 68 netchan, bit stream and sessions
 
-The Java-only `core.net` package implements connectionless framing, netchan sequencing/fragmentation, compressed bit fields, state deltas, bounded client/server payload codecs and legacy payload XOR. It has no sockets, remote connection state or Minecraft dependencies. This is groundwork for demos/networking; connecting to a server is still unavailable. Protocol 71 checksums and retail protocol 43 are not claimed.
+The Quake III 1.32 network protocol (68): datagram transports, netchan sequencing and
+fragmentation, the fixed-Huffman bit stream and wire strings, payload XOR, the challenge/connect
+handshake, client and server sessions and UDP file downloads. Message bodies are in
+[NETWORK68_MESSAGES.md](NETWORK68_MESSAGES.md), state deltas in
+[NETWORK68_DELTA.md](NETWORK68_DELTA.md), out-of-band packets in
+[CONNECTIONLESS68.md](CONNECTIONLESS68.md) and demo files in [DEMOS.md](DEMOS.md).
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md).
 
-## Datagram contract
+Code:
+[`Protocol68`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/Protocol68.java) (every wire constant),
+[`HuffmanCodebook`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/huffman/HuffmanCodebook.java),
+[`MessageReader`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/MessageReader.java),
+[`MessageWriter`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/MessageWriter.java),
+[`MessageStrings`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/MessageStrings.java),
+[`Protocol68Channel`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/Protocol68Channel.java),
+[`LegacyPayloadXor`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/LegacyPayloadXor.java),
+[`Protocol68Handshake`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/Protocol68Handshake.java),
+[`Protocol68ClientSession`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/Protocol68ClientSession.java),
+[`Protocol68ServerSession`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/Protocol68ServerSession.java),
+[`DownloadSender`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/DownloadSender.java),
+[`DownloadReceiver`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/chan/DownloadReceiver.java),
+[`PacketTransport`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/transport/PacketTransport.java),
+[`UdpTransport`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/transport/UdpTransport.java),
+[`LoopbackTransport`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/transport/LoopbackTransport.java).
+Consumers: [`ClientConnection`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/net/ClientConnection.java),
+[`DownloadManager`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/net/DownloadManager.java)
+and [`Protocol68Host`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/net/Protocol68Host.java).
 
-`Protocol68Channel` is explicitly a client or server endpoint. Every datagram starts with a little-endian 32-bit sequence; the high bit denotes fragmentation. Client-to-server traffic also carries a 16-bit qport. Fragmented packets add 16-bit byte offset and length. Each fragment carries at most 1300 bytes; a shorter fragment terminates the message. An exact multiple requires an empty terminating fragment. Messages are capped at 16384 bytes.
+## Layering
 
-The sender owns one queued message, copies caller input, and emits one packet per `pollPacket()` so a transport can pace delivery. Its sequence begins at one and advances after the final packet. The receiver retains a bounded assembly, rejects stale completed messages and only accepts consecutive fragments. A complete result reports the message sequence, skipped sequence count and owned payload. Reliability/retransmission is a higher-layer responsibility.
+Send: message codec (Huffman bit stream) -> `LegacyPayloadXor` -> `Protocol68Channel` fragments
+-> `PacketTransport`. Receive is the reverse; `Protocol68Datagram` first routes connectionless
+packets (`ff ff ff ff`) away from the channel. Codecs and sessions own no sockets, threads or
+clocks; the caller drives them.
 
-`ConnectionlessPacket` handles the four `ff` bytes and arbitrary bounded payload. Its text helper emits Latin-1 without an implicit NUL or newline. Route these packets before netchan; connect-payload adaptive compression is not implemented.
+## Limits
 
-Deliberate stricter boundaries: datagrams above 1400 bytes are rejected by netchan; fragment lengths must exactly match the datagram; wrong qports cannot mutate a server channel; malformed offsets/lengths cannot mutate an assembly; older incomplete fragments cannot discard newer assembly progress. Sequence exhaustion requires reconnecting before the reserved/overflow range. Endpoint address validation and connectionless rate limits belong to the future transport/session owner.
+| Constant | Value |
+| --- | --- |
+| Assembled message, connectionless datagram, demo record payload (`MAX_MSGLEN`) | 16384 bytes |
+| Sequenced datagram, headers included (`MAX_PACKETLEN`) | 1400 bytes |
+| Fragment payload (`FRAGMENT_SIZE`) | 1300 bytes |
+| Default server port | 27960 |
+| Unacknowledged reliable commands per direction | 64 |
+| Snapshot history (`PACKET_BACKUP`) | 32 |
+| User commands per movement operation | 32 |
 
-## Compressed bit fields
+## Netchan header
 
-`MessageWriter`/`MessageReader` encode residual low bits directly, followed by the protocol's fixed-Huffman byte codes. They preserve the native trailing byte when a field ends exactly on a byte boundary. Widths 1–32 and float bit patterns are supported. Every operation is bounded; capacity/truncation failure leaves its cursor unchanged. Buffers are owned copies and the codebook is immutable.
+All words are little-endian.
 
-The 256 wire codes were observed by sending each byte through unchanged native `MSG_WriteBits`. They are protocol data, stored as a length marker plus the low-bit-first code; no native tree construction or adaptive-Huffman implementation was ported. The independent Java decoder builds a small prefix lookup. The 256-line native observation has SHA-256 `85078f1f9a537bed3a1d39eef1c9e28e46fce76dba499f58e9a434cafbb5d424`.
+| Field | Size | Present |
+| --- | --- | --- |
+| sequence, bit 31 = fragment flag | 4 | always |
+| qport | 2 | client-to-server only |
+| fragment start offset | 2 | fragmented |
+| fragment length | 2 | fragmented |
+| payload | rest | always |
 
-Native signed-field behavior needs care: `field(width)` supports the MSG convention of a negative width. In the observed implementation, an unaligned negative width extends the sign of its whole-byte portion: width −9 with value 128 becomes −128, while value 256 remains 256; widths −1…−7 do not sign-extend. Mathematical `signedBits(width)` is separately available. The native API rejects width −32; positive 32 preserves the complete int representation.
+A message of 1300 bytes or more is sent as fragments of 1300 bytes; a shorter fragment ends it,
+so an exact multiple of 1300 needs a final empty fragment. The sender holds one queued message
+and emits one datagram per `pollPacket()`; its sequence starts at 1, advances after the last
+fragment and refuses to pass `0x7ffffffe` (reconnect instead of wrapping). Reliability is a
+session concern; the channel does not retransmit.
 
-## Validation and provenance
+The receiver checks bounds before mutating anything. It reports `COMPLETE` (with the sequence,
+the number of skipped sequences and an owned payload), `PARTIAL`, `STALE` (at or below the last
+completed sequence, or older than the current assembly), `OUT_OF_ORDER` (a fragment that does
+not continue the assembly), `MALFORMED` (outside 4..1400 bytes, sequence 0, short header, length
+not matching the datagram, over 1300 or past 16384), `WRONG_QPORT` or `CONNECTIONLESS`.
+Fragments must arrive consecutively; an older incomplete message cannot discard progress on a
+newer assembly.
 
-The wire layout/constants come from the [published netchan header commentary](https://github.com/ioquake/ioq3/blob/588393618dbc82e7207c21c6ddecca229944a03a/code/qcommon/net_chan.c) and [public message declarations](https://github.com/ioquake/ioq3/blob/588393618dbc82e7207c21c6ddecca229944a03a/code/qcommon/qcommon.h). Authored `scripts/NetchanOracle.c` links unchanged `net_chan.c`, `msg.c` and `huffman.c` from that exact official commit. Its `compat=true` channel selects legacy protocol-68 framing. The ignored native executable is only an audit process; neither native engine functions nor upstream source are bundled or called by CraftQ3.
+## Huffman bit stream
 
-- Eight authored netchan tests cover header bytes, boundary sizes in both directions, loss/reordering/duplicates, qports, truncation, oversized data, ownership and 5000 random malformed datagrams.
-- Eight message-codec tests cover captured wire examples, all byte symbols at every bit offset, all signed widths, native sign behavior, float bits, capacity, truncation and ownership.
-- `AuditNetchan.java`: 2000 messages, **13813 byte-exact packets**, 16193 reception attempts and 1820 completed messages; zero native mismatches. The cases include whole-message loss, premature fragments and duplicates.
-- `AuditMessages.java`: all 256 byte codes plus **131072 mixed signed/unsigned fields** in 512 messages, 297752 wire bytes; zero native bit/value mismatches.
+Bits are packed least significant first. A field of `width` bits (1..32) writes its `width & 7`
+low bits raw, then each remaining byte as a code from a fixed, prefix-free 256-entry codebook
+(codes of 2 to 11 bits, LSB first). The codebook is stored as marked codes: the highest set bit
+of each entry is a length marker. It was measured from an unmodified upstream build during the
+earlier implementation (see LICENSE-NOTES); there is no tree construction. Decoding uses a
+2048-entry lookup on an 11-bit window; the table is checked to be prefix-free at class load.
 
-Reproduce with Java 25 after building core and preparing the unchanged native source under ignored `.tools/ioquake3-source`:
+- `MessageWriter.byteLength()` is `bit / 8 + 1` when anything was written, so a message ending on a
+  byte boundary keeps one trailing byte, as native messages do. The writer refuses a field that
+  would not leave that byte inside its capacity (default 16384).
+- Reads and writes are transactional: a failed or truncated operation restores the cursor
+  (`transaction`, `mark`/`rewind`, `rollback`). Readers can be `reset` and reused without
+  allocating.
+- `MessageReader.Coding.RAW` reads every bit raw (no Huffman). It is only used for the pre-1.29
+  demo protocols 43 and 48 ([DEMOS.md](DEMOS.md)).
+- Floats travel as their raw 32-bit pattern; `shortValue` reads signed 16 bits.
 
-```sh
-mkdir -p .tools/netchan-oracle
-for unit in net_chan msg huffman; do
-  clang -std=c11 -O2 -ffunction-sections -fdata-sections \
-    -I.tools/ioquake3-source/code -I.tools/ioquake3-source/code/qcommon \
-    -c .tools/ioquake3-source/code/qcommon/$unit.c -o .tools/netchan-oracle/$unit.o
-done
-clang -std=c11 -O2 -Wl,-dead_strip \
-  -I.tools/ioquake3-source/code -I.tools/ioquake3-source/code/qcommon \
-  scripts/NetchanOracle.c .tools/netchan-oracle/net_chan.o \
-  .tools/netchan-oracle/msg.o .tools/netchan-oracle/huffman.o \
-  -o .tools/netchan-oracle/netchan-oracle
-java -cp craftq3-core/build/classes/java/main scripts/AuditNetchan.java
-java -cp craftq3-core/build/classes/java/main scripts/AuditMessages.java
-```
-
-The linker option above is macOS-specific. These tests establish framing/field encoding, not protocol completeness, UDP interoperability, demo playback, or hostile-network readiness.
-
-Canonical entity/player delta codecs and their transactional message helpers are documented in
-[NETWORK68_DELTA.md](NETWORK68_DELTA.md), including the native differential audit and API ownership.
-Complete snapshot bodies and supported server payloads are documented in
-[NETWORK68_MESSAGES.md](NETWORK68_MESSAGES.md), including their native parser acceptance audits.
+Signed fields follow the MSG convention of a negative width: the writer sends the low `|width|`
+bits; the reader sign-extends from the top bit of the whole-byte portion only. Width -9 with
+value 128 decodes as -128, value 256 stays 256, and widths -1..-7 are not sign-extended. Width
+-32 is rejected; +32 keeps the full int. `signedBits(width)` gives mathematical sign extension.
 
 ## Wire strings
 
-`MessageWriter.stringValue` and `bigStringValue` encode NUL-terminated byte strings with native
-capacities of 1,024 and 8,192 bytes including the terminator. Null values encode as empty. Embedded
-NUL ends the supplied value; an overlong value encodes an empty string, matching native output.
-Percent signs and bytes 128–255 become dots; byte 127 and other control bytes are retained.
-Unicode characters outside the byte range are rejected. Encoding is transactional, including
-capacity failures after a partial write.
+`stringValue` (1024 bytes) and `bigStringValue` (8192 bytes) are NUL-terminated byte strings;
+the capacities include the terminator.
 
-`MessageReader.stringValue`, `bigStringValue` and `stringLine` apply the same filtering to decoded
-symbols. The line form consumes and stops at newline; carriage return remains data. At the native
-string limit, the reader consumes one additional discarded symbol and returns the bounded prefix.
-Truncated compressed input throws and restores the starting cursor, consistent with the other Java
-message APIs; native out-of-buffer cursor behavior is not reproduced. These operations do not
-constitute a complete server-message or demo parser.
+- Writing: null encodes as empty; an embedded NUL ends the value; a value of capacity length or
+  longer encodes as empty (native behaviour); characters above 255 are rejected.
+- Both directions replace `%` and bytes 128-255 with `.`; byte 127 and other control bytes are
+  kept.
+- Reading stops at NUL. `stringLine` also stops at, and consumes, newline; carriage return is
+  data. At the limit (1023 or 8191 characters) the reader consumes and discards one more symbol,
+  as the native reader does.
 
-Five focused tests check captured wire bytes, raw-symbol filtering, newline continuation, null and
-embedded-NUL values, size boundaries and transactional failure. `MessageStringOracle.c` calls
-unchanged public native MSG functions. `AuditMessageStrings.java` compares all byte values, every
-bit alignment, generated strings and capacity boundaries: **13,376 writes / 1,653,264 wire bytes**
-and **20,064 reads** match exactly, including read cursors.
+## Payload XOR
 
-```sh
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code \
-  scripts/MessageStringOracle.c .tools/netchan-oracle/net_chan.o \
-  .tools/netchan-oracle/msg.o .tools/netchan-oracle/huffman.o \
-  -o .tools/netchan-oracle/string-oracle
-java -cp craftq3-core/build/classes/java/main scripts/AuditMessageStrings.java
-```
+`LegacyPayloadXor` applies the protocol-68 obfuscation to a whole compressed payload after
+encoding and before fragmentation (and after reassembly on receive). The same call encodes and
+decodes. It is obfuscation, not encryption or authentication.
+
+| Direction | Clear prefix | Initial key | Key string |
+| --- | --- | --- | --- |
+| client to server | 12 bytes (serverId, messageAcknowledge, reliableAcknowledge) | challenge ^ serverId ^ messageAcknowledge | text of the acknowledged reliable server command |
+| server to client | 4 bytes (reliableAcknowledge) | challenge ^ message sequence | text of the last reliable client command received |
+
+For each byte `i` after the prefix: `key ^= text[index] << (i & 1)`, then `payload[i] ^= key`,
+with `index` cycling through the key string (0 for an empty string). The key string stops at
+NUL, uses the `%`/high-byte dot replacement and must be under 1024 bytes; payloads are limited
+to 16384 bytes.
+
+## Handshake
+
+`Protocol68Handshake` runs one challenge/connect exchange against a peer the transport has
+already pinned:
+
+1. The client sends `getchallenge <nonce> Quake3Arena` (retried by `ClientConnection`).
+2. The server replies `challengeResponse <challenge> [<nonce> <protocol>]`. When the nonce and
+   protocol are present they must match; older replies without them are accepted.
+3. The client sends `connect "<userinfo>"`, compressed by `ConnectPacketCodec`. The userinfo is
+   the caller's keys in sorted order with `protocol 68`, `qport` and `challenge` replacing any
+   caller values, at most 1023 bytes (checked up front with the longest possible challenge).
+4. The server replies `connectResponse [<challenge>]`; a challenge, when present, must match.
+
+A `print` reply is kept as text for display; other or malformed packets are ignored. Server-side
+checks are described in [CONNECTIONLESS68.md](CONNECTIONLESS68.md).
+
+## Client session
+
+`Protocol68ClientSession` owns an established connection:
+
+- Reliable client commands are queued once and repeated in every message until acknowledged; at
+  most 64 may be outstanding. If the backlog does not fit a message, a fitting prefix is sent.
+- Movement asks for a delta snapshot (`clc_move`) only when the last received message carried
+  the current snapshot; otherwise, after a rejected message, a gamestate or on request
+  (`requestFullSnapshot`, `fullSnapshots` while a demo recorder waits) it sends
+  `clc_moveNoDelta`.
+- On receive, the clear acknowledge word must name a command actually sent and still retained;
+  the payload is then decoded and every operation applied to a copy of the level state, which
+  is committed only if all of them succeed. A gamestate must not rewind reliable commands and
+  must name client 0..63; reliable server commands must be consecutive (a gap is rejected);
+  the last 64 are kept; `cs`/`bcs` commands update configstrings; system info must contain
+  `sv_serverid`. Snapshots are kept for 32 messages.
+- Results are `ACCEPTED` (with the clear payload as a `DemoRecord`), `PARTIAL`, `DROPPED` (stale
+  or out of order, counted), `IGNORED` or `REJECTED`.
+
+## Server session
+
+`Protocol68ServerSession` is the per-client counterpart. The host supplies gamestates (resetting
+snapshot history), snapshots and download blocks; every message carries all unacknowledged
+reliable server commands. A snapshot is delta-coded from the client's acknowledged message only
+while that snapshot is retained and fewer than 32 messages old. A client message whose serverId
+differs from the current one is `WRONG_GAME` (its acknowledgements are still applied, and the
+host resends the gamestate once the client has acknowledged past it). Reliable client commands
+already seen are skipped and a gap is rejected; user commands are kept only if their times
+increase and do not exceed the final command's time.
+
+## Downloads
+
+| Constant | Value |
+| --- | --- |
+| Block size (`DownloadSender.BLOCK_BYTES`) | 1024 bytes |
+| Window (`DownloadSender.WINDOW`) | 48 blocks |
+| Largest file (`MAX_FILE_BYTES`) | 512 MiB |
+| Blocks sent per server frame (`Protocol68Host.DOWNLOAD_BLOCKS_PER_FRAME`) | 8 (48 over loopback) |
+
+Block 0 carries the file size; an empty block ends the file. Block numbers travel as their low 16
+bits. The sender resends from the first unacknowledged block after 1000 ms without progress and
+rejects an acknowledgement that is not the oldest outstanding block. The receiver accepts only
+the expected block, requires the size on block 0, rejects data past the advertised size, completes
+only when the size is reached, and fails on a server error string. The client requests a file
+with `download <game/name.pk3>`, acknowledges each block with `nextdl <block>` and finishes with
+`donedl`; `stopdl` cancels. The server only offers referenced, non-official PK3s and only when
+`sv_allowDownload` bit 1 is set; a refusal is sent as block 0 with size -1 and the reason. The
+`svc_download` encoding is in [NETWORK68_MESSAGES.md](NETWORK68_MESSAGES.md); planning, caching
+and mounting downloaded packs are in [PK3.md](PK3.md) and
+[DIVERGENCES.md](../DIVERGENCES.md).
+
+## Transports
+
+`PacketTransport` is a caller-driven, non-blocking datagram endpoint: `send` returns false when it
+would block, `poll` returns a length, `NONE` or `OVERSIZE` (datagram discarded) and `lastSource()`
+names the sender. Datagrams must be 1..16384 bytes.
+
+- `UdpTransport` wraps one `DatagramChannel`, IPv4 or IPv6: `bind` (server listener), `ephemeral`
+  (browser socket, optional IPv4 broadcast) and `connect` (client socket pinned to one server so
+  the OS drops other sources). Peers must be resolved unicast addresses; no DNS is done here.
+- `LoopbackTransport.pair()` links an in-process client and server (local play) with two bounded
+  lock-free rings, 64 datagrams each by default; a send to a closed end is silently dropped.
+
+Tests: `Protocol68ChannelTest`, `MessageCodecTest`, `MessageStringsTest`, `MessageReuseTest`,
+`LegacyPayloadXorTest`, `Protocol68HandshakeTest`, `Protocol68ClientSessionTest`,
+`Protocol68ServerSessionTest`, `SessionDropTest`, `DownloadTransferTest`, `UdpTransportTest`,
+`LoopbackTransportTest`.

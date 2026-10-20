@@ -1,204 +1,117 @@
-# Protocol 68 snapshots and server payloads
+# Protocol 68 messages
 
-`SnapshotDeltaCodec` and `ServerMessageCodec` compose the independently implemented Huffman,
-string and canonical state codecs. They produce owned data and execute no commands. They do not
-open sockets, connect to servers or play demos. The standalone server codec covers no-op, gamestate,
-reliable server-command and snapshot operations; downloads, voice and other operations fail explicitly.
+The payloads inside netchan messages and demo records: server messages (gamestate, reliable
+commands, snapshots, downloads) and client messages (reliable commands, user commands). They use
+the bit stream of [NETWORK68.md](NETWORK68.md) and the deltas of
+[NETWORK68_DELTA.md](NETWORK68_DELTA.md). The codecs produce data; executing commands, applying
+configstrings and retaining history belong to the sessions (`Protocol68ClientSession`,
+`Protocol68ServerSession`) and to demo playback.
 
-## Snapshot bodies
+Code (`engine/net`):
+[`ServerMessageCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/ServerMessageCodec.java),
+[`SnapshotDeltaCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/delta/SnapshotDeltaCodec.java),
+[`DownloadMessageCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/DownloadMessageCodec.java),
+[`ClientMessageCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/ClientMessageCodec.java),
+[`MessageHash`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/MessageHash.java),
+[`ConfigstringCommands`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/ConfigstringCommands.java),
+[`CommandTokens`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/CommandTokens.java),
+[`LegacyServerMessageCodec`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/msg/LegacyServerMessageCodec.java),
+[`Protocol68`](../../engine/net/src/main/java/dev/bluevista/craftq3/engine/net/Protocol68.java)
+(opcodes and limits).
 
-`Snapshot(sequence, time, flags, areaMask, player, entities)` owns a canonical 468-byte player state,
-an area mask of at most 32 bytes and at most 256 strictly ordered canonical 208-byte entities.
-Entity IDs are 0–1022. All array getters return copies; collections are immutable. `Baselines`
-owns the ordered level entity states, with zero state for absent IDs. Sequence is positive and
-comes from the containing netchan/demo record; the body does not transmit it.
+## Server messages
 
-A body contains time, an eight-bit delta distance, flags, area-mask length/data, player delta and
-an ordered entity update stream ending in ID 1023. A zero distance means a full snapshot. Otherwise
-the exact prior message must be available, with distance 1–255. The codec can take an explicit
-previous snapshot or a history lookup called once with the required message number. Full snapshots
-never consult history. This does not establish how long a transport should retain history.
+A server message is a 32-bit reliable acknowledge, then operations, each an 8-bit opcode, ending
+with `svc_EOF` (8). At most 4,096 operations are read.
 
-Entity merging retains omitted previous entities, removes explicit deletions, updates existing
-states against the prior snapshot and creates new states against level baselines. New entities are
-forced onto the wire even when identical to their level baseline. Player fields follow the existing
-delta contract, including non-networked fields retaining baseline values and changed narrow fields
-decoding to their wire representation. Area-mask bytes beyond the transmitted length are implicitly
-zero; callers needing the fixed 32-byte VM field must pad them.
+| Opcode | Operation | Body |
+| ---: | --- | --- |
+| 1 | `svc_nop` | none |
+| 2 | `svc_gamestate` | command sequence (32), records, `svc_EOF`, client number (32), checksum feed (32) |
+| 3 | `svc_configstring` | inside a gamestate only: index (16), big string |
+| 4 | `svc_baseline` | inside a gamestate only: an entity delta from the zero state |
+| 5 | `svc_serverCommand` | sequence (32), string (under 1024 bytes) |
+| 6 | `svc_download` | see below |
+| 7 | `svc_snapshot` | snapshot body |
 
-Complete reads and writes are transactional. Missing/wrong history, unordered or duplicate wire IDs,
-oversized masks/entity counts, invalid state sizes and truncated fields restore the starting cursor.
-The 256-entity bound follows the published server snapshot limit; broader malformed native input
-behavior is not emulated. Missing-history packets must be discarded or otherwise handled by the
-future session owner without treating them as a usable baseline.
+Gamestate limits: configstring indices 0 to 1023; each string under 8,192 bytes; the stored text
+(one initial byte plus each string and its terminator) at most 16,000 bytes, charged for every
+received string including duplicates (the last duplicate wins); at most 4,096 records. Empty
+values are omitted. A baseline must be a live entity. A gamestate replaces the level baselines and
+invalidates snapshot history for the rest of the message. Any other opcode fails the whole read.
 
-## Server payloads
+Outgoing text (commands, configstrings) is filtered like every wire string (`%` and bytes above
+127 become `.`); constructors reject NUL, characters above 255 and overlong values instead of
+truncating.
 
-`Message(reliableAcknowledge, operations)` retains operation order. The codec reads/writes the initial
-32-bit acknowledgement and final service EOF. Operations are:
+## Snapshots
 
-- `NoOp.INSTANCE`.
-- `Command(sequence, text)`: bounded 1,023-byte reliable command text; no tokenization or execution.
-- `GameState(commandSequence, configstrings, baselines, clientNumber, checksumFeed)`: configstring
-  records, entity baselines, nested EOF and trailing client/checksum fields.
-- `Frame(current, previous)`: the snapshot body, with null previous for full updates.
+A snapshot body is: server time (32), delta distance (8), snapshot flags (8), area-mask length
+(8, at most 32) and bytes, a player delta, then entity records in strictly increasing number
+order ending with 1023. The message sequence comes from netchan or demo framing, not the body.
 
-Gamestate configstring indices are 0–1023, individual strings are at most 8,191 bytes and total stored
-text is at most 16,000 bytes including terminators and the initial empty byte. Configstrings and
-baselines are written in numeric order. Duplicate incoming indices keep the final value, but every
-received string still charges the parsing budget. The exposed map omits empty values and compacts
-duplicates; it represents semantic strings rather than native storage offsets. A gamestate replaces
-the level baselines and invalidates prior snapshot history for later operations in that payload.
+- Distance 0 is a full snapshot against the zero player state and the level baselines.
+- Distance 1 to 255 names the exact earlier message `sequence - distance`; it must be supplied
+  through a history lookup. A missing base is an error for live play. For demo playback
+  (`readForPlayback`) the snapshot is consumed and dropped while the rest of the message is kept,
+  as the original client does.
+- Merging: entities absent from the stream are carried over from the base, removals drop them,
+  existing entities are deltas against their previous state and new ones against the level
+  baseline (and are always written, even when equal to it).
+- At most 256 entities (`MAX_ENTITIES_IN_SNAPSHOT`); area-mask bytes beyond the sent length are
+  zero.
 
-Server command and configstring output applies the independently verified wire-string filtering
-of percent signs and high bytes. Public operation constructors reject embedded NUL, non-byte text
-and overlong values instead of silently discarding their content. Acknowledgement/command sequencing,
-retransmission, command deduplication, system-info effects and checksum verification belong to a
-session owner. The codec accepts integer metadata without invoking those effects.
+The client keeps 32 snapshots (`PACKET_BACKUP`); the server deltas only from an acknowledged
+snapshot that is still retained and fewer than 32 messages old.
 
-At most 4,096 outer operations or nested gamestate records are accepted. Unsupported operations,
-invalid baseline markers and malformed/budget-exceeding records fail the whole read or write
-transaction. No partial command list escapes. Input stops at service EOF; surrounding demo/netchan
-framing and legacy payload XOR are separate layers. Protocol 43 and 71 are not claimed.
+## Downloads
 
-## Verification and provenance
+`svc_download`: block number (16). At the start of a transfer (block 0 while block 0 is
+expected) a file size (32) follows; a negative size is followed by an error string and no data.
+Otherwise a byte count (16, at most 16384) and the bytes. An empty block ends the file. The
+transfer itself is described in [NETWORK68.md](NETWORK68.md#downloads).
 
-The service numbers, state layouts and limits come from the public
-[protocol declarations](https://github.com/ioquake/ioq3/blob/588393618dbc82e7207c21c6ddecca229944a03a/code/qcommon/qcommon.h)
-and [client snapshot declarations](https://github.com/ioquake/ioq3/blob/588393618dbc82e7207c21c6ddecca229944a03a/code/client/client.h).
-The Java body construction and merge are original implementations. Authored native observers link
-unchanged `cl_parse.c`, `msg.c`, `huffman.c` and, for complete payloads, `q_shared.c` objects from that
-official pinned commit. Native engine function bodies were not used as translation recipes.
+## Client messages
 
-Six snapshot tests cover full updates, baseline/new/existing/removed entity merges, ownership, lookup
-and distance validation, every truncated bit, malformed ordering, capacity rollback and count bounds.
-Six server-payload tests cover level resets, operation order, byte filtering, duplicates, storage
-budgets, unsupported services, invalid records, ownership and transaction rollback.
+A client message is server id (32), message acknowledge (32) and reliable command acknowledge
+(32), then operations ending with `clc_EOF` (5), at most 128:
 
-`AuditSnapshots.java` sends **3,000 Java-written bodies / 1,305,002 bytes** to unchanged native
-`CL_ParseSnapshot`. All **62,751 entity states**, complete player/area states, metadata and bit cursors
-agree. Cases include full and delta updates, every initial bit alignment, 256-entity snapshots,
-ID 1022, arbitrary integer timestamps/flags and level baselines. The empty full snapshot is 25 bits,
-hex `aaaa2601`, and is accepted by the native parser.
+| Opcode | Operation | Body |
+| ---: | --- | --- |
+| 1 | `clc_nop` | none (accepted only before movement) |
+| 2 | `clc_move` | count (8, 1 to 32), keyed user-command deltas; asks for a delta snapshot |
+| 3 | `clc_moveNoDelta` | the same; asks for a full snapshot |
+| 4 | `clc_clientCommand` | sequence (32), string (under 1024 bytes); at most 64 |
 
-`AuditServerMessages.java` sends **1,500 complete payloads / 554,399 bytes** through unchanged native
-`CL_ParseServerMessage` in legacy mode. Level metadata, configstrings, baselines, **21,888 entities**,
-**2,550 reliable commands**, snapshot history, command timing and read cursors agree. It includes
-full updates, delta chains, commands before/after snapshots, level restarts and string filtering.
-These are native parser acceptance/state comparisons, **not a comparison against native writer
-byte sequences**. Existing field/state codec audits separately establish their native byte parity.
+Movement is the last operation. Its first command is a delta from the zero command, each next one
+from the previous. The 12-byte header stays in clear under the payload XOR.
 
-The server observer isolates filesystem, cvar and download callbacks. It does not apply server
-settings, touch installation files or download data. Neither observer nor native objects are in
-the distributed mod, and these corpora require no commercial assets.
+The user-command key is `checksumFeed ^ messageAcknowledge ^ hash`, where `hash` is
+`MessageHash.key` of the first 32 bytes of the acknowledged reliable server command: the sum of
+`(i + 119) * c` over the filtered bytes up to a NUL, folded as `sum ^ (sum >> 10) ^ (sum >> 20)`
+with 32-bit wrap. Each command then XORs its own time into the key. This is obfuscation, not
+authentication. Reading movement requires the exact acknowledged server command from the session.
 
-## Client payloads and movement keys
+## Configstring commands
 
-`ClientMessageCodec` handles the three integer headers (server ID, message acknowledgement and
-server-command acknowledgement), up to 64 reliable client commands and an optional batch of 1–32
-canonical user commands. Movement records distinguish requesting delta snapshots from requesting
-a full snapshot. Their command deltas start from zero and then use the preceding command. A payload
-without movement does not consult reliable server-command history. The full writer appends client
-EOF; `writeBody` exposes the pre-transport boundary used by native `CL_WritePacket`.
+Configstring changes after the gamestate arrive as reliable server commands. Values shorter than
+1,000 characters are sent as `cs <index> "<value>"`; longer ones as `bcs0`, `bcs1`...`bcs2`
+fragments of 999 characters, reassembled by `ConfigstringCommands`. `CommandTokens` tokenizes
+protocol text like `Cmd_TokenizeString` (whitespace separates, quotes group, `//` and `/* */`
+comments; semicolons and newlines do not split), with at most 1,024 arguments and 8,192
+characters.
 
-`MessageHash.key` implements the observed `MSG_HashKey` weighted byte checksum: percent/high bytes
-use the wire-string dot replacement, NUL ends the text, and a caller-supplied prefix bound applies.
-The accumulator wraps at 32 bits and folds with signed shifts. The usercmd key combines the checksum
-feed, message acknowledgement and the first 32 bytes of the acknowledged reliable server command;
-the existing usercmd delta codec then mixes each command's timestamp. This is legacy key mixing,
-not cryptographic authentication.
+## Older protocols
 
-Client reads require that exact acknowledged command through a lookup callback when movement is
-present. Missing history, invalid counts, unsupported service codes, records after terminal movement
-and truncated input fail transactionally. No-op records before movement are accepted and omitted
-from the returned semantic command list. Public records own their arrays/collections. Sequence
-validation, rate limits, command execution, retransmission and connection negotiation remain outside
-this codec. Five tests cover batches, both delta flags, history selection, reliable-only payloads,
-every truncated bit, malformed counts/ordering, capacity rollback and ownership. Three checksum tests
-cover independently observed values, filtering, bounds and key composition.
+`LegacyServerMessageCodec` reads the server messages of protocols 43, 46 and 48 (demos only; see
+[DEMOS.md](DEMOS.md)) into the same operations. These messages use the raw (non-Huffman) bit
+coding, have no `svc_EOF` (a message ends when fewer than 8 bits, all zero, remain), and their
+gamestate ends with a zero byte without client number or checksum feed. Protocols 46 and 48 start
+with the reliable acknowledge; protocol 43 instead sends a 32-bit word after the snapshot opcode.
 
-`AuditMessageHashes.java` compares **10,256 results** with unchanged public `MSG_HashKey`, including
-the byte alphabet, NUL/prefix limits and 16 KiB inputs whose weighted sums wrap. `AuditClientMessages.java`
-compares **4,000 bodies / 1,495,809 normalized bytes** against unchanged native `CL_WritePacket`;
-all meaningful bits agree, and **63,909 user commands** decode correctly. It exercises every batch
-size, both delta flags, arbitrary integer headers/feeds and varied acknowledged server text. This
-also verifies the movement-key derivation in its native packet context.
+All reads and writes are transactional; failures raise `NetFormatException` or
+`IllegalArgumentException` and leave the cursor where it was.
 
-The client observer captures the body at the transport callback and zeroes only unused tail bits.
-Native stack storage can leave the trailing, wholly unused byte uninitialized when the body ends
-on a byte boundary; those bits are not compared as protocol data. The comparison precedes transport
-EOF insertion, XOR and netchan framing, so it does not establish complete datagram interoperability.
-The native observer's transport callback does not send any packet.
-
-## Legacy payload transformation
-
-`LegacyPayloadXor.client` and `.server` operate on owned copies of complete compressed payloads,
-including the service terminator. Apply them before fragmentation on send and after reassembly on
-receive. Client payloads retain the first 12 bytes; server payloads retain the first four bytes.
-The remaining bytes use a running XOR value derived from the connection challenge and message
-metadata, modified by a cyclic acknowledged-command byte string and alternating shifts. The same
-operation reverses the transformation. This is the original protocol's obfuscation, not encryption
-providing confidentiality or authenticity.
-
-The session supplies the exact acknowledged command and header metadata. This service neither
-looks up reliable histories nor parses potentially transformed header fields. It bounds payloads to
-16 KiB and consumed key strings to 1,023 bytes, ends strings at NUL and applies the native
-percent/high-byte replacement. Payloads no longer than their clear prefix are returned unchanged
-without consulting command text. Every result owns its bytes; validation failure cannot alter input.
-
-Four focused tests cover captured native ciphertext, both prefixes, byte/size boundaries, empty and
-NUL-terminated keys, filtering, ownership and inverse transforms. `AuditLegacyXor.java` compares
-**12,000 encoded payloads / 10,362,895 exact bytes** with unchanged native client/server wrappers,
-including queued server sends. The native receive wrappers also recover **all 12,000 original
-payloads**. The observer supplies framing metadata through an isolated netchan callback and aliases
-the bounded reliable-command ring to the supplied key; reliable-history selection is therefore
-outside this audit. No packet is sent to a network.
-
-Both native connection and channel compatibility flags are set explicitly. Key buffers are
-zero-padded C strings: for an empty string, the native loop can otherwise consult bytes after its
-first NUL. Java stays within the consumed key and does not emulate those stale-buffer effects.
-The meaningful server/client payload and snapshot corpora were also rerun with both legacy flags.
-
-Connect compression, a pinned UDP transport and client session ownership now have a
-[real native UDP interoperability check](../NETWORK68_CLIENT_SESSION.md). Pure verification,
-remote cgame presentation and server-side connection integration remain unfinished.
-
-After preparing the unchanged message/reference objects described in `NETWORK68.md` and
-`BOTLIB_CHAT.md`, reproduce on the tested macOS host with:
-
-```sh
-mkdir -p .tools/server-message-oracle
-clang -std=c11 -O2 -ffunction-sections -fdata-sections -I.tools/ioquake3-source/code \
-  -c .tools/ioquake3-source/code/client/cl_parse.c -o .tools/server-message-oracle/cl_parse.o
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code scripts/SnapshotOracle.c \
-  .tools/server-message-oracle/cl_parse.o .tools/netchan-oracle/msg.o \
-  .tools/netchan-oracle/huffman.o -o .tools/server-message-oracle/snapshot-oracle
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code scripts/ServerMessageOracle.c \
-  .tools/server-message-oracle/cl_parse.o .tools/netchan-oracle/msg.o \
-  .tools/netchan-oracle/huffman.o .tools/chat-oracle/q_shared.o \
-  -o .tools/server-message-oracle/message-oracle
-./gradlew :craftq3-core:classes
-java -cp craftq3-core/build/classes/java/main scripts/AuditSnapshots.java
-java -cp craftq3-core/build/classes/java/main scripts/AuditServerMessages.java
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code scripts/MessageHashOracle.c \
-  .tools/netchan-oracle/msg.o .tools/netchan-oracle/huffman.o -o .tools/netchan-oracle/hash-oracle
-clang -std=c11 -O2 -ffunction-sections -fdata-sections -I.tools/ioquake3-source/code \
-  -c .tools/ioquake3-source/code/client/cl_input.c -o .tools/server-message-oracle/cl_input.o
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code scripts/ClientMessageOracle.c \
-  .tools/server-message-oracle/cl_input.o .tools/netchan-oracle/msg.o \
-  .tools/netchan-oracle/huffman.o -o .tools/server-message-oracle/client-message-oracle
-java -cp craftq3-core/build/classes/java/main scripts/AuditMessageHashes.java
-java -cp craftq3-core/build/classes/java/main scripts/AuditClientMessages.java
-clang -std=c11 -O2 -ffunction-sections -fdata-sections -I.tools/ioquake3-source/code \
-  -c .tools/ioquake3-source/code/client/cl_net_chan.c -o .tools/server-message-oracle/cl_net_chan.o
-clang -std=c11 -O2 -ffunction-sections -fdata-sections -I.tools/ioquake3-source/code \
-  -c .tools/ioquake3-source/code/server/sv_net_chan.c -o .tools/server-message-oracle/sv_net_chan.o
-clang -std=c11 -O2 -DORACLE_CLIENT -Wl,-dead_strip -I.tools/ioquake3-source/code \
-  scripts/LegacyXorOracle.c .tools/server-message-oracle/cl_net_chan.o \
-  .tools/netchan-oracle/msg.o .tools/netchan-oracle/huffman.o \
-  -o .tools/server-message-oracle/client-xor-oracle
-clang -std=c11 -O2 -Wl,-dead_strip -I.tools/ioquake3-source/code scripts/LegacyXorOracle.c \
-  .tools/server-message-oracle/sv_net_chan.o .tools/netchan-oracle/msg.o \
-  .tools/netchan-oracle/huffman.o -o .tools/server-message-oracle/server-xor-oracle
-java -cp craftq3-core/build/classes/java/main scripts/AuditLegacyXor.java
-```
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
+`ServerMessageCodecTest`, `SnapshotDeltaCodecTest`, `ClientMessageCodecTest`, `MessageHashTest`,
+`ConfigstringCommandsTest`, `LegacyDemoTest`.

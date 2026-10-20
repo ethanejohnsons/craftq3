@@ -1,100 +1,187 @@
-# Q3 shader scripts and images
+# Shader scripts, images and material programs
 
-CraftQ3 reads original Q3 material scripts and texture files through the mounted virtual filesystem. It builds an immutable Java material description and evaluates that description against BSP geometry. Q3 scripts are material instructions, not GLSL programs. Parsing, image decoding, and stage evaluation have no Minecraft, Fabric, or graphics-driver dependency; the Fabric backend supplies the GPU passes.
+Quake III material scripts (`.shader` files in the `scripts` directory), the TGA and JPEG images
+they name, and the compiled form the renderer consumes. Parsing and image decoding live in
+`engine:formats`; compilation into GPU-ready data lives in `engine:render-ir`. Neither depends on
+Minecraft or a graphics API; the Fabric backend (`Q3RenderBackend`) evaluates the compiled programs
+in GLSL.
 
-The implementation is independently written from the public formats and manuals. It does not embed or call a Quake renderer. Original PK3 contents remain user-supplied files; they are neither extracted into resource packs nor included in the mod. The shader regression scene and its generated TGA images are original synthetic fixtures.
+Code:
 
-## Discovery and defaults
+- [`ShaderLibrary`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/shader/ShaderLibrary.java),
+  [`ShaderParser`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/shader/ShaderParser.java),
+  [`ShaderDefinition`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/shader/ShaderDefinition.java),
+  [`ShaderDiagnostic`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/shader/ShaderDiagnostic.java)
+- [`ImageLoader`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/image/ImageLoader.java),
+  [`TgaDecoder`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/image/TgaDecoder.java),
+  [`JpegDecoder`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/image/JpegDecoder.java),
+  [`Mipmaps`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/image/Mipmaps.java),
+  [`Q3Image`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/image/Q3Image.java)
+- [`material/`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/material/)
+  (`MaterialCompiler`, `MaterialProgram`, `StageProgram`, `DeformProgram`, `ProgramLayout`,
+  `StageEvaluator`, `VertexDeformer`, `Waveforms`),
+  [`SceneTextures`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/SceneTextures.java),
+  [`SkyGeometry`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/SkyGeometry.java),
+  [`FogVolumes`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/FogVolumes.java),
+  [`PortalView`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/PortalView.java),
+  [`PortalViews`](../../engine/render-ir/src/main/java/dev/bluevista/craftq3/engine/render/PortalViews.java)
 
-`ShaderLibrary.load(VirtualFileSystem)` discovers direct `scripts/*.shader` children. It does not require an editor `shaderlist.txt`. Files are ordered by their resolved VFS search priority, then canonical filename. The first definition of a name wins; duplicate definitions produce diagnostics. This preserves mod/PK3 precedence even when competing definitions live in differently named scripts.
+The grammar follows the public
+[Q3Radiant Shader Manual](https://icculus.org/gtkradiant/documentation/Q3AShader_Manual/index.htm).
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md).
 
-Shader names use lowercase, slash-separated virtual paths with the final extension removed. Texture references retain their extensions. Host paths and traversal components remain subject to `VirtualPath` validation. `find(name)` returns an explicit definition; `resolve(name, lightmapped)` also supplies a missing-name fallback:
+## Discovery and precedence
 
-- A lightmapped surface receives an opaque base-texture stage followed by a `$lightmap` filter stage with equal-depth testing.
-- A surface without a lightmap receives one base-texture stage using vertex color.
-- An existing zero-stage definition stays empty. It is not replaced with an implicit material. Portal and fog metadata can still be meaningful without ordinary texture stages.
+`ShaderLibrary.load` lists every `.shader` file directly in the `scripts` directory, like
+`FS_ListFiles` (each name once, highest-priority source first); `shaderlist.txt` is not used.
+As in the original renderer, the files are processed in reverse of that order, so when two
+*differently named* files define the same shader, the file listed **last** wins (a `pak0` script
+beats a later pak or mod). To override a shader, ship a script with the same file name: the
+search path then replaces the whole file. Within one file the first definition wins. Ignored
+duplicates produce a diagnostic naming the winning script.
 
-Within explicit stages, opaque blending is the default. Opaque stages write depth; blended stages require `depthWrite` to do so. `rgbGen` defaults to `identityLighting` for opaque, `ONE`-source, and `SRC_ALPHA`-source blending, and to `identity` otherwise. An omitted `alphaGen` follows `rgbGen vertex` with vertex alpha and otherwise uses identity alpha. `$lightmap` selects lightmap texture coordinates unless `tcGen` overrides them. A stage missing its texture map receives `$whiteimage` and a diagnostic.
+Names are canonicalised for lookup: lower case, `/` separators, extension stripped. Names
+from BSP faces, MD3 surfaces and skins compare the same way. `resolve(name, lightmapped)`
+returns the definition, or the implicit material for an undefined name:
 
-An original example, equivalent in structure to the generated cutout fixture:
-
-```text
-textures/example/grate
-{
-    cull none
-    {
-        map textures/example/grate.tga
-        alphaFunc GE128
-        rgbGen identity
-        depthWrite
-    }
-    {
-        map $lightmap
-        blendFunc filter
-        rgbGen identity
-        depthFunc equal
-    }
-}
-```
-
-## Grammar and material data
-
-`ShaderParser.parse(sourceName, text)` returns definitions and source/line diagnostics. It handles braces, parenthesized vectors, quoted tokens, `//` comments, `/* ... */` comments, and case-insensitive keywords. Arguments are line-delimited; put an entire `animMap` frame list on the same line. Multiple fixed-argument directives may share a line. Script bytes are decoded as ISO-8859-1.
-
-`ShaderDefinition` owns immutable stages, surface parameters, sky/fog descriptions, and ordered deformations. Nested records and enums represent the following instructions:
-
-| Area | Represented instructions |
+| Surface | Implicit stages |
 | --- | --- |
-| Images | `map`, `clampMap`, `animMap`, `clampAnimMap`, `$lightmap`, `$whiteimage` |
-| Blending | `add`, `filter`, `blend`, and explicit source/destination factors, including alpha and color inverses |
-| Alpha testing | `GT0`, `LT128`, `GE128` |
-| RGB | identity, identity lighting, vertex/exact vertex, inverse vertex, entity/inverse entity, diffuse lighting, wave, constant, fog |
-| Alpha | identity, vertex/inverse vertex, entity/inverse entity, specular lighting, wave, constant, portal distance |
-| Coordinates | base/texture, lightmap, environment, vector projection, identity, fog |
-| Coordinate modifiers | ordered scroll, scale, rotate, stretch, affine transform, turbulence, entity translation |
-| Raster state | `depthFunc`, `depthWrite`, `cull`, numeric/named `sort`, `polygonOffset`, `detail` |
-| Global metadata | `surfaceparm`, `skyParms`, `fogParms`, `portal`, `noMipmaps`, `noPicmip`, `clampTime` |
-| Deformations | wave, normal, bulge, move, autosprite, autosprite2, projection shadow, text0–text7 |
+| Lightmapped | image (`rgbGen identity`, opaque, depth write), then `$lightmap` with `blendFunc filter`, `depthFunc equal` |
+| Not lightmapped | image with `rgbGen vertex`, opaque |
 
-Compiler/editor instructions beginning with `q3map_` or `qer_`, plus `tessSize`, `light`, and `entityMergable`, are consumed without runtime evaluation. Their compiled results, where applicable, are already in the BSP. Surface/content parameter spellings remain available in the AST; gameplay meanings such as player clipping and damage require later runtime systems. BSP texture flags and contents are retained separately by the BSP reader.
+The image name is the shader name; extensions are resolved by `ImageLoader` (below). A defined
+shader with zero stages stays empty (sky, fog and portal metadata may still apply).
 
-## Evaluation and rendering boundary
+## Grammar
 
-`StageEvaluator` calculates final per-stage UVs and RGBA values. Texture modifiers execute in script order; animations select `floor(max(0,time) * fps)` modulo the frame count. Sine, triangle, square, sawtooth, inverse sawtooth, and noise waves are represented. Vertex colors and lightmaps restore the BSP's two bits of lighting headroom with ratio-preserving saturation. The viewer uses identity light 1 rather than changing Minecraft's display gamma.
+`ShaderParser.parse` reads ISO-8859-1 text: `//` and `/* */` comments (an unterminated block
+comment runs to the end), quoted tokens, `{ } ( )` as separate tokens, case-insensitive keywords.
+Arguments are line-delimited: a directive takes the remaining tokens on its own line, so an
+`animMap` frame list must stay on one line.
 
-`VertexDeformer` evaluates ordered wave, move, bulge, and normal changes. Autosprite uses complete triangle-pair quads and the current camera basis; autosprite2 keeps a quad's major axis fixed. Incomplete/non-quad groups retain their source geometry. Camera bases can include portal roll and mirror reflection.
+Stage defaults:
 
-`SkyGeometry` provides camera-centered environment faces and tessellated cloud geometry. Environment suffixes are `rt`, `lf`, `bk`, `ft`, `up`, and `dn`; cloud UVs depend on spherical projection and `cloudHeight`. Cloud geometry omits the bottom face. Distinct sky materials remain distinct: each sky uses a mask from its own visible BSP surfaces rather than taking over all sky openings. `nearBox` is retained and its images can be resolved, but the world sky renderer does not draw a near box. GPU pass details and current limitations are recorded in [COMPATIBILITY.md](../../COMPATIBILITY.md).
+| Field | Default |
+| --- | --- |
+| `blendFunc` | opaque (`GL_ONE GL_ZERO`) |
+| `depthWrite` | on for opaque stages; blended stages need an explicit `depthWrite` |
+| `rgbGen` | `identityLighting` when opaque or the source factor is `ONE` or `SRC_ALPHA`; else `identity` |
+| `alphaGen` | `vertex` after `rgbGen vertex`; else `identity` |
+| `tcGen` | `lightmap` for a `$lightmap` stage; else `base` |
+| texture | `$whiteimage` with a diagnostic when a stage has no map |
 
-`FogVolumes` resolves BSP effects to convex brush volumes and evaluates the eye-to-surface segment through them. `PortalView` resolves nearby `misc_portal_surface` entities, mirrors, targeted cameras, camera aim/roll, and source/destination clipping planes. Its full basis preserves reflection handedness; yaw and pitch alone cannot represent a mirror. The original entity conventions are documented in the [GtkRadiant entity manual](https://icculus.org/gtkradiant/documentation/q3radiant_manual/appndx/appn_b_6.htm).
+Material defaults: `cull front`; `sort` is 1 for `portal`, 2 for sky, 4 with `polygonOffset`,
+5 or 9 when the first stage blends (with or without `depthWrite`), 7 for a stageless fog
+shader, 3 otherwise. Named sorts: portal 1, sky/environment 2, opaque 3, decal 4, seeThrough 5,
+banner 6, fog 7, underwater 8, additive 9, nearest 16. `nomipmaps` implies `nopicmip`.
 
-Parsing a directive is not a claim of full entity simulation. `projectionShadow` and text deformations are retained but currently leave geometry unchanged because their entity inputs are not implemented. Entity color, alpha, texture translation, diffuse lighting, and specular inputs exist in the evaluator context; the BSP viewer supplies the context available to it. Portal cameras use static authored aim and roll; slow/fast rotation flags are reported, and cgame-timed camera animation remains future work. Noise uses CraftQ3's deterministic interpolated noise rather than Quake's random table, so noise effects are not expected to match the original renderer pixel for pixel. The standalone `tcGen fog` coordinate approximation is separate from the actual brush-fog pass.
+| Area | Keywords |
+| --- | --- |
+| Images | `map`, `clampMap`, `animMap`, `clampAnimMap` (up to 64 frames), `videoMap`, `$lightmap`, `$whiteimage`, `*white` |
+| Blending | `add`, `filter`, `blend`, or two factors (`GL_` prefix optional), including `SRC_ALPHA_SATURATE` |
+| Alpha test | `GT0`, `LT128`, `GE128` |
+| `rgbGen` | `identity`, `identityLighting`, `vertex`, `exactVertex`, `oneMinusVertex`, `entity`, `oneMinusEntity`, `lightingDiffuse`, `wave`, `const`, `fog` |
+| `alphaGen` | `identity`, `vertex`, `oneMinusVertex`, `entity`, `oneMinusEntity`, `lightingSpecular`, `wave`, `const`, `portal [range]` (default 256) |
+| `tcGen` | `base`/`texture`, `lightmap`, `environment`, `vector`, `identity`, `fog` |
+| `tcMod` | `scroll`, `scale`, `rotate`, `stretch`, `transform`, `turb`, `entityTranslate` (applied in order) |
+| Waves | `sin`, `triangle`, `square`, `sawtooth`, `inverseSawtooth`, `noise` |
+| Stage state | `depthFunc lequal\|equal\|disable`, `depthWrite`, `detail` |
+| Material | `cull`, `sort`, `polygonOffset`, `nomipmaps`, `nopicmip`, `portal`, `clampTime`, `surfaceparm`, `skyParms`, `fogParms` |
+| `deformVertexes` | `wave`, `normal`, `bulge`, `move`, `autosprite`, `autosprite2`, `projectionShadow`, `text0`..`text7` |
 
-## Texture files
+`videoMap name` plays a RoQ file; a bare file name is looked up in `video/` (see
+[ROQ.md](ROQ.md)). `skyParms far height near` takes box prefixes or `-`; a height of `-` or 0
+becomes 512. Box images are `<prefix>_rt`, `_lf`, `_bk`, `_ft`, `_up`, `_dn`.
 
-`ImageLoader` resolves an explicit `.tga` first and then the corresponding `.jpg`, or an explicit `.jpg`/`.jpeg` first and then `.tga`. Extensionless names try `.tga` then `.jpg`. A missing image becomes the diagnostic checker texture. A malformed existing image raises a format error instead of silently falling through to another file.
+`q3map_*` and `qer_*` directives, `tessSize`, `light` and `entityMergable` are compiler or editor
+directives; they are skipped silently (their results are already baked into the BSP).
 
-TGA support covers true-color 24/32-bit and grayscale 8/16-bit images, both uncompressed and RLE. Origin bits are normalized to top-left rows. The fourth channel of a 32-bit Q3 texture remains alpha even when an older exporter left the descriptor's attribute count at zero. Palette images, 15/16-bit true-color images, and interleaved rows are not supported. Truncated data, overflowing packets, and invalid dimensions are rejected. The byte layout follows the [Truevision TGA 2.0 specification](https://www.ludorg.net/amnesia/TGA_File_Format_Spec.html).
-
-JPEG decoding uses the JDK JPEG reader after validating declared dimensions. Decoder warnings, inconsistent dimensions, and damaged input are errors. Output is opaque RGBA8. The format reference is [ITU-T T.81](https://www.itu.int/rec/T-REC-T.81-199209-I/en). `Q3Image` owns its pixels and returns defensive copies; neither decoder owns GPU resources.
-
-## Bounds and recovery
+## Limits and recovery
 
 | Resource | Limit |
 | --- | --- |
-| One script | 4 MiB/4,194,304 characters |
+| Script size | 4 MiB (4,194,304 characters) |
 | Tokens per script / characters per token | 500,000 / 4,096 |
 | Definitions per script / whole library | 16,384 / 65,536 |
-| Stages per material | 64 |
-| Texture modifiers per stage / deformations per material | 32 / 32 |
-| Animation frames per stage | 64 |
-| Script files / cumulative encoded script data | 4,096 / 64 MiB |
+| Stages per shader / `tcMod`s per stage / deforms per shader | 64 / 32 / 32 |
+| Script files / total script bytes | 4,096 / 64 MiB |
 | Diagnostics per script / whole library | 4,096 / 16,384 |
-| Encoded image / decoded image | 64 MiB / 16,777,216 pixels |
-| Loaded map image budget | 256 MiB, with BSP lightmaps accounted separately |
 
-Unknown directives and invalid numeric arguments produce bounded diagnostics and skip the rest of that line without consuming structural braces. Unknown surface parameters are retained with a warning. Non-finite numbers are rejected. Structural damage or per-file resource exhaustion rejects the script; `ShaderLibrary` reports that file and continues with other scripts. Collection-level byte, file, and definition limits fail the library load. These limits supplement the VFS's own archive and entry limits.
+Unknown directives, unknown values and non-finite numbers give a diagnostic and skip the rest of
+that line. Unknown `surfaceparm`s are kept with a warning. A structurally damaged shader
+(unterminated, nested stages, over a stage or modifier limit) is skipped to its closing brace and
+the rest of the file still loads. Only a script over the size or token limits is skipped whole;
+past the library-wide file, byte or definition limits the remaining scripts are ignored.
 
-The parser and evaluator are tested with original synthetic scripts, malformed input, cross-file VFS precedence, deterministic image data, texture modifiers, billboards, sky geometry, and portal transforms. `generateShaderFixture` writes the independently authored `craftq3_shaderlab` BSP, script, and TGA files only to the ignored development game directory. Current capture evidence belongs in [VALIDATION.md](../VALIDATION.md).
+## Images
 
-The primary material reference is id Software's [Q3Radiant Shader Manual](https://icculus.org/gtkradiant/documentation/Q3AShader_Manual/index.htm), especially its [general keywords](https://icculus.org/gtkradiant/documentation/Q3AShader_Manual/ch02/pg2_1.htm) and [stage keywords](https://icculus.org/gtkradiant/documentation/Q3AShader_Manual/ch05/pg5_1.htm). The descriptions above document CraftQ3's current implementation; they do not imply support for every Q3Map2 extension or legacy experimental keyword.
+`ImageLoader.candidates` gives the files tried for a name:
+
+| Requested | Tried in order |
+| --- | --- |
+| `x.tga` | `x.tga`, `x.jpg` |
+| `x.jpg` | `x.jpg`, `x.tga` |
+| `x.jpeg` | `x.jpeg`, `x.tga`, `x.jpg` |
+| `x` (no extension) | `x.tga`, `x.jpg` |
+| other extension (`.png`, `.dds`, ...) | stem `.tga`, stem `.jpg`, then the full name plus `.tga`, `.jpg` |
+
+A candidate that exists but fails to decode is reported and the next one is tried. When none
+decodes, the result is a 16×16 magenta/black checker (`$missing`) with diagnostics.
+
+TGA (Truevision 2.0): types 2 and 10 (true colour, 24 or 32 bits) and 3 and 11 (grayscale,
+8 bits, or 16 bits with alpha), uncompressed or RLE. Colour-mapped types 1 and 9 are refused; a
+colour map attached to a true-colour image is skipped. Both origin bits are honoured; interleave
+bits are ignored. The fourth byte of a 32-bit pixel is always alpha, even when the descriptor's
+attribute count is 0. Truncated headers, pixels and RLE packets, and packets that overrun the
+image, are errors; a short RLE payload is rejected before the output is allocated.
+
+JPEG uses the JDK's ImageIO reader (baseline and progressive) after checking the start-of-image
+marker and declared dimensions. Grayscale expands to RGB and the result is always opaque.
+Recoverable damage (such as a missing end marker) yields the image plus a warning; CMYK/YCCK
+files are refused.
+
+`Q3Image` is owned, immutable RGBA8, top row first, with no colour-space conversion. `Mipmaps`
+builds a full chain by area filtering in encoded space (odd sizes keep their last row and
+column). Limits: 64 MiB encoded per file, 16,777,216 pixels per image, and 256 MiB of decoded
+images per map (`SceneTextures`) and for cgame-registered images (`SceneAssets`). Lightmap pages
+are converted separately with the map's two overbright bits restored, scaling all three channels
+together when one saturates.
+
+## Compiled materials (`engine:render-ir`)
+
+`MaterialCompiler.compile` turns a `ShaderDefinition` into a `MaterialProgram`: whole-material
+state (sort, cull, polygon offset, sky and fog parameters, portal, `clampTime`, whether a fog
+pass and a dynamic-light pass apply) plus `StageProgram`s (texture bundle, blend and depth state,
+alpha test, fog mode, and the rgbGen/alphaGen/tcGen/tcMod shading as data) and `DeformProgram`s.
+Compilation is pure. `MaterialRegistry` assigns stable indices: world materials first, cgame
+materials appended as they appear.
+
+`ProgramLayout` packs programs into fixed uniform blocks and keeps at most 8 stages, 8 tcMods per
+stage and 4 deforms per material; anything beyond is dropped and listed in
+`MaterialProgram.unexpressed()`. The backend evaluates stage shading, the per-vertex deforms
+(`wave`, `normal`, `bulge`, `move`), fog and dynamic lights in GLSL. `autosprite` and
+`autosprite2` need whole quads and the view axes and run on the CPU through `VertexDeformer`;
+`text*` and `projectionShadow` deforms leave vertices unchanged (cgame `RF_SHADOW_PLANE`
+shadows are drawn separately). `StageEvaluator` is the reference CPU evaluation of a stage
+(used by tests and as the backend fallback). Waveforms follow the manual; `noise` uses a 32-bit
+hash that GLSL reproduces exactly instead of the original noise table.
+
+Related scene data:
+
+- `SkyGeometry` builds the view-centred box (faces in `rt lf bk ft up dn` order) and the cloud
+  layer (five faces, no bottom, 8 subdivisions) from `cloudHeight`. The near box is not drawn by
+  default.
+- `FogVolumes` resolves BSP fog effects to convex brush volumes (up to 256 volumes and 32,768
+  planes) and clips the eye-to-point segment against them; the packed planes let the GPU do the
+  same per vertex.
+- `PortalView` maps a portal or mirror surface to the view it shows, either from the cgame's
+  `RT_PORTALSURFACE` entity (during play) or from the map's `misc_portal_surface` and
+  `misc_portal_camera` entities; mirrors reflect across the surface plane. `PortalViews` derives
+  one view per visible portal plane and destination, one level deep by default.
+
+Differences from the original renderer (noise, uniform patch tessellation, the sky near box,
+`videoMap` timing) are listed in [DIVERGENCES.md](../DIVERGENCES.md).
+
+Tests: `ShaderParserTest`, `ShaderLibraryTest`, `ImageLoaderTest`, `MipmapsTest`,
+`MaterialCompilerTest`, `StageEvaluatorTest`, `SkyGeometryTest`, `FogVolumesTest`,
+`PortalViewTest`.

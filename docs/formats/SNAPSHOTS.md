@@ -1,59 +1,71 @@
-# Local Q3 snapshots
+# Snapshots
 
-`Q3Server.entitySnapshot(client)` returns canonical entity states, a defensive 32-byte BSP area
-mask, the number of visible entities, and the number omitted at the original 256-entity snapshot
-limit. `entityStates(client)` remains a compatibility accessor. The local cgame transport copies
-the area mask into the guest snapshot and converts canonical states to the selected guest ABI.
+A snapshot is what one client sees at one server frame: its player state, the entities it may see
+and a mask of the map areas to hide. The server builds one per client following
+`SV_BuildClientSnapshot`; it then travels as a delta ([NETWORK68_MESSAGES.md](NETWORK68_MESSAGES.md))
+over UDP or the loopback transport, and the client keeps a history for the cgame. Local, remote
+and demo play share this path.
 
-The server reads the requesting client's player state. Its `clientNum` identifies the viewed
-player, which can differ from the requesting client during spectator follow. That player's entity
-is excluded because cgame reconstructs it from player state; transmitting both creates a duplicate
-event path. Visibility starts at player origin plus view height, in Q3 coordinates.
+Code:
+[`SnapshotBuilder`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/snapshot/SnapshotBuilder.java),
+[`EntityWorld`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/world/EntityWorld.java)
+(entity linking),
+[`MapVisibility`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/world/MapVisibility.java)
+(PVS and area connectivity),
+[`Protocol68Host`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/net/Protocol68Host.java)
+(transmission),
+[`GameServer`](../../engine/game/src/main/java/dev/bluevista/craftq3/engine/game/GameServer.java)
+(snapshot flags, restarts); client side
+[`SnapshotPipeline`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/pipeline/SnapshotPipeline.java),
+[`ClientSnapshot`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/pipeline/ClientSnapshot.java).
 
-Only linked entities are candidates. `SVF_NOCLIENT`, `SVF_SINGLECLIENT`, `SVF_NOTSINGLECLIENT`, and
-`SVF_CLIENTMASK` filter the viewed player before broadcast or visibility checks. The retail ABI has
-no `singleClient` member; modern audience extensions require a guest ABI that supplies that member.
-The authoritative entity number is its index in the located game entity array.
+## Entity selection
 
-For ordinary entities, a BSP split-plane traversal classifies every leaf touched by the linked
-world-space bounding box. At least one touched cluster must be in the viewpoint's static PVS, and
-at least one touched area must be connected through currently open, reference-counted area portals.
-Cluster/area membership is cached per entity number and bounds; door connectivity remains live.
-This uses complete touched-cluster sets rather than a fixed cluster list with an overflow range.
+- **View point**: the snapshot player's origin raised by its view height. Its BSP leaf gives the
+  view cluster and area. The player state's `clientNum` is the viewed player (it differs from the
+  receiving client while spectating); that player's own entity is never sent, since the cgame
+  rebuilds it from the player state.
+- **Linking**: when the game links an entity, its bounds record up to 16 clusters
+  (`MAX_ENT_CLUSTERS`, with the last cluster as an overflow marker) and up to two areas, from at
+  most 128 leaves (`MAX_TOTAL_ENT_LEAFS`). Only linked entities are candidates.
+- **Audience flags**, checked first: `SVF_NOCLIENT` is never sent; `SVF_SINGLECLIENT` only to
+  `r.singleClient`; `SVF_NOTSINGLECLIENT` to everyone else; `SVF_CLIENTMASK` to clients 0 to 31
+  whose bit is set in `r.singleClient`. Retail guests have no `singleClient` field; it reads as 0.
+- **Broadcast**: `SVF_BROADCAST` entities are always sent.
+- **Areas**: otherwise one of the entity's two areas must be connected to the view area through
+  currently open area portals.
+- **PVS**: and one of its clusters must be visible from the view cluster. When the entity
+  overflowed its cluster list, the clusters up to its last cluster are scanned with the original's
+  rule (hidden only when the scan stops exactly at the last cluster). A view cluster of -1 or a map
+  without visibility data sees every cluster ([DIVERGENCES.md](../DIVERGENCES.md)).
+- **Portals**: a visible `SVF_PORTAL` entity within its `s.generic1` range (distance from the view
+  point to its `s.origin`; 0 means unlimited) adds everything visible from its `s.origin2`, and
+  that view's areas join the mask. Portal views nest at most 16 deep (the original recursion is
+  unbounded).
 
-`SVF_BROADCAST` bypasses PVS and area checks. Visible `SVF_PORTAL` entities add a viewpoint at
-`entityState.origin2`; the modern `generic1` range restricts opening that view, measured from
-`entityState.origin`. The portal entity itself remains visible when its range rejects the remote
-view. Broadcast entities do not open additional portal views. Entity deduplication bounds recursive
-portal processing, including cycles. Reachable areas from all accepted viewpoints are combined,
-then inverted: a set mask bit means the renderer should hide that area.
+Entities are sorted by number and cut at 256 (`MAX_ENTITIES_IN_SNAPSHOT`); the snapshot records
+how many were visible. The area bits of every view are ORed (an invalid view area sets all) and
+then inverted, so a set bit tells the renderer to hide that area; the mask has `(areas + 7) / 8`
+bytes, at most 32.
 
-Absent PVS data disables the cluster restriction while retaining available area connectivity.
-Missing or invalid viewpoint visibility data, solid viewpoints, and viewpoints outside the world
-model bounds conservatively retain audience-eligible entities and emit an all-visible area mask.
-The area-mask format represents 256 areas; unknown area identifiers fall back conservatively.
+## Transmission
 
-Entities are sorted by number, independent of link order or portal traversal order. If more than
-256 are visible, the first 256 numbers are retained; the result reports the omitted count and the
-server logs entry into overflow. This deterministic overflow policy differs from the upstream
-server's traversal-order cutoff in over-capacity scenes. No entity truncation is hidden in the
-local transport.
+Snapshots go out at the client's `snaps` rate and within its `rate` (every frame over loopback),
+delta-coded against the newest acknowledged snapshot still retained and fewer than 32 messages
+old, otherwise in full. Snapshot flags: `SNAPFLAG_RATE_DELAYED` (1) when the rate held a snapshot
+back, `SNAPFLAG_NOT_ACTIVE` (2) before the client entered the game, `SNAPFLAG_SERVERCOUNT` (4)
+toggled at every map spawn and restart.
 
-## Verification and provenance
+A `map_restart` without delay restarts the game in place: clients and configstrings are kept, the
+server id changes and `SNAPFLAG_SERVERCOUNT` toggles, which tells the cgame its prediction crosses
+a restart. If latched `sv_maxclients` or `g_gametype` changed, the map is spawned again instead.
 
-`SnapshotVisibilityTest` uses original synthetic fixtures covering followed-player exclusion,
-audience flags, split-plane cluster membership despite overlapping leaf bounds, live area doors,
-spanning entities, recursive portal cycles, portal ranges, broadcast semantics, unavailable
-visibility, stable capacity handling, and defensive snapshot storage. The client ABI tests cover
-transport layout separately.
+## Client side
 
-Behavior was checked against the unchanged upstream ioquake3 `sv_snapshot.c`, `cm_test.c`,
-`q_shared.h`, and `g_public.h` at commit `588393618dbc82e7207c21c6ddecca229944a03a` in the ignored
-local reference checkout. A standalone header `offsetof` probe verified the shared early fields:
-player origin 20, client number 140, view height 164; entity origin 92, origin2 104, and modern
-generic1 204. The Java selection algorithm and fixtures are original implementations; no native
-engine functions were copied or mechanically translated.
+`SnapshotPipeline` applies every accepted message in wire order: a gamestate starts a new level
+(and clears snapshot history), reliable server commands go into a ring of 64, snapshots into a
+history of 32 by message number together with the command sequence at their arrival and their
+ping. The cgame reads them through `trap_GetSnapshot` ([CGAME.md](CGAME.md)), converted to its ABI
+profile.
 
-## Local map restart
-
-Fast restarts preserve client connections, the cgame VM, reliable command numbering and registered scene assets. The qagame VM receives shutdown/init with restart=true, its located entities and area portal references are rebuilt, and connected players receive CLIENT_CONNECT with firstTime=false before CLIENT_BEGIN. Completed restart initialization frames advance the same monotonic server clock. A reliable `map_restart` command and toggled snapshot flag4 (SNAPFLAG_SERVERCOUNT) inform original cgame that prediction crosses a restart. A game-type or client-capacity change selects a full map spawn instead. Synthetic ABI tests verify callback arguments, sequence/buffer retention, both snapshot layouts, repeated flag toggling and cgame command ownership; original retail qagame/cgame and Vulkan lifecycle audits exercise the retained-client path.
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md).

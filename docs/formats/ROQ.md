@@ -1,98 +1,65 @@
-# RoQ decoder
+# RoQ cinematics
 
-`RoqDecoder` independently reads Q3 information/codebook/VQ and mono/stereo DPCM
-chunks from a bounded stream, retaining two image buffers and producing owned
-planar frames and PCM. The format reference is [Tim Ferguson's published
-description](https://multimedia.cx/mirror/idroq.txt). No native engine routine was
-read or translated. Eleven synthetic tests cover buffering, block modes, audio
-predictors, bounds, malformed input and an unused terminal mode word.
+RoQ is Quake III's movie format: vector-quantised YCbCr video with DPCM audio. It is used by the
+`cinematic` console command, the menu and cgame cinematic imports (`trap_CIN_*`) and `videoMap`
+shader stages.
 
-Original movies exposed a two-byte unused next mode word when a frame exhausts
-its final eight-mode codeword. The decoder permits exactly that word at that
-boundary; partial or longer trailing data, and trailing words before that boundary,
-remain errors. A regression checks both arbitrary word bytes and the following
-chunk boundary. This exception was established by original-asset observations and
-differential validation, rather than specified by the format reference.
+Code:
+[`RoqDecoder`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/roq/RoqDecoder.java)
+(streaming decoder),
+[`Cinematics`](../../engine/client/src/main/java/dev/bluevista/craftq3/engine/client/video/Cinematics.java)
+(cinematic handles for the ui and cgame),
+[`Q3VideoMaps`](../../mc/fabric/src/client/java/dev/bluevista/craftq3/mc/fabric/client/render/Q3VideoMaps.java)
+(`videoMap` textures in the Fabric renderer). Format reference: Tim Ferguson's
+[RoQ description](https://multimedia.cx/mirror/idroq.txt).
 
-The packaged decoder now matches FFmpeg for every planar video frame and all PCM
-bytes across all 11 RoQ entries in the locally supplied retail `pak0.pk3`:
-7,715 video frames and 5,444,948 audio sample frames. All are 512×256 at 30 fps.
-`scripts/AuditRoq.py` drives `AuditRoq.java`, comparing per-frame SHA-256 and the
-aggregate PCM SHA-256. A memory-only loopback range server gives the native
-reference seekable input without extracting or packaging game assets.
+## Stream layout
 
-FFmpeg emits a terminal-header demux diagnostic at EOF on these inputs despite
-zero exit status and complete output. The runner retains it and permits only that
-exact diagnostic; matching frame counts, every frame hash and the PCM hash remain
-required. Other diagnostics or nonzero exit status fail the audit. Results are in
-`/tmp/craftq3-gameplay-final-roq/report.json`; see [validation](../VALIDATION.md).
+All values are little-endian. The file starts with an 8-byte header: `0x1084`, `0xFFFFFFFF` and
+the frame rate (1 to 120). Then come chunks, each with an 8-byte header (16-bit id, 32-bit length,
+16-bit argument) followed by `length` bytes:
 
-`RoqPlayback` now supplies the platform-independent presentation timeline. It streams
-through `VirtualFileSystem.open`, retains the current and one future frame, and
-submits ordered immutable PCM with sample positions to an audio sink. The clock
-uses integer units shared by the frame rate and 22050 Hz audio, so looping does
-not accumulate millisecond rounding drift. ONCE releases the final frame at the
-end, HOLD retains it, and LOOP reopens the virtual stream. Movie duration includes
-both the final video-frame interval and any audio tail. A silent movie invokes no
-audio callbacks. Stop, EOF and failures release the decoder and audio queue.
+| Id | Chunk | Notes |
+| --- | --- | --- |
+| `0x1001` | Info | width, height, then 8 and 4 (block sizes); dimensions are multiples of 16, at least 16, at most 4,194,304 pixels, and may not change later |
+| `0x1002` | Codebook | argument high byte: 2x2 cells (0 means 256), low byte: 4x4 quads (0 means 256 when data remains); a cell is 4 Y bytes plus Cb and Cr, a quad is four cell indices |
+| `0x1011` | Video frame | argument is the signed motion offset (high byte x, low byte y); 16-bit code words of eight 2-bit codes describe each 8x8 block |
+| `0x1020` | Mono audio | argument is the initial predictor |
+| `0x1021` | Stereo audio | argument high and low bytes are the left and right predictors (shifted into the high byte) |
 
-Each advance processes at most 256 decoded events; after a long stall the caller
-can repeat the same monotonic timestamp while `catchingUp()` is true. Already-known
-whole loop cycles are skipped without repeatedly reopening the input. The clock
-accepts up to 24 hours per playback. The sink receives exact cycle origins and
-sample indices; a native implementation must queue PCM against those positions,
-not start unrelated sound voices for individual chunks.
+Block codes: 0 keeps the block from two frames back, 1 copies a motion-compensated block from the
+previous frame, 2 paints a codebook quad, 3 subdivides (into 4x4 blocks, then into cells).
+Motion vectors pointing outside the frame are rejected. When a frame ends exactly as its last code
+word is used up, original encoders may append one unused 2-byte code word; exactly that is
+accepted, and any other trailing data is an error.
 
-PK3 streams retain normal override/pure selection, mark pack references at open,
-check declared size and CRC at EOF, and permit early cancellation without draining
-the entry. Loose streams recheck containment/type and reject size changes. RoQ
-entries may stream up to 512 MiB; buffered reads and nonmovie entries retain their
-64 MiB limit. Eight playback tests and four streaming tests cover timing, modes,
-audio continuity, bounded catch-up, cleanup errors, malformed/reopened input,
-overrides, CRC/size rejection, early close and large movies.
+Audio is 22,050 Hz signed 16-bit. Each byte is a delta: magnitude `(b & 127)^2`, negative when
+bit 7 is set, added to the channel's predictor with 16-bit wrap. Audio positions count sample
+frames from the start of the movie, independent of video chunks.
 
-`scripts/AuditRoqPlayback.java` runs all 11 supplied movies at 16 ms presentation
-steps against the saved, FFmpeg-validated frame/PCM hashes. All 7,715 frames and
-5,444,948 audio sample frames match through the final packaged playback layer.
-It also requires ordered presentation, contiguous samples and clean EOF/audio
-lifecycle. Evidence: `/tmp/craftq3-roq-playback-final-audit.log`.
+Decoded video frames are planar full-range Y, Cb and Cr at full resolution; `Video.image()`
+converts to RGBA with the JFIF coefficients.
 
-The native PCM queue/backend now passes original movie audio and resource-lifecycle
-checks (see [audio](../AUDIO.md)). Synchronizing the presentation clock with its
-prefetch/start time, CIN syscalls, fullscreen cinematic commands and original menu
-integration remain unfinished. The playback-layer audit
-does not establish in-game movie display or audible playback.
+## Limits
 
+A stream may be at most 512 MiB (PK3 entries ending in `.roq` may expand that far; other entries
+are limited to 64 MiB, see [PK3.md](PK3.md)), a chunk at most 8 MiB, and a movie 216,000 frames.
+Unknown chunk ids, bad lengths, undefined codebook entries and channel-count changes raise
+`RoqFormatException` (unchecked); either kind of failure closes the decoder.
 
-## Movie image submission
+## Playback
 
-`CgameFrame.Image` carries an immutable RGBA snapshot, a stream identity and a
-framebuffer rectangle. Frames allow up to 32 distinct streams and 64 MiB of active
-movie pixels; conflicting snapshots for one stream in a single frame are rejected.
-Repeated draws of the same snapshot count once against this budget. Submitted
-movie quads use opaque replacement, clamped linear sampling and no world depth or
-lighting, while retaining their position among ordinary HUD/view commands.
+`Cinematics` implements the `CIN_*` imports with 16 handles (`MAX_VIDEO_HANDLES`). A name without
+a directory is opened as `video/<name>.roq`. Flags: `LOOP` restarts at the end, `HOLD` keeps the
+last frame (status `FMV_IDLE`), otherwise the movie ends with `FMV_EOF`; `SILENT` drops the
+soundtrack, which otherwise goes to the sound system's raw-sample stream at `s_volume`. Each
+`run` decodes up to the movie's clock, at most 512 events, so a stall cannot block a frame.
+Drawn extents are in the 640x480 virtual screen, scaled to the framebuffer.
 
-The Minecraft backend keeps one texture/view per submitted stream, writes new
-frames into the same GPU allocation, and skips uploads of the same immutable
-snapshot. Size changes replace that allocation. Images absent from the next
-submitted frame, a return to ordinary world rendering, and backend close release
-retained movie resources. Movie pixels use a private cache rather than replacing
-registered static textures. Uploads use the same Blaze3D APIs as other assets and
-therefore retain Vulkan compatibility.
+`videoMap` stages are played by the Fabric renderer: each file is one looping, silent stream shared
+by every stage that names it, decoded on a worker thread from the whole file in memory. The frame
+shown is `floor(shaderTime x frameRate)` wrapped at the file's length, uploaded at the movie's own
+size; see [DIVERGENCES.md](../DIVERGENCES.md) and [SHADERS.md](SHADERS.md).
 
-The live `-Pq3VideoInstallation=<installation>` fixture on `runSmokeClient` silently
-plays original `video/idlogo.roq` into an inset framebuffer rectangle. GPU readback
-at frames 90 and 180 matches 129,284 interior pixels per frame with zero RGB error
-against the decoder's RGBA conversion. It checks background/movie/HUD ordering,
-30 held renders without repeated uploads, a 2×2 replacement scaled to 64×64, all
-four clamped corner colors, removal and close with another image still active.
-181 original frames share one allocation; resize uses a second, and the final
-close probe uses a third. Logs: `/tmp/craftq3-video-render-final-live.log`.
-Inspected captures: `/tmp/craftq3-movie-render-{90,180,resize}.png`.
-
-This establishes movie pixel presentation through the native backend. It does not
-establish original cinematic syscall behavior, fullscreen layout, audio/video
-synchronization or a native-Q3 RGB conversion comparison. The decoder's planar
-output was compared with FFmpeg separately; this GPU check compares against the
-production Java RGBA conversion. Audio remains intentionally silent in this fixture.
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
+`RoqDecoderTest`.

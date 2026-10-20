@@ -1,55 +1,91 @@
-# MD3 version 15 and multipart player assets
+# MD3 models, skins and animation.cfg
 
-`craftq3-assets` reads MD3 data without Minecraft, rendering, native, or engine-code dependencies.
-The implementation is independently written against the published format, with authored synthetic
-fixtures. No commercial model bytes or copied/transliterated engine routines are included.
+MD3 (`IDP3`, version 15) holds vertex-animated models: frames, per-frame attachment tags and
+surfaces. Player models add `.skin` files and an `animation.cfg`. The readers produce immutable
+CPU data; `engine/render-ir` uploads and draws it, and the cgame chooses frames and `backlerp`.
 
-The primary layout reference is id Software's
+Code (`engine/formats`, package `formats.md3`):
+[`Md3Reader`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/md3/Md3Reader.java),
+[`Md3Model`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/md3/Md3Model.java),
+[`Md3Animation`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/md3/Md3Animation.java),
+[`SkinParser`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/md3/SkinParser.java),
+[`AnimationConfig`](../../engine/formats/src/main/java/dev/bluevista/craftq3/engine/formats/md3/AnimationConfig.java).
+Layout reference: id Software's public
 [qfiles.h](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/qfiles.h).
-The little-endian model header is 108 bytes, begins with ASCII `IDP3` and version 15, and supplies
-counts plus offsets for frames, per-frame tags, chained surfaces, and the declared end. Frame records
-are 56 bytes; tags are 112 bytes. Each 108-byte surface header has relative offsets for 12-byte
-triangles, 68-byte shaders, 8-byte UVs, and 8-byte packed vertices per frame. Signed XYZ shorts are
-scaled by 1/64 into Q3 units. UVs and original triangle order are preserved.
 
-`Md3Reader.read(byte[])` returns an immutable `Md3Model` or a checked `Md3FormatException`.
-Limits are 64 MiB input, 1,024 frames, 16 tags, 32 surfaces, 256 shaders per surface, 4,096 vertices
-and 8,192 triangles per surface, and two million decoded vertex samples per model. Counts, offsets,
-nonempty overlapping blocks, triangle references, finite floats, frame agreement, and stable tag
-names/order are checked before dependent access. Empty blocks and trailing file padding are allowed.
+## Layout
 
-The model has immutable frame bounds, origins, tags, material names, triangles, UVs, and decoded
-position/normal samples. `Frame.hasBounds()` is false for inverted empty boxes in tag-only exports;
-geometry-bearing models must have ordered bounds. `Tag.transformPoint`, `transformDirection`, and
-`compose` operate on Q3's Z-up coordinates using the stored basis axes.
+All fields are little-endian.
 
-Normals use two spherical angles (high-byte azimuth, low-byte polar), each multiplied by `2π/255`,
-following the [published MD3 normal description](https://icculus.org/~phaethon/q3a/formats/md3format.html).
-This is analytical decoding, not a reproduction of an engine's quantized sine lookup table.
-`Md3Animation.interpolateSurface` blends positions and normalized normals.
-`interpolateTag` blends origins and independently normalizes blended axes; it does not substitute
-quaternion interpolation. Degenerate opposite directions choose an endpoint. Fractions weight the
-destination frame, so a cgame-provided `backlerp` becomes `1-backlerp`.
+| Block | Bytes | Contents |
+| --- | ---: | --- |
+| Header | 108 | `IDP3`, version 15, 64-byte name, flags, frame/tag/surface/skin counts, frame, tag and surface offsets, end offset |
+| Frame | 56 | mins, maxs, local origin, radius, 16-byte name |
+| Tag (per frame) | 112 | 64-byte name, origin, three axis vectors |
+| Surface header | 108 | `IDP3`, 64-byte name, flags, frame/shader/vertex/triangle counts, triangle, shader, texture-coordinate and vertex offsets (relative to the surface), end offset (to the next surface) |
+| Shader | 68 | 64-byte name, index |
+| Triangle | 12 | three vertex indices |
+| Texture coordinate | 8 | s, t |
+| Vertex (per frame) | 8 | x, y, z as signed shorts in 1/64 units, packed normal |
 
-`SkinParser.parse` supplies immutable surface/material mappings, ignores attachment entries, supports
-comments and quoted fields, and canonicalizes material paths. Lookup ignores case and can strip a
-surface's terminal `_digit` LOD suffix. The first duplicate mapping wins. File conventions follow
-id's [player model manual](https://icculus.org/projects/gtkradiant/documentation/Model_Manual/model_manual.htm).
+The packed normal's high byte is latitude and its low byte longitude. It is decoded as the original
+renderer does, through a 1,024-entry sine table with step 2pi/1023
+(`Md3Reader.decodeNormal`), so results are unit length only to within about 0.5%.
 
-`AnimationConfig.parse` reads the 25 classic player rows and six optional Team Arena torso rows,
-plus sex, footsteps, head offset, fixed legs, and fixed torso metadata. Missing optional torso clips
-use the gesture clip. Lower-body frame indices subtract the export offset between `LEGS_WALKCR`
-and `TORSO_GESTURE`; shared death frames retain their indices. Negative frame counts specify reverse
-playback; reverse crouch/walk clips are synthesized. Zero FPS becomes one with a diagnostic. See id's
-[Team Arena character documentation](https://icculus.org/gtkradiant/documentation/New_Teams_For_Q3TA/).
+## Limits and leniency
 
-`Md3Animation.sample` offers deterministic preview clip timing, including loop tails, reverse,
-flip-flop, and final-frame hold. The original game VM remains responsible for gameplay animation
-selection and timing; its renderer frames can be interpolated directly.
+Like the original loader, the reader requires the ident, version 15 and at least one frame and
+otherwise trusts the exporter: inverted frame bounds (tag-only models; see `Frame.hasBounds`),
+duplicate tag names, aliased blocks and surfaces whose frame count differs from the model's are
+accepted and noted. Non-finite frame, tag and texture-coordinate floats are replaced by zero and
+noted. It rejects blocks outside the file, an end offset past the file, triangles naming absent
+vertices, surfaces that do not advance, and these limits:
 
-Validation on the user-provided, ignored `pak0.pk3` loaded all **354 MD3s, 267 skins, and 23 player
-animation configurations**, with zero failures. Models contained 642 surfaces, 24,734 frames,
-6,162,695 vertex samples, and at most 247 frames each. Ten weapon-hand files had no surfaces and
-inverted exporter bounds, motivating the explicit empty-box support. Thirteen synthetic tests cover
-decoded data, immutable ownership, attachments, playback, config behavior, malformed bounds/offsets,
-all truncations of a fixture, and 1,000 seeded header mutations.
+| Limit | Value |
+| --- | ---: |
+| File size | 64 MiB |
+| Frames | 1,024 |
+| Tags per frame | 256 |
+| Surfaces | 256 |
+| Shaders per surface | 256 |
+| Vertices per surface | 4,096 |
+| Triangles per surface | 8,192 |
+| Vertex samples (frames x vertices, whole model) | 4,000,000 |
+
+Surface names are lower-cased. Errors are `Md3FormatException` (unchecked).
+
+## Interpolation
+
+`Md3Animation` is a helper for consumers and previews; the original cgame supplies its own timing.
+Fractions weight the destination frame, so a cgame `backlerp` becomes `1 - backlerp`.
+`interpolateSurface` blends positions and renormalises blended normals; `interpolateTag` blends the
+origin and normalises each blended axis (no quaternion interpolation); an antipodal blend picks the
+nearer endpoint. `Md3Model.Tag` offers `transformPoint`, `transformDirection` and `compose`.
+
+## Skins
+
+`SkinParser` reads `surface,shader` pairs with the renderer's comma tokenizer (whitespace and commas
+separate words, quotes group, `//` and `/* */` comments are skipped; text ends at a NUL). Surface
+names are lower-cased, any name containing `tag_` is skipped, the first pair for a surface wins and
+a missing shader is noted. Lookup falls back from `name_N` to `name` (level-of-detail suffix).
+Limits: 1 MiB of text, 4,096 surfaces.
+
+## animation.cfg
+
+`AnimationConfig` follows the game's parser. Optional directives (`sex`, `footsteps`, `headoffset`,
+`fixedlegs`, `fixedtorso`) come first; unknown tokens are noted. The first token starting with a
+digit begins the rows: first frame, frame count, looping frames and frames per second, parsed like
+C `atoi`/`atof`. Rules:
+
+- At least 25 rows (death, torso and legs animations) are required; rows past the 31st are
+  ignored. The six Team Arena torso gestures default to `TORSO_GESTURE` when absent.
+- Lower-body first frames (from `LEGS_WALKCR` to `LEGS_TURN`) are made relative to `lower.md3` by
+  subtracting the difference between the `LEGS_WALKCR` and `TORSO_GESTURE` first frames.
+- A negative frame count plays the clip in reverse; a zero frame rate becomes one.
+- `LEGS_BACKCR` and `LEGS_BACKWALK` are synthesized as reversed `LEGS_WALKCR` and `LEGS_WALK`.
+
+Limit: 64 KiB of text. References: id's
+[player model manual](https://icculus.org/gtkradiant/documentation/Model_Manual/model_manual.htm).
+
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
+`Md3ReaderTest`, `Md3AnimationTest`, `Md3PlayerConfigTest`.

@@ -1,105 +1,120 @@
-# Collision host contract
+# Collision model
 
-`craftq3-collision` supplies original Java 25 collision geometry and queries without Minecraft,
-rendering, VM, or native-code dependencies. The original game QVM remains responsible for movement,
-steps, friction, gravity, projectiles, and game rules; this module answers its geometric queries.
+The collision ("CM") layer answers the geometric queries of the game, the cgame's prediction and
+the bots: box and capsule traces, point contents, leaf, cluster and area queries, PVS tests and
+area portals. It is built once per map from the BSP ([BSP46.md](BSP46.md)) and is immutable
+afterwards, so one model serves every thread. Movement, physics and game rules stay in the QVMs.
 
-## Public API
+Code (`engine/collision`):
+[`CollisionModel`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/CollisionModel.java),
+[`Clip`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/Clip.java)
+(brush, facet and capsule clipping),
+[`PatchBuilder`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/PatchBuilder.java)
+and [`PatchTable`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/PatchTable.java)
+(patch facets),
+[`BrushTable`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/BrushTable.java),
+[`Trace`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/Trace.java),
+[`TraceRequest`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/TraceRequest.java),
+[`TraceWork`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/TraceWork.java),
+[`TraceMerge`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/TraceMerge.java),
+[`AreaPortalState`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/AreaPortalState.java),
+[`CollisionSource`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/CollisionSource.java),
+[`BoxSource`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/BoxSource.java),
+[`Contents`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/Contents.java),
+[`SurfaceFlags`](../../engine/collision/src/main/java/dev/bluevista/craftq3/engine/collision/SurfaceFlags.java).
+Reference: id Software's public
+[surfaceflags.h](https://github.com/id-Software/Quake-III-Arena/blob/master/code/game/surfaceflags.h)
+for the contents and surface flag values.
 
-- `TraceWorld.trace(TraceRequest)` returns a `TraceResult` for a ray or swept axis-aligned box.
-  `TraceRequest.box(start, end, mins, maxs, contentsMask)` keeps box extents relative to its moving
-  origin; asymmetric player extents work directly. `ray(...)` uses zero extents. `ignoring(entity)`
-  excludes one entity identifier. Negative one is the conventional no-exclusion value.
-- `pointContents(point, mask, ignoredEntity)` combines the complete contents values of containing
-  brushes that overlap the query mask. Overloads query all contents or omit the exclusion.
-- `BspTraceWorld(BspMap)` compiles world model zero. `model(index, entity, origin, angles)` returns a
-  separately positioned inline model. Angles are Quake pitch/yaw/roll degrees, including positive
-  downward pitch. The moving box remains aligned to world axes when the obstacle rotates.
-- `BoxTraceWorld(min, max, contents, surfaceFlags, entity)` exposes a reusable static world AABB.
-  `BoxTraceWorld.at(origin, mins, maxs, ...)` accepts relative bounds. Linked game entities and later
-  Minecraft collision adapters can supply these through the same interface.
-- `CompositeTraceWorld(List<TraceWorld>)` chooses the earliest collision across providers, retaining
-  stable provider order for equal fractions. Start-solid flags combine across all providers.
-  The caller handles owner relationships and live entity contents before adding providers.
+## Models and handles
 
-All geometry and returned collections are immutable. Queries allocate private scratch state and
-can run concurrently. Inline-model cache access is synchronized. Translations reuse compiled model
-rotation geometry and translate the query and resulting plane; moving a platform does not rebuild
-all of its brush hulls or patch triangles.
+Handles are ints as in `clipHandle_t`: 0 is the world, `1..inlineModelCount()-1` the inline models
+(doors, platforms), and 255 and 254 the temporary box and capsule built by `tempBoxModel` (one of
+each per `TraceWork`). World traces walk the BSP tree; inline models test their own brushes and
+patches. Brushes take their contents from their shader and their surface flags from each side.
 
-## Results and geometry
+Per-thread scratch lives in a `TraceWork`, so queries do not allocate; hot paths pass one
+explicitly, other calls use a per-thread work of the model.
 
-`fraction` is in `[0,1]` along the requested origin segment; `endPosition` is that origin, not a box
-corner. A clear trace ends at fraction one. Entry contacts maintain a 0.125 Quake-unit separation
-from the obstacle. `startSolid` means the initial volume overlaps a shape. If a shape contains both
-ends of the entire segment, `allSolid` is true, fraction is zero, and the end is the start. An escape
-from initial overlap may return fraction one with `startSolid` true. `allSolid` combines results of
-individual convex shapes; it does not prove that a union of overlapping shapes covers a segment.
+## Traces
 
-An impact carries the unexpanded world-space plane, full contents, surface flags, entity/model,
-brush/side or patch-face indexes, and texture/shader name. `Plane.NONE` denotes an all-solid result
-without a meaningful entry plane. World entity number is 1022. Synthetic shapes have negative BSP
-indexes; generated support bevels have side index negative one. Equal-distance hits choose brushes
-by ascending BSP index, then patches by ascending face index. Additional support bevels inherit the
-first brush side's material when there is no original side corresponding to that bevel.
+`boxTrace` sweeps a box (or the capsule fitted to it) from `start` to `end` (`CM_BoxTrace`); a null
+box is a point and `start == end` is a position test. The result mirrors `trace_t`:
 
-World brush and patch candidates come from BSP splitting planes and leaf references. Swept extents
-select both children when necessary; repeated nodes, leaves, brushes, and faces are deduplicated.
-Geometry absent from leaf references is conservatively included. This traversal is unrelated to
-render PVS: invisible geometry still collides. Inline models use their model brush/face ranges.
-Rotated brushes gain world-axis and edge-cross-axis support planes for swept-box corner contacts.
+- `fraction` along the segment and `endPos`; contacts stop 0.125 units (`SURFACE_CLIP_EPSILON`) in
+  front of the surface.
+- `startSolid` when the start overlaps a solid; `allSolid` (with fraction 0) when the trace never
+  leaves it.
+- The hit plane, surface flags, contents and the entity number set by the caller (1022 is the
+  world, 1023 none).
+- Within one model, a solid replaces the result only when it is strictly nearer, so equally near
+  hits keep the first one found. `TraceMerge` applies the same rule when the server or client
+  combines the world with linked entities: all-solid and start-solid are sticky.
 
-Biquadratic patch faces become one-sided triangles with axis and edge support planes. Their full
-control-point positions and normals determine the surface and front direction. Uniform eight-way
-subdivision per three-by-three control block is the default; an overload accepts one to sixteen.
-Shared control-block edges use the same parameter samples. Nonsolid surfaces (`SURF_NONSOLID`) are
-omitted. Patches do not enclose a volume for `pointContents`.
+Box sweeps descend into both sides of a non-axial node plane unless they stay 2,048 units beyond
+it, as the original does, so expanded axial brushes behind slanted planes cannot be missed. A
+position test gathers at most 1,024 leaves.
 
-## Current limits
+`transformedBoxTrace` traces against a model placed at an origin with angles
+(`CM_TransformedBoxTrace`): the box is made symmetric about its centre, the segment is moved (and,
+for rotated models, rotated) into the model's frame, and the box keeps its axes there, an
+approximation the original makes too. The hit normal is rotated back and, unlike the original, the
+plane distance is reported in world space ([DIVERGENCES.md](../DIVERGENCES.md)). `entityContact`
+is the position test behind `trap_EntityContact`.
 
-- Patch tessellation is an approximation and does **not** reproduce Quake III's adaptive collision
-  facet builder exactly. Edge contacts, curved ramps, and initial patch overlaps need comparative
-  gameplay testing before claiming identical original-engine collision behavior.
-- Sweeps support rays and axis-aligned boxes. Capsules, continuously rotating moving query volumes,
-  and exact triangle-mesh/MD3 collision are not implemented. Render mesh faces and flares are not
-  collision brushes. BSP surfaces rely on their compiled brushes or patch geometry.
-- BSP traversal conservatively collects candidates for the entire segment; it does not yet shorten
-  traversal after a near hit. Inline models test all of their own geometry. Server-side entity
-  broad-phase filtering remains the host's responsibility.
-- A compiled model may contain at most 200,000 patch triangles and 4,000,000 support planes. Rotated
-  brush reconstruction permits 256 input planes and two million clipping-vertex work units per
-  brush. Model caches retain at most 128 rotations/poses and one million compiled support planes;
-  an oversized model remains queryable without caching. Caller-retained model instances have their
-  own lifetime. Coordinate and finite-number guards reject invalid inputs rather than propagating
-  NaNs. The BSP asset reader is the validation boundary for lump indexes and ranges.
-- Rotated hull construction assumes a finite convex BSP brush and uses a bounded initial clipping
-  polygon. Malformed, unbounded, or extremely ill-conditioned brush descriptions are unsupported.
+## Capsules
 
-## Verification
+A capsule is the vertical capsule fitted to a box, as in the original: its radius is the smaller of
+the box's half extents along x and z, and its two sphere centres lie on the vertical axis. Capsules
+sweep against brushes and patch facets with the sphere nearest each plane, and against temporary
+capsule models as spheres and a vertical cylinder, with surfaces swollen by 1 unit
+(`RADIUS_EPSILON`). Deliberate differences from the original (capsule against capsule is a true
+combined capsule, rotated capsule axes are correct, point contents of a capsule model test the
+capsule, box-against-capsule bounds are recomputed) are listed in
+[DIVERGENCES.md](../DIVERGENCES.md). baseq3 itself does not use capsule traces.
 
-Run `./gradlew :craftq3-collision:test` for original, generated fixtures covering asymmetric swept
-boxes, separation planes and metadata, escaping/entirely solid paths, masks and entity exclusion,
-parallel/zero-length traces, nearest-hit composition, 500 deterministic BSP-versus-box queries,
-leaf deduplication, translated/yaw/pitch/roll inline models, rotated-box corner bevels, and front/
-back curved-patch contacts. Tests contain no commercial map data.
+## Patches
 
-`./gradlew :craftq3-collision:auditCollision` optionally reads the user's existing
-`run/craftq3/games/baseq3` installation in place. Override it with `-Ppk3dir=/path/to/games` and select
-maps with `-PcollisionMaps=q3dm12,q3dm17`. It traces the original player bounds from each deathmatch
-spawn using Quake's nine-unit spawn adjustment and requires an unobstructed initial position and
-supporting floor. The local `pak0.pk3` audit passed all 20 q3dm12 and 11 q3dm17 spawn positions with
-zero start-solid results. This is an integration smoke test, not a complete collision oracle.
+Patch surfaces collide through facets generated from their control grids, following the
+approach of the original:
 
-## Behavioral references
+1. Each column triple is refined with de Casteljau midpoints until the curve's midpoint lies within
+   16 units of the chord (`SUBDIVIDE_DISTANCE`); flat control columns collapse and duplicate
+   columns (within 0.1) are removed. The grid is transposed and the rows refined the same way. A
+   refined grid stops growing at 129 points per side (the patch is then counted as truncated).
+2. Each grid cell's two triangles get planes from a per-patch plane list, shared when every vertex
+   lies within 0.1 of a plane.
+3. A cell is one quad facet when both triangles share a plane, otherwise two triangle facets.
+   Borders are the neighbouring cells' planes, or planes through the edge perpendicular to the
+   surface where there is no distinct neighbour.
+4. Facets whose borders do not enclose them are discarded; bevels are added (the six axial planes
+   of the facet's winding, planes through non-axial edges, and the reversed surface plane).
 
-Implementation is original Java and contains no copied or translated native routines. Published
-Quake III structures and unchanged upstream source were consulted as behavior references:
+Patches whose shader has no contents are skipped. A patch needing more than 1,024 facets or
+4,096 planes is skipped with a warning instead of failing the map load
+([DIVERGENCES.md](../DIVERGENCES.md)); hit plane type and sign bits are recomputed. Patches block
+sweeps and position tests but have no volume for point contents. `CollisionModel.build(map,
+false)` builds without patch collision, like the original `cm_noCurves`.
 
-- [Contents and surface flag values](https://github.com/id-Software/Quake-III-Arena/blob/master/code/game/surfaceflags.h)
-- [Trace result semantics](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/cm_trace.c)
-- [Patch behavior and support-plane concepts](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/cm_patch.c)
-- [Entity filtering and transformed collision contract](https://github.com/id-Software/Quake-III-Arena/blob/master/code/server/sv_world.c)
-- [Original spawn origin adjustment](https://github.com/id-Software/Quake-III-Arena/blob/master/code/game/g_client.c)
+## Point contents, leaves and visibility
 
-Commercial PK3 data, generated collision geometry, and native reference builds remain local and
-are neither test fixtures nor release contents.
+- `pointContents` ORs the contents of every brush containing the point (points on a face count
+  as inside), in the world or a model; `transformedPointContents` places the model first.
+- `pointLeafnum`, `leafCluster`, `leafArea` and `boxLeafnums` (the original leaf order, with the
+  last leaf reported past the capacity) query the BSP tree.
+- `clusterVisible` and `inPVS` use the BSP visibility rows; a negative cluster or a map without
+  visibility sees everything. `inPVS` also requires the two areas to be connected through open
+  area portals; `inPVSIgnorePortals` does not.
+- `AreaPortalState` (one per running game) keeps a reference count per area pair, adjusted as doors
+  open and close, and a flood-filled connectivity. All portals start closed.
+
+## Foreign geometry
+
+A `CollisionSource` adds solids that are not part of the BSP to world traces and point contents
+(the Minecraft bridge and building modes use it; see [MINECRAFT.md](../MINECRAFT.md)).
+`BoxSource` is a fixed set of world-space boxes, clipped in insertion order so equally near hits
+resolve to the earlier box.
+
+Independent implementation; see [LICENSE-NOTES.md](../../LICENSE-NOTES.md). Tests:
+`BrushTraceTest`, `CapsuleTraceTest`, `ModelTraceTest`, `PatchTraceTest`, `VisibilityTest`,
+`AllocationTest`, and the `@RealData` `RealMapCollisionTest`.

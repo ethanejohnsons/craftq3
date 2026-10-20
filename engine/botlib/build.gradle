@@ -1,4 +1,12 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
+    // Botlib reaches the world only through its own BotWorld SPI, as the original library uses
+    // its import table; it does not use collision types even though the graph allows the edge.
     api project(':engine:collision')
+    testImplementation testFixtures(project(':engine:formats'))
+    testImplementation project(':engine:testkit')
+}
+tasks.named('test') {
+    // The opt-in real-data sweep routes every map in the installation.
+    maxHeapSize = '2g'
 }

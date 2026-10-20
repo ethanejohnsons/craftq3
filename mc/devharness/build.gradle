@@ -62,6 +62,7 @@ dependencies {
     implementation project(':engine:audio') // AudioDevice SPI types for the audio client test
     implementation project(':engine:fs') // SearchPath for the installation tests
     implementation project(':engine:console') // KeyNames for the input client test
+    implementation project(':engine:render-ir') // RenderScene for the map render tests
 }
 
 processResources {

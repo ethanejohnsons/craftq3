@@ -9,6 +9,10 @@ plugins {
 
 base { archivesName = 'craftq3-devharness' }
 
+// The maintainer's installation for the real-data client tests: CRAFTQ3_Q3ROOT reaches the mod
+// through CraftQ3Config's run-only system-property override, so no config file is written.
+def q3Root = System.getenv('CRAFTQ3_Q3ROOT')
+
 loom {
     splitEnvironmentSourceSets()
     mods {
@@ -35,6 +39,7 @@ loom {
             property 'fabric.client.gametest'
             property 'craftq3.devharness.expectedBackend', 'OpenGL'
             programArgs '--username', 'Player0', '--graphicsBackend', 'opengl'
+            if (q3Root) property 'craftq3.installation', q3Root
             ideConfigGenerated false
         }
         clientGameTestVulkan {
@@ -44,6 +49,7 @@ loom {
             property 'fabric.client.gametest'
             property 'craftq3.devharness.expectedBackend', 'Vulkan'
             programArgs '--username', 'Player0', '--graphicsBackend', 'vulkan'
+            if (q3Root) property 'craftq3.installation', q3Root
             ideConfigGenerated false
         }
     }
@@ -63,9 +69,24 @@ dependencies {
     implementation project(':engine:fs') // SearchPath for the installation tests
     implementation project(':engine:console') // KeyNames for the input client test
     implementation project(':engine:render-ir') // RenderScene for the map render tests
+    implementation project(':engine:session') // EngineSession state for the pure-mode test
+    implementation project(':engine:client') // snapshots and input catchers
+    implementation project(':engine:net') // snapshot player state bytes
+    implementation project(':engine:vm-abi') // playerState_t offsets
 }
 
+// -PclientTests=Q3PureMode,Q3Input keeps only the client game tests whose class names contain one
+// of the given names (a quicker loop while working on one area). Default: every test.
+def clientTests = (findProperty('clientTests') ?: '').toString().split(',').findAll { it }
 processResources {
-    inputs.properties version: project.version
+    inputs.properties version: project.version, clientTests: clientTests.join(',')
     filesMatching("fabric.mod.json") { expand version: project.version }
+    doLast {
+        if (!clientTests) return
+        def file = new File(destinationDir, 'fabric.mod.json')
+        def json = new groovy.json.JsonSlurper().parse(file)
+        json.entrypoints['fabric-client-gametest'] = json.entrypoints['fabric-client-gametest']
+            .findAll { name -> clientTests.any { name.contains(it) } }
+        file.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(json))
+    }
 }

@@ -13,7 +13,8 @@
       "dev.bluevista.craftq3.mc.devharness.client.Q3AudioClientTest",
       "dev.bluevista.craftq3.mc.devharness.client.Q3InputClientTest",
       "dev.bluevista.craftq3.mc.devharness.client.Q3MapRenderClientTest",
-      "dev.bluevista.craftq3.mc.devharness.client.Q3EffectsRenderClientTest"
+      "dev.bluevista.craftq3.mc.devharness.client.Q3EffectsRenderClientTest",
+      "dev.bluevista.craftq3.mc.devharness.client.Q3PureModeClientTest"
     ]
   },
   "depends": {

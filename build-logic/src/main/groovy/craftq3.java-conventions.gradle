@@ -1,0 +1,36 @@
+// Shared Java settings for every CraftQ3 project, legacy and rewrite alike.
+plugins {
+    id 'java-library'
+    id 'com.diffplug.spotless'
+}
+
+group = providers.gradleProperty('maven_group').get()
+version = providers.gradleProperty('mod_version').get()
+
+repositories { mavenCentral() }
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:all', '-Werror']
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(Test).configureEach { useJUnitPlatform() }
+
+spotless { java { googleJavaFormat('1.36.1') } }
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}

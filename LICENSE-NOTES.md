@@ -1,5 +1,9 @@
 # License and provenance notes
 
+> Describes the legacy engine. Scripts and guides referenced here (`scripts/`, `docs/*.md`) were
+> removed on the `rewrite` branch and remain on `main`; this file is regenerated in Phase 9 of
+> [the rewrite](docs/REWRITE.md).
+
 The repository already contained the GNU General Public License version 3 text in `LICENSE` before this implementation. It is preserved. Mod metadata identifies the existing project license as `GPL-3.0-only`; this does not assert that CraftQ3 is derived from ioquake3. If the owner intends an “or later” grant or another license, that requires an explicit project licensing decision, not an inferred change by the implementation.
 
 The filesystem, parsers, mesh builder, camera and backend code in this pass were independently written. No ioquake3 functions were translated or copied. Public descriptions of file formats and engine behavior were used; ioquake3 filesystem source was consulted as a behavioral reference. This is independent implementation, not a claim of a formally segregated clean-room process. Any future copied/adapted implementation must record its source, copyright notices and compatible licensing before merging. Do not mechanically port engine code merely because this repository already has a GPL file.

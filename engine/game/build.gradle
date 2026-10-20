@@ -1,0 +1,6 @@
+plugins { id 'craftq3.engine-module' }
+dependencies {
+    api project(':engine:vm-abi')
+    api project(':engine:botlib')
+    api project(':engine:net')
+}

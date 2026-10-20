@@ -1,1 +1,12 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+gradlew text eol=lf
+
+# Binary fixtures and archives.
+*.jar binary
+*.png binary
+*.tga binary
+*.jpg binary
+*.wav binary
+*.bin binary
 *.zip filter=lfs diff=lfs merge=lfs -text

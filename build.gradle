@@ -1,33 +1,17 @@
 plugins {
     id 'base'
-    id 'com.diffplug.spotless' version '8.0.0' apply false
+    id 'craftq3.module-graph'
 }
-subprojects {
-    apply plugin: 'java-library'
-    apply plugin: 'com.diffplug.spotless'
-    group = rootProject.maven_group
-    version = rootProject.mod_version
-    repositories { mavenCentral() }
-    java {
-        toolchain.languageVersion = JavaLanguageVersion.of(25)
-        withSourcesJar()
-    }
-    tasks.withType(JavaCompile).configureEach {
-        options.release = 25
-        options.encoding = 'UTF-8'
-        options.compilerArgs += ['-Xlint:all', '-Werror']
-    }
-    dependencies {
-        testImplementation platform('org.junit:junit-bom:5.11.4')
-        testImplementation 'org.junit.jupiter:junit-jupiter'
-        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    }
-    test { useJUnitPlatform() }
-    spotless { java { googleJavaFormat('1.36.1') } }
-    tasks.withType(AbstractArchiveTask).configureEach {
-        preserveFileTimestamps = false
-        reproducibleFileOrder = true
-    }
+
+def rewriteProjects = { subprojects.findAll { craftq3.ModuleGraph.isRewrite(it) && it.childProjects.isEmpty() } }
+def portableProjects = { rewriteProjects().findAll { it.path != ':mc:fabric' } }
+
+tasks.named('build') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:build" } }
+tasks.named('check') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:check" } }
+
+// Everything that must pass on Windows, Linux and macOS: the rewrite without Minecraft.
+tasks.register('portableCheck') {
+    group = 'verification'
+    description = 'Checks every rewrite project except the Minecraft mod; run by the CI OS matrix.'
+    dependsOn portableProjects().collect { "${it.path}:check" }
 }
-tasks.named('build') { dependsOn subprojects.collect { it.tasks.named('build') } }
-tasks.named('check') { dependsOn subprojects.collect { it.tasks.named('check') } }

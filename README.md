@@ -1,5 +1,9 @@
 # CraftQ3
 
+> **Rewrite branch.** This branch is rebuilding CraftQ3 on a new architecture; see
+> [docs/REWRITE.md](docs/REWRITE.md) for the plan and phase status. The playable build is on
+> `main`. The text below describes that build; the guides it links to are on `main`.
+
 **Quake III, reimplemented through Minecraft.**
 
 CraftQ3 is an independent Quake III-compatible runtime implemented as a Minecraft Fabric mod, loading original user-supplied Q3 game data and QVMs directly while using Minecraft as the host platform.

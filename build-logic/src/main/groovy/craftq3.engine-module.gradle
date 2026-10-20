@@ -1,0 +1,11 @@
+// A rewrite module under engine/, mc/ or tools/. Artifacts are named after the
+// project path (":engine:vm-abi" -> "craftq3-engine-vm-abi") so jars never collide.
+plugins { id 'craftq3.java-conventions' }
+
+base { archivesName = 'craftq3' + project.path.replace(':', '-') }
+
+tasks.withType(Test).configureEach {
+    // Real game data is opt-in and never required; see engine:testkit RealData.
+    def q3Root = providers.environmentVariable('CRAFTQ3_Q3ROOT')
+    if (q3Root.isPresent()) environment 'CRAFTQ3_Q3ROOT', q3Root.get()
+}

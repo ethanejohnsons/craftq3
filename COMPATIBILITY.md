@@ -1,5 +1,9 @@
 # Compatibility status
 
+> Describes the legacy engine. Scripts and guides referenced here (`scripts/`, `docs/*.md`) were
+> removed on the `rewrite` branch and remain on `main`; this file is regenerated in Phase 9 of
+> [the rewrite](docs/REWRITE.md).
+
 Target: Quake III Arena / ioquake3, BSP46 and standard QVM mods. Host: Minecraft **26.2**, Java **25**, Fabric Loader **0.19.3**, Fabric API **0.156.0+26.2**.
 
 | Area | Current implementation | Remaining validation / work |

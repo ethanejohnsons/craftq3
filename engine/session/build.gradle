@@ -1,0 +1,5 @@
+plugins { id 'craftq3.engine-module' }
+dependencies {
+    api project(':engine:client')
+    api project(':engine:game')
+}

@@ -1,0 +1,2 @@
+// Applied to the root project: enforces craftq3.ModuleGraph once every project is configured.
+gradle.projectsEvaluated { craftq3.ModuleGraph.verify(rootProject) }

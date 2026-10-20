@@ -1,0 +1,11 @@
+// Architecture rules over every portable rewrite project. The Minecraft mod is excluded:
+// its dependency edges are enforced by ModuleGraph instead.
+plugins { id 'craftq3.engine-module' }
+dependencies {
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
+    for (path in ['common', 'fs', 'formats', 'console', 'net', 'vm', 'vm-abi', 'collision', 'botlib',
+                  'game', 'render-ir', 'audio', 'client', 'session', 'headless']) {
+        testImplementation project(":engine:$path")
+    }
+    testImplementation project(':mc:hybrid')
+}

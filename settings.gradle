@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild 'build-logic'
     repositories {
         maven { url = 'https://maven.fabricmc.net/' }
         gradlePluginPortal()
@@ -6,9 +7,18 @@ pluginManagement {
     }
 }
 rootProject.name = 'craftq3'
-include 'craftq3-core', 'craftq3-assets', 'craftq3-platform', 'craftq3-fabric'
-include 'craftq3-render'
-include 'craftq3-collision', 'craftq3-vm'
-include 'craftq3-server'
-include 'craftq3-client'
-include 'craftq3-botlib'
+
+// Rewrite projects. Allowed dependency edges live in build-logic/.../ModuleGraph.groovy.
+include ':engine:common', ':engine:fs', ':engine:formats', ':engine:console', ':engine:net'
+include ':engine:vm', ':engine:vm-abi', ':engine:collision', ':engine:botlib', ':engine:game'
+include ':engine:render-ir', ':engine:audio', ':engine:client', ':engine:session'
+include ':engine:headless', ':engine:testkit'
+include ':mc:hybrid', ':mc:fabric'
+include ':tools:trace-format', ':tools:legacy-oracle', ':tools:arch-check'
+
+// Legacy engine: the behavioural oracle for the rewrite. Each module is deleted once its
+// replacement reaches parity (docs/REWRITE.md).
+['core', 'assets', 'render', 'collision', 'botlib', 'vm', 'server', 'client', 'platform'].each {
+    include ":craftq3-$it"
+    project(":craftq3-$it").projectDir = file("legacy/craftq3-$it")
+}

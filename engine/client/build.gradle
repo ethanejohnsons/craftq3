@@ -1,0 +1,8 @@
+plugins { id 'craftq3.engine-module' }
+dependencies {
+    api project(':engine:vm-abi')
+    api project(':engine:net')
+    api project(':engine:collision')
+    api project(':engine:render-ir')
+    api project(':engine:audio')
+}

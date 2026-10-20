@@ -1,1 +1,0 @@
-dependencies { api project(':craftq3-core'); api project(':craftq3-render'); api project(':craftq3-assets') }

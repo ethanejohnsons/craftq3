@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "craftq3",
+  "version": "${version}",
+  "name": "CraftQ3",
+  "description": "An independent Quake III-compatible runtime hosted by Minecraft. User-supplied game data required.",
+  "environment": "*",
+  "license": "GPL-3.0-only",
+  "entrypoints": {
+    "main": ["dev.bluevista.craftq3.mc.fabric.CraftQ3Mod"],
+    "client": ["dev.bluevista.craftq3.mc.fabric.client.CraftQ3ClientMod"]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "${minecraft_version}",
+    "java": ">=25",
+    "fabric-api": ">=${fabric_version}"
+  }
+}

@@ -1,0 +1,4 @@
+plugins { id 'craftq3.engine-module' }
+dependencies {
+    api project(':engine:fs')
+}

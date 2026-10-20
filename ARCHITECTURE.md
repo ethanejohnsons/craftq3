@@ -1,5 +1,8 @@
 # Architecture
 
+> This document describes the legacy engine now under `legacy/`. The rewrite's architecture is
+> in [docs/REWRITE.md](docs/REWRITE.md#1-target-architecture).
+
 ## Ownership and dependency direction
 
 Minecraft supplies the process, window, lifecycle, GPU/audio access, input, network transport and integration hooks. CraftQ3 owns Quake assets, spatial geometry, simulation, clocks and engine behavior. Local game/client VMs share one engine cvar table. Original qagame owns movement, weapons, entities and game rules; original cgame owns prediction and presentation through its checked host ABI.

@@ -1,5 +1,9 @@
 # Format implementation notes
 
+> Describes the legacy engine. Scripts and guides referenced here (`scripts/`, `docs/*.md`) were
+> removed on the `rewrite` branch and remain on `main`; this file is regenerated in Phase 9 of
+> [the rewrite](../REWRITE.md).
+
 Parsers are host-independent, bounded and tested with synthetic fixtures. Asset names resolve through the virtual filesystem, never through extraction or generated resource packs. Original game assets are not included.
 
 - [PK3 and virtual paths](PK3.md)

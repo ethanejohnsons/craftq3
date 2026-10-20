@@ -899,8 +899,14 @@ public final class GameServer implements BotHost, AutoCloseable {
     for (int i = 0; i < clients.length; i++) {
       ServerClient client = clients[i];
       if (client.state == ServerClient.State.FREE) continue;
-      if (graceful && client.state != ServerClient.State.ZOMBIE)
-        addServerCommand(client, "disconnect \"" + reason + "\"");
+      // The original's ERR_DROP leaves remote clients to time out; telling them is kinder and lets
+      // a connected session return to its menu at once.
+      if (client.state != ServerClient.State.ZOMBIE && !client.bot)
+        addServerCommand(
+            client,
+            "disconnect \""
+                + (graceful ? reason : "Server crashed: " + reason).replace('"', '\'')
+                + "\"");
     }
     for (Listener listener : listeners) listener.levelEnded(this, reason);
     if (graceful) shutdownGameProgs();

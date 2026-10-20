@@ -842,6 +842,8 @@ public final class Protocol68Host implements GameServer.Listener, AutoCloseable 
     for (NetPeer peer : peers) {
       if (peer == null) continue;
       peer.stopDownload();
+      // Packets naming the old level now come back as WRONG_GAME and trigger the new gamestate.
+      peer.session.serverId(source.serverId());
       peer.restartPending = false;
       peer.gotCp = false;
       peer.pureAuthentic = false;

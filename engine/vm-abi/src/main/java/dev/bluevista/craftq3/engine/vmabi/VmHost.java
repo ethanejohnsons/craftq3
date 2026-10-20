@@ -30,7 +30,8 @@ import java.util.TreeMap;
  *   <li>A number the table does not know is logged once, counted and returns 0, or faults under
  *       {@link UnknownPolicy#FATAL}.
  *   <li>{@link Options#strictSyscalls()} ({@code vm_strictSyscalls 1}, on in tests) turns every
- *       degradation and unknown number into a {@link QvmException}.
+ *       degradation and unknown number into a {@link QvmException}; it is still counted, so a
+ *       host's {@link #degradationTotal()} reports the fault after the VM stopped.
  * </ul>
  *
  * Hosts either compose an instance or extend this class (it is open for that). Counters are plain
@@ -161,6 +162,7 @@ public class VmHost implements Syscalls {
   private int degrade(QvmInstance vm, Slot slot, int number, int[] args, RuntimeException failure) {
     Policy policy = slot.entry.policy();
     String description = module + " syscall " + number + " (" + slot.entry.name() + ")";
+    if (policy.degradable() && options.strictSyscalls()) degraded[slot.index]++;
     if (!policy.degradable() || options.strictSyscalls())
       throw new QvmException(
           QvmException.Reason.HOST_FAILURE,

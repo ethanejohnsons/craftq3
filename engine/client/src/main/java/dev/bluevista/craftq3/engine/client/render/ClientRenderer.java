@@ -95,20 +95,26 @@ public final class ClientRenderer {
 
   /** Ends the screen update, sending its frame to the sink (also when empty). */
   public CgameFrame endFrame() {
+    return endFrame(false);
+  }
+
+  private CgameFrame endFrame(boolean immediate) {
     CgameFrame frame = new CgameFrame(commands, assets.snapshot(), time);
     commands.clear();
     clearScene();
     framesSubmitted++;
-    sink.submit(frame);
+    if (immediate) sink.submitImmediate(frame);
+    else sink.submit(frame);
     return frame;
   }
 
   /**
-   * {@code trap_UpdateScreen} during a long VM call (loading): presents what has been drawn so far
-   * and starts a fresh frame.
+   * {@code trap_UpdateScreen} during a long VM call (loading): hands what has been drawn so far to
+   * {@link RenderSink#submitImmediate} (the host may present it before the call returns) and starts
+   * a fresh frame.
    */
   public void updateScreen() {
-    if (!commands.isEmpty()) endFrame();
+    if (!commands.isEmpty()) endFrame(true);
   }
 
   /** Commands recorded in the current frame. */

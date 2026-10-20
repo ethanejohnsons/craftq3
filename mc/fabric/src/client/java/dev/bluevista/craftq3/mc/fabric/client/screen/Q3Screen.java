@@ -281,8 +281,8 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
   }
 
   /**
-   * Hands the renderer the session's current assets and map: a content rebuild (pure server packs)
-   * brings new assets, and {@code trap_R_LoadWorldMap} a new world.
+   * Hands the renderer the session's current assets: a content rebuild (pure server packs) brings
+   * new ones. Maps arrive through {@link MinecraftSessionHost#worldLoaded}.
    */
   private void syncWorld(EngineSession s) {
     HostServices services = s.services();
@@ -291,10 +291,6 @@ public final class Q3Screen extends Q3InputScreen implements Q3FullscreenView {
       attachedServices = services;
       presenter.attachAssets(assets.lookup(), assets.library());
     }
-    String world = assets.worldName();
-    if (world.equals(presenter.requestedMap())) return;
-    if (world.isEmpty()) presenter.mapUnloaded();
-    else assets.world().ifPresent(map -> presenter.mapLoaded(world, map));
   }
 
   /**

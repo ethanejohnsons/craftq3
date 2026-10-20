@@ -19,6 +19,10 @@ import java.util.Objects;
  * @param netEnabled the default of {@code net_enabled}: whether {@code map} also listens on UDP
  * @param writeConfig writes {@code q3config.cfg} when the session closes cleanly
  * @param servers creates the local server; null when this build has none
+ * @param failOnDegradation scripted runs: {@link EngineSession#frame} throws {@link
+ *     SessionDegradedException} once a VM syscall degraded (with {@code vm_strictSyscalls 1}, once
+ *     one faulted a VM); otherwise degradations are only counted ({@link
+ *     EngineSession#degradations()})
  */
 public record SessionOptions(
     long seed,
@@ -29,14 +33,15 @@ public record SessionOptions(
     boolean attract,
     boolean netEnabled,
     boolean writeConfig,
-    LocalServer.Factory servers) {
+    LocalServer.Factory servers,
+    boolean failOnDegradation) {
   public SessionOptions {
     commandLine = List.copyOf(commandLine);
   }
 
   /** Interactive defaults: threaded server, images decoded, configs written, UDP hosting on. */
   public static SessionOptions defaults(LocalServer.Factory servers) {
-    return new SessionOptions(0, false, List.of(), false, true, false, true, true, servers);
+    return new SessionOptions(0, false, List.of(), false, true, false, true, true, servers, false);
   }
 
   /**
@@ -44,7 +49,8 @@ public record SessionOptions(
    * asked, no config written.
    */
   public static SessionOptions deterministic(long seed, LocalServer.Factory servers) {
-    return new SessionOptions(seed, true, List.of(), false, false, false, false, false, servers);
+    return new SessionOptions(
+        seed, true, List.of(), false, false, false, false, false, servers, false);
   }
 
   public SessionOptions withSeed(long value) {
@@ -57,7 +63,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withSynchronousServer(boolean value) {
@@ -70,7 +77,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withCommandLine(List<String> value) {
@@ -83,7 +91,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withSafeMode(boolean value) {
@@ -96,7 +105,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withDecodeImages(boolean value) {
@@ -109,7 +119,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withAttract(boolean value) {
@@ -122,7 +133,8 @@ public record SessionOptions(
         value,
         netEnabled,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withNetEnabled(boolean value) {
@@ -135,7 +147,8 @@ public record SessionOptions(
         attract,
         value,
         writeConfig,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withWriteConfig(boolean value) {
@@ -148,7 +161,8 @@ public record SessionOptions(
         attract,
         netEnabled,
         value,
-        servers);
+        servers,
+        failOnDegradation);
   }
 
   public SessionOptions withServers(LocalServer.Factory value) {
@@ -161,6 +175,21 @@ public record SessionOptions(
         attract,
         netEnabled,
         writeConfig,
+        value,
+        failOnDegradation);
+  }
+
+  public SessionOptions withFailOnDegradation(boolean value) {
+    return new SessionOptions(
+        seed,
+        synchronousServer,
+        commandLine,
+        safeMode,
+        decodeImages,
+        attract,
+        netEnabled,
+        writeConfig,
+        servers,
         value);
   }
 }

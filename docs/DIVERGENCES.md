@@ -62,6 +62,20 @@ match the original; a mismatch found against the original is a bug.
 | Fonts (`trap_R_RegisterFont`) | Pre-rendered `.dat` or FreeType | Pre-rendered `fonts/fontImage_N.dat` only | Retail content ships pre-rendered fonts |
 | Protocol 48 (1.27) demos | Not playable by 1.32 either | Refused with a clear message | Layout only partly decoded (see `DemoProtocol.Q3_1_27`) |
 
+| Downloaded PK3s | Written into the game directory and mounted from then on | Kept in a host-only cache (`<home>/.downloads`), mounted only while connected to a server that references them; reconnecting takes them from the cache | A server's packs never change local or other servers' games |
+| `trap_UpdateScreen` frames | Swapped to the screen inside the VM call | Handed to `RenderSink.submitImmediate`; whether they show before the call returns is the host's choice | The host owns presentation |
+
+## Session (`engine:session`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Server cvars seen by the client in a local game | Client and server share one cvar table | Separate tables; the local server's serverinfo configstring is mirrored into client cvars (client-owned cvars never overwritten, reset on disconnect); server-only cvars without `SERVERINFO` are not visible | The server runs on its own thread with its own console |
+| `rcon` while playing a local game with no `rconAddress` | An `rcon` packet to the listen server over loopback, checked against its `rconPassword` | Runs on the local server's console directly, without the network (still requires `rconPassword` to be set) | Same effect without opening a socket |
+| `host_ui [0\|1]` | Not present | Shows or hides the platform's own user interface (also shown when the ui VM cannot run) | CraftQ3 extension: the user is never left on an empty screen |
+| `.dm3` demos (protocol 43, pre-1.17) | Not playable by 1.32 | Refused with a clear message | 1.32 cannot play them either; the layout is not decoded |
+| Cgame start after a gamestate | Same frame (`CL_InitCGame` from the gamestate) | One or more client frames later, once the map was parsed and its collision built on a worker (same frame for demos and synchronous runs) | Keeps the render thread responsive while the map loads |
+| Host map hooks | Maps come from the game files only | `ClientHostServices.mapOverride` may supply a map, `worldSources` adds collision geometry to client world traces (as the server's map sources do) | CraftQ3 extension for levels the Minecraft bridge synthesizes |
+
 ## Game server (`engine:game`)
 
 | Behaviour | Original | Rewrite | Why |

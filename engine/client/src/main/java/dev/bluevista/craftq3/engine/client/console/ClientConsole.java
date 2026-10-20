@@ -41,6 +41,14 @@ public final class ClientConsole implements ConsoleOutput, KeyTarget {
     inGame = Objects.requireNonNull(connected);
   }
 
+  /**
+   * Connects the console to {@code commandBuffer}, keeping the "connected" predicate an earlier
+   * {@link #attach} installed (a rebuilt host must not reset the owner's chat routing).
+   */
+  public void attachKeepingPredicate(CommandBuffer commandBuffer) {
+    buffer = Objects.requireNonNull(commandBuffer);
+  }
+
   /** Every printed line is also passed to {@code sink}. */
   public void mirror(Consumer<String> sink) {
     mirror = Objects.requireNonNull(sink);

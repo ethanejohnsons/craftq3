@@ -4,7 +4,9 @@ import com.mojang.blaze3d.platform.Window;
 import com.mojang.logging.LogUtils;
 import dev.bluevista.craftq3.engine.audio.AudioDevice;
 import dev.bluevista.craftq3.engine.client.RenderSink;
+import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.common.time.Clock;
+import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import dev.bluevista.craftq3.engine.session.SessionHost;
 import dev.bluevista.craftq3.engine.session.SessionState;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudio;
@@ -158,6 +160,18 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
   @Override
   public void requestHostUi(boolean visible) {
     hostUiRequested = visible;
+  }
+
+  /** The cgame loaded a map: the presenter builds its scene from the session's own BSP. */
+  @Override
+  public void worldLoaded(String normalizedPath, BspMap map, ClientAssets assets) {
+    presenter.attachAssets(assets.lookup(), assets.library());
+    presenter.mapLoaded(normalizedPath, map);
+  }
+
+  @Override
+  public void worldUnloaded() {
+    presenter.mapUnloaded();
   }
 
   // ------------------------------------------------------------------ platform state

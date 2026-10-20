@@ -29,6 +29,9 @@ import java.util.OptionalInt;
  * <p>Owned by the client thread.
  */
 final class GameClient implements AutoCloseable {
+  private static final dev.bluevista.craftq3.engine.common.log.Log LOG =
+      dev.bluevista.craftq3.engine.common.log.Log.get(GameClient.class);
+
   /** Where the snapshots come from. */
   enum Kind {
     LOCAL,
@@ -55,8 +58,16 @@ final class GameClient implements AutoCloseable {
 
     void print(String line);
 
-    /** A new level's gamestate arrived; prepare content (pure packs) before the cgame loads. */
+    /**
+     * A new level's gamestate arrived; prepare content (pure packs) before the cgame loads, and
+     * start any work that can run ahead of it (the world preload).
+     */
     void levelStarting(GameClient game, ServerMessageCodec.GameState gameState);
+
+    /** True while the prepared level should wait before its cgame starts (a preload running). */
+    default boolean levelWaiting(GameClient game) {
+      return false;
+    }
 
     /** The cgame consumed a new systeminfo (cheats, server id). */
     void systemInfo(GameClient game, String info);
@@ -80,11 +91,13 @@ final class GameClient implements AutoCloseable {
   private SessionFiles.Recording recordingFile;
   private String recordingName = "";
   private boolean levelPending;
+  private boolean levelPrepared;
   private String serverDisconnect;
   private String connectionLost;
   private int lastServerTime;
   private boolean drawnSnapshot;
   private int levels;
+  private long retiredDegradations;
 
   private GameClient(Kind kind, String serverName, Session session) {
     this.kind = kind;
@@ -130,6 +143,7 @@ final class GameClient implements AutoCloseable {
       @Override
       public void levelReady(ServerMessageCodec.GameState gameState) {
         levelPending = true;
+        levelPrepared = false;
       }
 
       @Override
@@ -204,8 +218,9 @@ final class GameClient implements AutoCloseable {
     return recordingName;
   }
 
+  /** Syscall degradations of every cgame this game ran (each level, {@code vid_restart}). */
   long degradations() {
-    return cgame == null ? 0 : cgame.degradationTotal();
+    return retiredDegradations + (cgame == null ? 0 : cgame.degradationTotal());
   }
 
   /** {@code uiClientState_t} for the ui's connect screen. */
@@ -240,18 +255,37 @@ final class GameClient implements AutoCloseable {
     if (levelPending) loadLevel();
   }
 
+  /**
+   * Loads the pending level in two steps: the first call ends the old cgame and prepares the level
+   * ({@link Session#levelStarting}); the cgame starts on the first call (that frame or a later one)
+   * once {@link Session#levelWaiting} no longer holds it back.
+   */
   private void loadLevel() {
-    levelPending = false;
     ServerMessageCodec.GameState gameState =
         pipeline.gameState().orElseThrow(() -> new Drop("No gamestate to load"));
-    if (cgame != null) cgame.shutdown();
-    commands.reset();
-    drawnSnapshot = false;
-    lastServerTime = 0;
-    session.levelStarting(this, gameState);
+    if (!levelPrepared) {
+      if (cgame != null) {
+        cgame.shutdown();
+        retiredDegradations += cgame.degradationTotal();
+        cgame = null;
+        session
+            .services()
+            .input()
+            .setCgameTarget(dev.bluevista.craftq3.engine.client.input.KeyTarget.NONE);
+      }
+      commands.reset();
+      drawnSnapshot = false;
+      lastServerTime = 0;
+      session.levelStarting(this, gameState);
+      levelPrepared = true;
+    }
+    if (session.levelWaiting(this)) return;
+    levelPending = false;
+    levelPrepared = false;
     HostServices services = session.services();
     cgame = new CgameHost(services, pipeline, commands, cgameLink());
     services.input().setCgameTarget(cgame);
+    long started = System.nanoTime();
     try {
       cgame.start();
     } catch (IOException missing) {
@@ -259,6 +293,7 @@ final class GameClient implements AutoCloseable {
     } catch (RuntimeException failure) {
       throw failureDrop(failure);
     }
+    LOG.info("cgame initialised in " + (System.nanoTime() - started) / 1_000_000 + " ms");
     levels++;
     if (connection != null) {
       connection.cgameLoaded();
@@ -336,6 +371,7 @@ final class GameClient implements AutoCloseable {
     if (cgame == null || pipeline.gameState().isEmpty()) return;
     HostServices services = session.services();
     cgame.shutdown();
+    retiredDegradations += cgame.degradationTotal();
     cgame = new CgameHost(services, pipeline, commands, cgameLink());
     services.input().setCgameTarget(cgame);
     cgame.start();
@@ -422,6 +458,7 @@ final class GameClient implements AutoCloseable {
     stopRecording().ifPresent(session::print);
     if (cgame != null) {
       cgame.shutdown();
+      retiredDegradations += cgame.degradationTotal();
       session
           .services()
           .input()

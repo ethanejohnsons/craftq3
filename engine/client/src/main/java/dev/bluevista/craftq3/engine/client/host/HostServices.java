@@ -6,12 +6,17 @@ import dev.bluevista.craftq3.engine.client.console.ClientConsole;
 import dev.bluevista.craftq3.engine.client.input.ClientInput;
 import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.client.render.ClientRenderer;
+import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.console.CommandArgs;
+import dev.bluevista.craftq3.engine.console.CommandHandler;
 import dev.bluevista.craftq3.engine.console.Console;
 import dev.bluevista.craftq3.engine.console.CvarFlags;
 import dev.bluevista.craftq3.engine.console.CvarTable;
 import dev.bluevista.craftq3.engine.formats.FileViewAssets;
+import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import dev.bluevista.craftq3.engine.formats.bsp.BspReader;
+import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
 import dev.bluevista.craftq3.engine.fs.FileView;
 import dev.bluevista.craftq3.engine.fs.HomeStore;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
@@ -34,6 +39,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 /**
@@ -46,7 +54,10 @@ import java.util.function.Consumer;
  * <p>Owned by the render thread.
  */
 public final class HostServices implements AutoCloseable {
-  /** The cvar naming a CD key file is never logged; the key lives in {@code baseq3/q3key}. */
+  /**
+   * The CD key file: {@code baseq3/q3key} of the installation (where the original keeps it) or
+   * {@code q3key} at the root of the game's home store. Its contents are never logged.
+   */
   public static final String CD_KEY_FILE = "q3key";
 
   /** CD key characters {@code trap_GetCDKey} reports. */
@@ -72,6 +83,7 @@ public final class HostServices implements AutoCloseable {
   private final ClientRenderer renderer;
   private final SoundSystem sound;
   private final ClientInput input;
+  private final List<String> ownCommands = new ArrayList<>();
   private String cdKey;
 
   /**
@@ -111,7 +123,7 @@ public final class HostServices implements AutoCloseable {
             console
                 .bindings()
                 .orElseThrow(() -> new IllegalArgumentException("A client console is required")));
-    output.attach(console.buffer(), () -> false);
+    output.attachKeepingPredicate(console.buffer());
     CvarTable cvars = console.cvars();
     EngineCvars.register(cvars);
     registerSoundCommands();
@@ -131,10 +143,13 @@ public final class HostServices implements AutoCloseable {
   /** {@code CHAN_LOCAL_SOUND}: the channel the {@code play} command uses. */
   private static final int CHAN_LOCAL_SOUND = 6;
 
-  /** The sound system's console commands: {@code play}, {@code music}, {@code stopsound}. */
+  /**
+   * The sound system's console commands: {@code play}, {@code music}, {@code stopsound}. Each name
+   * this instance registers is unregistered again by {@link #close()}, so a rebuilt instance (a
+   * content restart) binds its own sound system.
+   */
   private void registerSoundCommands() {
-    var commands = console.commands();
-    commands.register(
+    register(
         "play",
         args -> {
           if (args.argc() < 2) {
@@ -146,7 +161,7 @@ public final class HostServices implements AutoCloseable {
             if (handle != 0) sound.startLocalSound(handle, CHAN_LOCAL_SOUND);
           }
         });
-    commands.register(
+    register(
         "music",
         args -> {
           if (args.argc() < 2 || args.argc() > 3) {
@@ -155,7 +170,16 @@ public final class HostServices implements AutoCloseable {
           }
           startBackgroundTrack(args.argv(1), args.argc() == 3 ? args.argv(2) : args.argv(1));
         });
-    commands.register("stopsound", args -> sound.stopAllSounds());
+    register("stopsound", args -> sound.stopAllSounds());
+  }
+
+  private void register(String name, CommandHandler handler) {
+    if (console.commands().register(name, handler)) ownCommands.add(name);
+  }
+
+  /** The console commands this instance registered (and {@link #close()} removes). */
+  public List<String> ownCommands() {
+    return List.copyOf(ownCommands);
   }
 
   private String gameDirectory() {
@@ -257,22 +281,110 @@ public final class HostServices implements AutoCloseable {
   }
 
   private ClientWorld world;
+  private Preload preload;
+
+  /** A world being parsed and built on a worker for {@link #loadWorld}. */
+  private record Preload(String name, CompletableFuture<ClientWorld> world) {}
 
   /**
    * The map {@code name} for {@code trap_CM_LoadMap} and {@code trap_R_LoadWorldMap}, read once and
-   * shared by collision and the renderer until another map is loaded.
+   * shared by collision and the renderer until another map is loaded. The host's {@link
+   * ClientHostServices#mapOverride} is consulted first; its {@link ClientHostServices#worldSources}
+   * join the world's collision. A {@link #preloadWorld preloaded} world is taken over (waiting for
+   * the rest of its build). The host hears {@link ClientHostServices#worldLoaded}.
    *
    * @throws IOException when the map is missing or malformed
    */
   public ClientWorld loadWorld(String name) throws IOException {
     String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
     if (world != null && world.name().equals(normalized)) return world;
-    VirtualPath path = VirtualPath.of(normalized);
-    byte[] bytes = view.read(path);
-    var map = dev.bluevista.craftq3.engine.formats.bsp.BspReader.read(bytes, normalized);
-    world = new ClientWorld(normalized, map, assets.library());
-    renderer.loadWorld(normalized, map);
+    ClientWorld loaded;
+    if (preload != null && preload.name().equals(normalized)) {
+      CompletableFuture<ClientWorld> pending = preload.world();
+      preload = null;
+      try {
+        loaded = pending.join();
+      } catch (CompletionException failed) {
+        Throwable cause = failed.getCause() == null ? failed : failed.getCause();
+        if (cause instanceof IOException io) throw io;
+        if (cause instanceof RuntimeException runtime) throw runtime;
+        throw new IOException("Couldn't build " + normalized, cause);
+      }
+    } else {
+      loaded = build(normalized, readMap(normalized), sourcesFor(normalized));
+    }
+    world = loaded;
+    renderer.loadWorld(normalized, loaded.map());
+    platform.worldLoaded(normalized, loaded.map(), assets);
     return world;
+  }
+
+  /**
+   * Starts building the map {@code name} off this thread ({@code executor}): the file is read here
+   * (so pure reference tracking stays on the client thread), parsed and given its collision model
+   * on the worker. The next {@link #loadWorld} of the same name takes it over; the cgame's own map
+   * load is then shorter. Does nothing for the loaded map or one already preloading.
+   */
+  public void preloadWorld(String name, Executor executor) {
+    String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
+    if (world != null && world.name().equals(normalized)) return;
+    if (preload != null && preload.name().equals(normalized)) return;
+    CompletableFuture<ClientWorld> pending;
+    try {
+      Object source = mapSource(normalized);
+      List<CollisionSource> sources = sourcesFor(normalized);
+      ShaderLibrary library = assets.library();
+      pending =
+          CompletableFuture.supplyAsync(
+              () -> {
+                BspMap map =
+                    source instanceof BspMap given
+                        ? given
+                        : BspReader.read((byte[]) source, normalized);
+                ClientWorld built = new ClientWorld(normalized, map, library, sources);
+                built.collision();
+                return built;
+              },
+              executor);
+    } catch (IOException | RuntimeException failure) {
+      pending = CompletableFuture.failedFuture(failure);
+    }
+    preload = new Preload(normalized, pending);
+  }
+
+  /** True while a {@link #preloadWorld preloaded} world is still being built. */
+  public boolean preloading() {
+    return preload != null && !preload.world().isDone();
+  }
+
+  private BspMap readMap(String normalized) throws IOException {
+    Object source = mapSource(normalized);
+    return source instanceof BspMap given ? given : BspReader.read((byte[]) source, normalized);
+  }
+
+  /** The host's map, else the file's bytes. */
+  private Object mapSource(String normalized) throws IOException {
+    Optional<BspMap> override = platform.mapOverride(normalized);
+    if (override.isPresent()) return override.get();
+    return view.read(VirtualPath.of(normalized));
+  }
+
+  private List<CollisionSource> sourcesFor(String normalized) {
+    return List.copyOf(platform.worldSources(mapName(normalized)));
+  }
+
+  private ClientWorld build(String normalized, BspMap map, List<CollisionSource> sources) {
+    return new ClientWorld(normalized, map, assets.library(), sources);
+  }
+
+  /** {@code maps/q3dm17.bsp} → {@code q3dm17}. */
+  static String mapName(String normalizedPath) {
+    String name = normalizedPath;
+    int slash = name.lastIndexOf('/');
+    if (slash >= 0) name = name.substring(slash + 1);
+    if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".bsp"))
+      name = name.substring(0, name.length() - 4);
+    return name;
   }
 
   /** The loaded map, if any. */
@@ -282,8 +394,12 @@ public final class HostServices implements AutoCloseable {
 
   /** Forgets the loaded map (disconnect). */
   public void unloadWorld() {
+    if (preload != null) preload.world().cancel(false);
+    preload = null;
+    boolean had = world != null;
     world = null;
     renderer.loadWorld("", null);
+    if (had) platform.worldUnloaded();
   }
 
   /** A script or text file, ISO-8859-1, for the precompiler. */
@@ -330,8 +446,8 @@ public final class HostServices implements AutoCloseable {
   // ---------------------------------------------------------------- CD key
 
   /**
-   * The CD key the ui shows: set by {@code trap_SetCDKey}, else read once from {@code baseq3/q3key}
-   * of the installation (or the home store). Never logged.
+   * The CD key the ui shows: set by {@code trap_SetCDKey}, else read once from {@code q3key} in the
+   * game's home store, else from the installation's {@code baseq3/q3key}. Never logged.
    */
   public String cdKey() {
     if (cdKey == null) cdKey = readCdKey();
@@ -345,7 +461,8 @@ public final class HostServices implements AutoCloseable {
 
   private String readCdKey() {
     List<Path> candidates = new ArrayList<>();
-    if (home != null) candidates.add(home.root().resolve("baseq3").resolve(CD_KEY_FILE));
+    // The home store is already the game's directory (e.g. ~/.craftq3/cpma).
+    if (home != null) candidates.add(home.root().resolve(CD_KEY_FILE));
     if (installRoot != null) candidates.add(installRoot.resolve("baseq3").resolve(CD_KEY_FILE));
     for (Path file : candidates) {
       try {
@@ -366,6 +483,8 @@ public final class HostServices implements AutoCloseable {
 
   @Override
   public void close() {
+    for (String name : ownCommands) console.commands().unregister(name);
+    ownCommands.clear();
     input.close();
     sound.stopAllSounds();
   }

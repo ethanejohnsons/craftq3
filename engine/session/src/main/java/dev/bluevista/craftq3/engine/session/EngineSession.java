@@ -9,6 +9,7 @@ import dev.bluevista.craftq3.engine.client.host.UiHost;
 import dev.bluevista.craftq3.engine.client.input.ClientInput;
 import dev.bluevista.craftq3.engine.client.input.KeyTarget;
 import dev.bluevista.craftq3.engine.client.net.ClientConnection;
+import dev.bluevista.craftq3.engine.client.net.DownloadManager;
 import dev.bluevista.craftq3.engine.client.net.RemoteAddress;
 import dev.bluevista.craftq3.engine.client.net.ServerBrowser;
 import dev.bluevista.craftq3.engine.client.net.UiBrowser;
@@ -29,6 +30,7 @@ import dev.bluevista.craftq3.engine.fs.PureManifest;
 import dev.bluevista.craftq3.engine.fs.SearchPath;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
 import dev.bluevista.craftq3.engine.net.Protocol68;
+import dev.bluevista.craftq3.engine.net.chan.Protocol68ClientSession;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.oob.ConnectionlessMessage;
 import dev.bluevista.craftq3.engine.net.oob.ConnectionlessPacket;
@@ -112,6 +114,10 @@ public final class EngineSession implements AutoCloseable {
   static final ClientConnection.Settings LOOPBACK_SETTINGS =
       new ClientConnection.Settings(100, 30_000, 256, 64);
 
+  /** Runs world preloads ({@link HostServices#preloadWorld}) on virtual threads. */
+  private static final java.util.concurrent.Executor PRELOADER =
+      command -> Thread.ofVirtual().name("cq3-world-preload").start(command);
+
   /** The commands that run on the server's console (forwarded there as text). */
   static final List<String> SERVER_COMMANDS =
       List.of(
@@ -141,8 +147,7 @@ public final class EngineSession implements AutoCloseable {
   private final ThreadOwner owner = new ThreadOwner("client");
   private final ClientConsole output = new ClientConsole();
   private final Console console;
-  private final SearchPath searchPath;
-  private final PureManifest manifest;
+  private final SessionPaks paks;
   private final SessionFiles files;
   private final HomeStore home;
   private final TimeServices time;
@@ -179,6 +184,9 @@ public final class EngineSession implements AutoCloseable {
   private boolean closed;
   private long framesRun;
   private long serverDegradations;
+  private long clientDegradations;
+  private long reportedDegradations;
+  private String lastDrop = "";
 
   /** A {@code map} waiting for the server to spawn the level. */
   private record PendingLevel(int spawns, int drops, int sync, long started, String map) {}
@@ -187,7 +195,8 @@ public final class EngineSession implements AutoCloseable {
   private record Resolving(
       String name, CompletableFuture<InetSocketAddress> address, long started) {}
 
-  private EngineSession(SessionHost host, SessionOptions options) throws IOException {
+  private EngineSession(SessionHost host, SessionOptions options, SearchPath mounted)
+      throws IOException {
     this.host = Objects.requireNonNull(host);
     this.options = Objects.requireNonNull(options);
     owner.claim();
@@ -195,16 +204,19 @@ public final class EngineSession implements AutoCloseable {
     long seed = options.seed() != 0 ? options.seed() : System.nanoTime();
     random = new Random(seed);
     qport = random.nextInt(65536);
-    searchPath = SearchPath.mount(host.installRoot(), host.game());
-    manifest = new PureManifest(searchPath);
+    paks =
+        mounted == null
+            ? new SessionPaks(host.installRoot(), host.game(), host.homeDirectory())
+            : new SessionPaks(mounted, host.installRoot(), host.game(), host.homeDirectory());
     home = SessionFiles.openHome(host.homeDirectory(), host.game(), output::print);
-    files = new SessionFiles(home, () -> content == null ? manifest.view() : content.view);
+    files = new SessionFiles(home, () -> content == null ? paks.manifest().view() : content.view);
     console = Console.client(owner, output, files.configSource(), files.configSink());
+    output.attach(console.buffer(), this::chatting);
     time = new TimeServices(host.clock(), host.wallClock());
     startMillis = host.clock().millis();
     lastFrame = startMillis;
     registerCvars();
-    content = newContent(manifest.view());
+    content = newContent(paks.manifest().view());
     browser = new ServerBrowser(console.cvars(), savedFiles(), output::print);
     browser.registerCommands(console.commands());
     registerCommands();
@@ -221,7 +233,47 @@ public final class EngineSession implements AutoCloseable {
    * @throws IOException when the installation cannot be mounted
    */
   public static EngineSession start(SessionHost host, SessionOptions options) throws IOException {
-    EngineSession session = new EngineSession(host, options);
+    return start(host, options, null);
+  }
+
+  /**
+   * As {@link #start(SessionHost, SessionOptions)} over a search path the host already mounted
+   * ({@link SearchPath#mount(java.nio.file.Path, String)} of {@code host.installRoot()} and {@code
+   * host.game()}, typically on a worker so the render thread does not block on it). The session
+   * takes ownership and closes it, also when starting fails.
+   *
+   * @param mounted the mounted installation, or null to mount it here
+   * @throws IllegalArgumentException when {@code mounted} is of another game
+   */
+  public static EngineSession start(SessionHost host, SessionOptions options, SearchPath mounted)
+      throws IOException {
+    if (mounted != null
+        && !mounted
+            .game()
+            .equals(
+                VirtualPath.gameDirectory(
+                    host.game() == null || host.game().isBlank() ? "baseq3" : host.game()))) {
+      try {
+        mounted.close();
+      } catch (IOException ignored) {
+        LOG.debug("Search path close failed");
+      }
+      throw new IllegalArgumentException(
+          "The mounted search path is " + mounted.game() + ", the host plays " + host.game());
+    }
+    EngineSession session;
+    try {
+      session = new EngineSession(host, options, mounted);
+    } catch (IOException | RuntimeException failure) {
+      if (mounted != null) {
+        try {
+          mounted.close();
+        } catch (IOException suppressed) {
+          failure.addSuppressed(suppressed);
+        }
+      }
+      throw failure;
+    }
     try {
       session.boot();
     } catch (RuntimeException failure) {
@@ -303,19 +355,16 @@ public final class EngineSession implements AutoCloseable {
   // ================================================================ content
 
   private ClientContent newContent(FileView view) {
-    ClientContent next =
-        new ClientContent(
-            console,
-            output,
-            view,
-            home,
-            host.installRoot(),
-            host,
-            time,
-            options.decodeImages(),
-            uiLink());
-    output.attach(console.buffer(), this::chatting);
-    return next;
+    return new ClientContent(
+        console,
+        output,
+        view,
+        home,
+        host.installRoot(),
+        host,
+        time,
+        options.decodeImages(),
+        uiLink());
   }
 
   /** Rebuilds the content for another file view (a pure server's packs), restarting the ui. */
@@ -323,7 +372,9 @@ public final class EngineSession implements AutoCloseable {
     ClientInput oldInput = services().input();
     int catchers = oldInput.catchers();
     content.close();
+    clientDegradations += content.ui.degradationTotal();
     content = newContent(view);
+    paks.releaseRetired();
     ClientInput input = services().input();
     input.setConsoleTarget(output);
     input.setHooks(inputHooks());
@@ -607,6 +658,7 @@ public final class EngineSession implements AutoCloseable {
   /** {@code map}: makes sure the local server runs, then hands it the command. */
   private void startLevel(String commandText, String map, boolean singlePlayer) {
     stopCinematicSilently();
+    closeConsole();
     if (game != null && game.kind != GameClient.Kind.LOCAL) closeGame(true);
     if (resolving != null) resolving = null;
     if (server == null && !startServer(singlePlayer)) return;
@@ -628,7 +680,7 @@ public final class EngineSession implements AutoCloseable {
               .servers()
               .create(
                   new LocalServer.Context(
-                      searchPath,
+                      paks.searchPath(),
                       home,
                       host.installRoot(),
                       host.game(),
@@ -687,9 +739,20 @@ public final class EngineSession implements AutoCloseable {
     print("Couldn't open a server socket on " + ip + ":" + port + "; playing locally only");
   }
 
+  /**
+   * {@code Con_Close}, as the original runs when a map starts loading or a connect begins: the
+   * console closes and its input line is cleared.
+   */
+  private void closeConsole() {
+    ClientInput input = services().input();
+    input.setCatchers(input.catchers() & ~ClientInput.KEYCATCH_CONSOLE);
+    output.field().clear();
+  }
+
   /** {@code connect}: a remote server (resolved off-thread) or the local one. */
   private void connect(String name) {
     stopCinematicSilently();
+    closeConsole();
     console.cvars().set("com_errorMessage", "");
     if (isLocalName(name)) {
       if (server == null) {
@@ -785,10 +848,26 @@ public final class EngineSession implements AutoCloseable {
                       ClientConnection.Settings.DEFAULT,
                       listener,
                       lastFrame));
+      game.connection().ifPresent(this::enableDownloads);
     } catch (RuntimeException failure) {
       socket.close();
       throw failure;
     }
+  }
+
+  /**
+   * Gives a remote connection its {@link DownloadManager}: cached packs the server references are
+   * mounted, missing ones downloaded when {@code cl_allowDownload} permits.
+   */
+  private void enableDownloads(ClientConnection connection) {
+    connection.setDownloads(
+        new DownloadManager(
+            paks.downloadContent(),
+            paks.cache(this::print),
+            console.cvars(),
+            connection::command,
+            () -> connection.session().ifPresent(Protocol68ClientSession::beginDownload),
+            this::print));
   }
 
   private Map<String, String> userInfo() {
@@ -1045,6 +1124,7 @@ public final class EngineSession implements AutoCloseable {
     } catch (RuntimeException failure) {
       LOG.warn("Game cleanup failed: " + failure);
     }
+    clientDegradations += ending.degradations();
     if (server != null) server.wake();
     console.cvars().set("cl_demoRecording", "0");
     console.cvars().set("cl_demoPlaying", "0");
@@ -1053,12 +1133,13 @@ public final class EngineSession implements AutoCloseable {
     services().input().setCgameTarget(KeyTarget.NONE);
     mirror.resetServerInfo();
     stopAllSounds();
-    if (contentPure) {
-      manifest.setServerPaks(List.of());
-      manifest.restart(0);
+    boolean remounted = paks.unmountDownloads();
+    if (contentPure || remounted || paks.takeChanged()) {
+      paks.manifest().setServerPaks(List.of());
+      paks.manifest().restart(0);
       contentPure = false;
       contentPaks = List.of();
-      rebuildContent(manifest.view(), UiHost.Menu.MAIN);
+      rebuildContent(paks.manifest().view(), UiHost.Menu.MAIN);
     }
   }
 
@@ -1089,6 +1170,7 @@ public final class EngineSession implements AutoCloseable {
   private void drop(String message) {
     print("********************");
     print("ERROR: " + message);
+    lastDrop = message;
     print("********************");
     transitions.clear();
     try {
@@ -1124,6 +1206,12 @@ public final class EngineSession implements AutoCloseable {
       @Override
       public void levelStarting(GameClient starting, ServerMessageCodec.GameState gameState) {
         prepareLevel(starting, gameState);
+        preloadWorld(starting, gameState);
+      }
+
+      @Override
+      public boolean levelWaiting(GameClient waiting) {
+        return waiting.kind != GameClient.Kind.DEMO && services().preloading();
       }
 
       @Override
@@ -1135,12 +1223,30 @@ public final class EngineSession implements AutoCloseable {
       @Override
       public String pureChecksums() {
         try {
-          return manifest.referencedPureChecksums();
+          return paks.manifest().referencedPureChecksums();
         } catch (IllegalStateException tooMany) {
           return null;
         }
       }
     };
+  }
+
+  /**
+   * Starts parsing the level's map and building its collision model on a worker while the client
+   * keeps presenting frames; the cgame starts once it is done (its own map load then only takes the
+   * result). Demos and reproducible runs (synchronous server) build it in place.
+   */
+  private void preloadWorld(GameClient starting, ServerMessageCodec.GameState gameState) {
+    String serverInfo = gameState.configstrings().getOrDefault(Protocol68.CS_SERVERINFO, "");
+    String map;
+    try {
+      map = InfoString.parse(serverInfo, Protocol68.BIG_INFO_STRING).getOrDefault("mapname", "");
+    } catch (IllegalArgumentException malformed) {
+      return;
+    }
+    if (map.isBlank()) return;
+    boolean inPlace = starting.kind == GameClient.Kind.DEMO || options.synchronousServer();
+    services().preloadWorld("maps/" + map + ".bsp", inPlace ? Runnable::run : PRELOADER);
   }
 
   /** {@code CL_ParseGamestate} and the pure pack setup before a cgame loads. */
@@ -1157,16 +1263,18 @@ public final class EngineSession implements AutoCloseable {
     } catch (IllegalArgumentException malformed) {
       values = Map.of();
     }
-    List<Integer> paks = new ArrayList<>();
+    List<Integer> serverPaks = new ArrayList<>();
     if (starting.kind == GameClient.Kind.REMOTE && parseInt(values.get("sv_pure")) != 0)
       for (String word : values.getOrDefault("sv_paks", "").trim().split("\\s+"))
-        if (!word.isEmpty()) paks.add(parseInt(word));
-    manifest.setServerPaks(paks);
+        if (!word.isEmpty()) serverPaks.add(parseInt(word));
+    PureManifest manifest = paks.manifest();
+    manifest.setServerPaks(serverPaks);
     manifest.restart(gameState.checksumFeed());
-    boolean pure = !paks.isEmpty();
-    if (pure != contentPure || (pure && !paks.equals(contentPaks))) {
+    boolean pure = !serverPaks.isEmpty();
+    boolean remounted = paks.takeChanged();
+    if (remounted || pure != contentPure || (pure && !serverPaks.equals(contentPaks))) {
       contentPure = pure;
-      contentPaks = List.copyOf(paks);
+      contentPaks = List.copyOf(serverPaks);
       rebuildContent(manifest.view(), UiHost.Menu.NONE);
     }
     // The restart cleared references; the running ui module counts as referenced again.
@@ -1235,6 +1343,24 @@ public final class EngineSession implements AutoCloseable {
     if (server != null && server.threaded()) server.wake();
     updateState();
     rethrowServerFatal();
+    checkDegradations();
+  }
+
+  /**
+   * {@link SessionOptions#failOnDegradation()}: a new syscall degradation (a VM fault under {@code
+   * vm_strictSyscalls 1}, a degraded import otherwise) fails the caller's frame.
+   */
+  private void checkDegradations() {
+    if (!options.failOnDegradation()) return;
+    long total = degradations();
+    if (total <= reportedDegradations) return;
+    long added = total - reportedDegradations;
+    reportedDegradations = total;
+    throw new SessionDegradedException(
+        added
+            + " syscall degradation(s)"
+            + (lastDrop.isEmpty() ? "" : "; last error: " + lastDrop)
+            + " (see the log)");
   }
 
   private void rethrowServerFatal() {
@@ -1645,15 +1771,18 @@ public final class EngineSession implements AutoCloseable {
    * vm_strictSyscalls} counters).
    */
   public long degradations() {
-    long total = content.ui.degradationTotal() + serverDegradations;
+    long total = content.ui.degradationTotal() + serverDegradations + clientDegradations;
     if (game != null) total += game.degradations();
     if (server != null) total += server.status().degradations();
     return total;
   }
 
-  /** The search path the session mounted (shared with the local server). */
+  /**
+   * The search path the session mounted (shared with the local server); while a remote game runs it
+   * includes the PK3s downloaded for that server.
+   */
   public SearchPath searchPath() {
-    return searchPath;
+    return paks.searchPath();
   }
 
   /** Milliseconds since the session started, as the VMs see them ({@code cls.realtime}). */
@@ -1731,11 +1860,7 @@ public final class EngineSession implements AutoCloseable {
     } catch (IOException failure) {
       LOG.debug("Home store close failed");
     }
-    try {
-      searchPath.close();
-    } catch (IOException failure) {
-      LOG.debug("Search path close failed");
-    }
+    paks.close();
     owner.release();
   }
 }

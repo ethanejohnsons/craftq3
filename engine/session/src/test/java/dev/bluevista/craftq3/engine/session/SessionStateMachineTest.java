@@ -3,7 +3,9 @@ package dev.bluevista.craftq3.engine.session;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.bluevista.craftq3.engine.client.host.UiHost;
+import dev.bluevista.craftq3.engine.client.input.ClientInput;
 import dev.bluevista.craftq3.engine.console.KeyNames;
+import dev.bluevista.craftq3.engine.fs.SearchPath;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,6 +75,77 @@ final class SessionStateMachineTest {
       assertTrue(rig.session.serverThread().isEmpty());
       assertFalse(sim.isAlive(), "the server thread ends with the server");
       assertTrue(server.closed);
+    }
+  }
+
+  @Test
+  void mapAndConnectCloseTheConsole() throws Exception {
+    try (SyntheticRig rig = new SyntheticRig(root, false)) {
+      var input = rig.session.services().input();
+      input.setCatchers(input.catchers() | ClientInput.KEYCATCH_CONSOLE);
+      for (char c : "half typed".toCharArray()) rig.session.output().field().insert(c);
+      rig.session.command("map test");
+      assertTrue(rig.until(() -> rig.session.state() == SessionState.LOCAL, 200), rig.tail());
+      assertEquals(0, rig.session.services().input().catchers() & ClientInput.KEYCATCH_CONSOLE);
+      assertEquals("", rig.session.output().field().text(), "Con_Close clears the input line");
+      input = rig.session.services().input();
+      input.setCatchers(input.catchers() | ClientInput.KEYCATCH_CONSOLE);
+      rig.session.command("connect localhost");
+      rig.run(2);
+      assertEquals(0, rig.session.services().input().catchers() & ClientInput.KEYCATCH_CONSOLE);
+    }
+  }
+
+  @Test
+  void startsOverAPremountedSearchPath() throws Exception {
+    Path install = root.resolve("install");
+    SyntheticRig.writeInstall(install);
+    SearchPath mounted = SearchPath.mount(install, "baseq3");
+    TestHost host = new TestHost(install, root.resolve("home"), false);
+    try (EngineSession session =
+        EngineSession.start(
+            host, SessionOptions.deterministic(1, FakeLocalServer.FACTORY), mounted)) {
+      assertSame(mounted, session.searchPath(), "the host's mount is used");
+      session.command("map test");
+      for (int i = 0; i < 50 && session.state() != SessionState.LOCAL; i++) {
+        host.manual.advance(16);
+        session.frame();
+      }
+      assertEquals(SessionState.LOCAL, session.state());
+    }
+    Files.createDirectories(install.resolve("othermod"));
+    SearchPath other = SearchPath.mount(install, "othermod");
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            EngineSession.start(
+                host, SessionOptions.deterministic(1, FakeLocalServer.FACTORY), other));
+  }
+
+  @Test
+  void failOnDegradationFailsTheFrameOnceAndCountingContinues() throws Exception {
+    SessionOptions options =
+        SessionOptions.deterministic(1, FakeLocalServer.FACTORY).withFailOnDegradation(true);
+    try (SyntheticRig rig = new SyntheticRig(root, false, options)) {
+      rig.session.command("map test");
+      assertTrue(rig.until(() -> rig.session.state() == SessionState.LOCAL, 200), rig.tail());
+      rig.server().degradations = 2;
+      SessionDegradedException failure =
+          assertThrows(SessionDegradedException.class, () -> rig.run(2));
+      assertTrue(failure.getMessage().startsWith("2 syscall degradation"), failure.getMessage());
+      rig.run(2);
+      assertEquals(2, rig.session.degradations(), "reported once");
+      assertEquals(SessionState.LOCAL, rig.session.state(), "the session keeps running");
+    }
+    try (SyntheticRig rig = new SyntheticRig(root, false)) {
+      rig.session.command("map test");
+      assertTrue(rig.until(() -> rig.session.state() == SessionState.LOCAL, 200), rig.tail());
+      rig.server().degradations = 3;
+      rig.run(2);
+      assertEquals(3, rig.session.degradations(), "counted without failing");
+      rig.session.command("disconnect");
+      rig.run(2);
+      assertEquals(3, rig.session.degradations(), "kept after the server stopped");
     }
   }
 

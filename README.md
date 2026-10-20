@@ -73,8 +73,7 @@ Install a Java 25 JDK, then:
 ./gradlew :mc:fabric:runClient
 ```
 
-The development game directory is `run/`. CI runs `./gradlew portableCheck` (every engine module)
-on Windows, Linux and macOS, plus the full build on Linux.
+The development game directory is `run/`.
 
 Tests that need real game data run only when `CRAFTQ3_Q3ROOT` names an installation:
 
@@ -91,7 +90,15 @@ CRAFTQ3_Q3ROOT="/path/to/Quake III Arena" ./gradlew :mc:devharness:runClientGame
 ```
 
 The last one renders real maps and plays through the mod on your GPU (`runClientGameTestVulkan`
-for Vulkan).
+for Vulkan). Its bridge test also joins a real dedicated Minecraft server, but only if you have
+agreed to the [Minecraft EULA](https://aka.ms/MinecraftEULA) by putting `eula=true` in
+`mc/devharness/build/run/clientGameTest/eula.txt` (and `clientGameTestVulkan/`); the build never
+agrees on your behalf.
+
+CI runs `portableCheck` on Windows, Linux and macOS for every push, and nightly runs the full
+build with the dedicated-server GameTests (`.github/workflows/nightly.yml`). Tests that need game
+data run nightly only on a self-hosted runner labelled `craftq3-q3data` once you set the
+repository variable `CRAFTQ3_Q3ROOT`; retail data never goes to hosted CI.
 
 ## Documentation
 

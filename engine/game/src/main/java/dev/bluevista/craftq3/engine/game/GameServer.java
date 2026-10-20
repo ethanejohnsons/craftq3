@@ -1,5 +1,6 @@
 package dev.bluevista.craftq3.engine.game;
 
+import dev.bluevista.craftq3.engine.collision.CollisionModel;
 import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.common.thread.ThreadOwner;
 import dev.bluevista.craftq3.engine.common.time.Clock;
@@ -22,11 +23,11 @@ import dev.bluevista.craftq3.engine.game.map.GameMap;
 import dev.bluevista.craftq3.engine.game.map.MapSource;
 import dev.bluevista.craftq3.engine.game.snapshot.ClientSnapshot;
 import dev.bluevista.craftq3.engine.game.snapshot.SnapshotBuilder;
-import dev.bluevista.craftq3.engine.game.world.CollisionLayers;
 import dev.bluevista.craftq3.engine.game.world.Contents;
 import dev.bluevista.craftq3.engine.game.world.EntityWorld;
 import dev.bluevista.craftq3.engine.game.world.GameEntities;
 import dev.bluevista.craftq3.engine.game.world.MapVisibility;
+import dev.bluevista.craftq3.engine.game.world.ModelCollision;
 import dev.bluevista.craftq3.engine.game.world.WorldCollision;
 import dev.bluevista.craftq3.engine.net.Protocol68;
 import dev.bluevista.craftq3.engine.net.msg.ConfigstringCommands;
@@ -198,7 +199,10 @@ public final class GameServer implements BotHost, AutoCloseable {
     this.files = Objects.requireNonNull(builder.files, "files");
     this.vmFiles = Objects.requireNonNull(builder.vmFiles, "vmFiles");
     this.maps = builder.maps != null ? builder.maps : new BspMapSource(files);
-    this.collisionFactory = Objects.requireNonNull(builder.collision, "collision");
+    this.collisionFactory =
+        builder.collision != null
+            ? builder.collision
+            : level -> new ModelCollision(CollisionModel.build(level.bsp()), level.sources());
     this.clock = builder.clock;
     this.wallClock = builder.wallClock;
     this.programLoader =
@@ -283,7 +287,10 @@ public final class GameServer implements BotHost, AutoCloseable {
       return this;
     }
 
-    /** Builds the world collision model of a loaded map. */
+    /**
+     * Builds the world collision of a loaded map (default: {@code engine:collision} over its BSP
+     * with the map's extra {@code CollisionSource}s composed into world traces).
+     */
     public Builder collision(Function<GameMap, WorldCollision> value) {
       collision = Objects.requireNonNull(value);
       return this;
@@ -631,8 +638,7 @@ public final class GameServer implements BotHost, AutoCloseable {
 
     map = loaded;
     visibility = new MapVisibility(loaded.bsp());
-    WorldCollision collision =
-        CollisionLayers.compose(collisionFactory.apply(loaded), loaded.layers());
+    WorldCollision collision = collisionFactory.apply(loaded);
     world = new EntityWorld(visibility, collision);
     snapshots = new SnapshotBuilder(world);
     tokens = new EntityTokens(loaded.entityText());

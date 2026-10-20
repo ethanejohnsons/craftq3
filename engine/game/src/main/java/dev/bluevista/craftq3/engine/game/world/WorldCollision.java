@@ -7,7 +7,7 @@ package dev.bluevista.craftq3.engine.game.world;
  * and must not retain any argument. Owned by the simulation thread.
  *
  * <p>The default implementation adapts {@code engine:collision}; a map source may compose extra
- * world geometry into it (see {@link CollisionLayers}).
+ * world geometry into it (see {@link ModelCollision}).
  */
 public interface WorldCollision {
   /** Inline models including the world (model 0). */

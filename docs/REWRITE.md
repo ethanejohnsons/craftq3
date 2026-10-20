@@ -27,16 +27,16 @@ installation working (section 4).
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done. Blaze3D spike passed on OpenGL and Vulkan (`mc:devharness`). Licence: no ioquake3 translation (PORTING.md). Not done: reference screenshots from `main`, nightly corpus job |
-| 1 | common, fs, formats, net, console, testkit | Not started |
-| 2 | vm, vm-abi | Not started |
-| 3 | collision, botlib | Not started |
-| 4 | game, headless | Not started |
-| 5 | client, render-ir, audio | Not started |
-| 6 | session | Not started |
-| 7 | Fabric pure-Q3 mode | Render backend and pure-Q3 flow done (`Q3PureModeClientTest` on OpenGL and Vulkan). Not done: Phase 0 reference screenshot comparison, dedicated-server boot check |
-| 8 | Hybrid bridge and building | Not started |
-| 9 | Parity sign-off | Not started |
+| 0 | Branch, hygiene, build-logic, module graph, ArchUnit, CI matrix | Done. Blaze3D spike passed on OpenGL and Vulkan. Licence: no ioquake3 translation (PORTING.md). Not done: reference screenshots from `main` (visual checks used the new screenshots instead) and a nightly CI corpus job (the retail EULA keeps real data out of CI; no OpenArena job was added) |
+| 1 | common, fs, formats, net, console, testkit | Done. Every PK3 entry in the reference install parses; codec native-capture tests unchanged |
+| 2 | vm, vm-abi | Done. All 67 QVM builds parse and detect; interpreter 3–9× faster than legacy |
+| 3 | collision, botlib | Done. Q3-style patch facets; 1.08M real-data traces; routing on 229 AAS maps; all travel types |
+| 4 | game, headless | Done. Every game directory's qagame plays bot matches with 0 degradations; dedicated headless server with rcon |
+| 5 | client, render-ir, audio | Done. Every ui/cgame boots; every demo (protocols 43, 46/48, 66, 68) and RoQ plays |
+| 6 | session | Done. Local, hosted, remote, demo and cinematic flows; downloads; one-hour soak flat at 93–97 MiB |
+| 7 | Fabric pure-Q3 mode | Done. Title-screen entry, original menus, matches, demos on OpenGL and Vulkan; render p99 under 3.3 ms |
+| 8 | Hybrid bridge and building | Done. Bridge combat with mobs and PvP, loadout/pickup persistence, building in BSP maps; dedicated GameTest server |
+| 9 | Parity sign-off | Done. Legacy retired, docs rewritten, compatibility sweep clean. The differential legacy oracle was replaced by real-data corpus tests plus one-off legacy comparisons (collision, VM) |
 
 ## 1. Target architecture
 

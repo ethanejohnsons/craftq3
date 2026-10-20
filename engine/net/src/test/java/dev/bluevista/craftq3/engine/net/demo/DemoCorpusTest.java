@@ -2,9 +2,7 @@ package dev.bluevista.craftq3.engine.net.demo;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import dev.bluevista.craftq3.engine.common.info.InfoString;
 import dev.bluevista.craftq3.engine.net.Protocol68;
-import dev.bluevista.craftq3.engine.net.msg.MessageReader;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.testkit.RealData;
 import dev.bluevista.craftq3.engine.testkit.RealDataRoot;
@@ -39,7 +37,7 @@ final class DemoCorpusTest {
       long records, long gameStates, long snapshots, long deltas, long entities, long commands) {}
 
   @Test
-  void everyProtocol66To68DemoParsesToItsEndWithEveryDeltaResolved() throws Exception {
+  void everySupportedDemoParsesToItsEndWithEveryDeltaResolved() throws Exception {
     var demos = demos();
     var failures = new ArrayList<String>();
     int parsed = 0;
@@ -57,7 +55,9 @@ final class DemoCorpusTest {
       }
     }
     assertEquals(List.of(), failures);
-    assertTrue(parsed >= 4, "expected the retail, freefall, moteof and CPMA demos, got " + parsed);
+    assertTrue(
+        parsed >= 9,
+        "expected the retail, freefall, moteof, CPMA, protocol-48 and .dm3 demos, got " + parsed);
   }
 
   @Test
@@ -69,223 +69,113 @@ final class DemoCorpusTest {
   }
 
   /**
-   * Protocol 48 is refused. This pins the measured differences documented on {@link
-   * DemoProtocol#Q3_1_27}: raw (non-Huffman) bits with the same envelope, configstrings and
-   * snapshot header, and per-field player change bits where 68 has a field count.
+   * Protocols 48 and 43 (see {@link DemoProtocol#Q3_1_27} and {@link DemoProtocol#Q3_1_09}): every
+   * message of demo000, demo001 (1.25, announcing 46), demo127 (1.27) and pak0's demo001.dm3 and
+   * demo002.dm3 (1.09) decodes to its end-of-message padding with the strict reader, every delta
+   * finds its exact base, and the decoded states move continuously: a player entity's position
+   * follows from the previous snapshot's position and velocity except at the few teleports and
+   * respawns, and the player state's command time tracks the server time.
    */
   @Test
-  void protocol48DemosAreRecognisedAndRefusedWithTheirLayoutPinned() throws Exception {
+  void legacyDemosDecodeEveryMessageWithContinuousMotion() throws Exception {
+    var expectedBaselines =
+        java.util.Map.of(
+            "demo000.dm_48", 81,
+            "demo001.dm_48", 48,
+            "demo127.dm_48", 44,
+            "demo001.dm3", BASELINES_DEMO001_DM3,
+            "demo002.dm3", BASELINES_DEMO002_DM3);
+    var expectedProtocol =
+        java.util.Map.of(
+            "demo000.dm_48", 46,
+            "demo001.dm_48", 46,
+            "demo127.dm_48", 48,
+            "demo001.dm3", 43,
+            "demo002.dm3", 43);
     int checked = 0;
     for (var demo : demos()) {
-      if (DemoProtocol.fromFileName(demo.name()).orElse(null) != DemoProtocol.Q3_1_27) continue;
+      var protocol = DemoProtocol.fromFileName(demo.name()).orElse(null);
+      if (protocol != DemoProtocol.Q3_1_27 && protocol != DemoProtocol.Q3_1_09) continue;
       checked++;
-      var records = new ArrayList<DemoRecord>();
+      String key = demo.name().substring(demo.name().lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+      int frames = 0, deltas = 0, playerPairs = 0, discontinuities = 0;
       try (var reader =
-          new DemoRecordReader(
-              new ByteArrayInputStream(demo.bytes()), DemoRecordReader.Policy.PLAYBACK)) {
-        for (var record = reader.next(); record.isPresent(); record = reader.next())
-          records.add(record.get());
-        assertNotEquals(DemoRecordReader.End.NONE, reader.end());
+          new DemoReader(
+              new ByteArrayInputStream(demo.bytes()), protocol, DemoRecordReader.Policy.STRICT)) {
+        for (var next = reader.next(); next.isPresent(); next = reader.next()) {
+          for (var operation : next.get().message().operations()) {
+            if (operation instanceof ServerMessageCodec.GameState game) {
+              assertEquals(expectedBaselines.get(key), game.baselines().entities().size(), key);
+              assertTrue(game.clientNumber() >= 0 && game.clientNumber() < Protocol68.MAX_CLIENTS);
+            }
+            if (!(operation instanceof ServerMessageCodec.Frame frame)) continue;
+            frames++;
+            var current = frame.current();
+            assertTrue(
+                Math.abs(word(current.player(), 0) - current.time()) < 1000,
+                key + " commandTime follows serverTime");
+            for (byte[] entity : current.entities())
+              for (int offset : new int[] {24, 28, 32})
+                assertTrue(Math.abs(real(entity, offset)) < 16384, key + " position in the map");
+            if (frame.previous() == null) continue;
+            deltas++;
+            var before = new TreeMap<Integer, byte[]>();
+            for (byte[] entity : frame.previous().entities()) before.put(word(entity, 0), entity);
+            double seconds = (current.time() - frame.previous().time()) / 1000.0;
+            for (byte[] entity : current.entities()) {
+              byte[] previous = before.get(word(entity, 0));
+              if (previous == null
+                  || word(entity, 4) != ET_PLAYER
+                  || word(previous, 4) != ET_PLAYER) continue;
+              playerPairs++;
+              double dx = real(entity, 24) - real(previous, 24) - real(previous, 36) * seconds;
+              double dy = real(entity, 28) - real(previous, 28) - real(previous, 40) * seconds;
+              double dz = real(entity, 32) - real(previous, 32) - real(previous, 44) * seconds;
+              if (Math.hypot(dx, dy) > PLAYER_MOTION_TOLERANCE
+                  || Math.abs(dz) > PLAYER_MOTION_TOLERANCE) discontinuities++;
+            }
+          }
+        }
+        assertEquals(DemoRecordReader.End.MARKER, reader.end(), key + " ends with its marker");
+        assertEquals(expectedProtocol.get(key), reader.announcedProtocol().orElseThrow(), key);
       }
-      assertEquals(
-          DemoProtocol.Q3_1_27, DemoProtocol.sniff(records.getFirst().payload()).orElseThrow());
-      assertThrows(
-          UnsupportedDemoProtocolException.class,
-          () ->
-              DemoReader.open(
-                  demo.name(),
-                  new ByteArrayInputStream(demo.bytes()),
-                  DemoRecordReader.Policy.PLAYBACK));
-
-      var gamestate = raw(records.getFirst());
-      gamestate.intValue();
-      assertEquals(Protocol68.SVC_GAMESTATE, gamestate.byteValue());
-      gamestate.intValue();
-      var strings = new TreeMap<Integer, String>();
-      int op;
-      while ((op = gamestate.byteValue()) == Protocol68.SVC_CONFIGSTRING)
-        strings.put(gamestate.shortValue(), gamestate.bigStringValue());
-      assertEquals(Protocol68.SVC_BASELINE, op, demo + " configstrings end at the baselines");
-      var info =
-          InfoString.parse(strings.get(Protocol68.CS_SERVERINFO), Protocol68.BIG_INFO_STRING);
       System.out.println(
           "demo "
               + demo
-              + " protocol 48: "
-              + records.size()
-              + " records, "
-              + strings.size()
-              + " configstrings, server announces protocol "
-              + info.get("protocol"));
-
-      var snapshot =
-          records.stream()
-              .skip(1)
-              .map(DemoCorpusTest::raw)
-              .filter(DemoCorpusTest::startsSnapshot)
-              .findFirst()
-              .orElseThrow();
-      int serverTime = snapshot.intValue();
-      snapshot.byteValue(); // delta
-      snapshot.byteValue(); // flags
-      for (int area = snapshot.byteValue(); area > 0; area--) snapshot.byteValue();
-      assertEquals(1, snapshot.bits(1), "commandTime carries its own change bit");
-      int commandTime = snapshot.intValue();
-      assertTrue(Math.abs(serverTime - commandTime) < 1000, demo + " commandTime near serverTime");
+              + " protocol "
+              + protocol.number()
+              + ": "
+              + frames
+              + " snapshots, "
+              + deltas
+              + " deltas, "
+              + playerPairs
+              + " player moves, "
+              + discontinuities
+              + " jumps");
+      assertTrue(frames > 1200, key + " snapshots");
+      assertEquals(frames - 1, deltas, key + " every snapshot after the first is a resolved delta");
+      assertTrue(playerPairs > 2000, key + " player moves");
+      assertTrue(discontinuities * 200 < playerPairs, key + " teleports and respawns only");
     }
-    assertEquals(3, checked, "expected demo000, demo001 and demo127");
+    assertEquals(5, checked, "expected demo000, demo001, demo127, demo001.dm3 and demo002.dm3");
   }
 
-  /**
-   * Field widths of the protocol-48 entity mask in its wire order (entityState_t declaration order
-   * with frame before clientNum); 0 marks a float.
-   */
-  private static final int[] ENTITY_48_WIDTHS = {
-    8,
-    19,
-    8,
-    32,
-    32,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0, // eType, eFlags, pos
-    8,
-    32,
-    32,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0, // apos
-    32,
-    32,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0, // time, time2, origin, origin2, angles, angles2
-    10,
-    10,
-    10,
-    32,
-    8,
-    8,
-    8,
-    16,
-    8,
-    24,
-    10,
-    8,
-    16,
-    8,
-    8,
-    8,
-    8 // otherEntityNum .. generic1
-  };
+  private static final int ET_PLAYER = 1;
+  private static final int BASELINES_DEMO001_DM3 = 84, BASELINES_DEMO002_DM3 = 27;
 
-  private static final int ENTITY_48_ETYPE = 0, ENTITY_48_LOOP_SOUND = 38;
-  private static final int EXPLICIT_MASK = 63, LOOPED_SPEAKER_MASK = 41;
+  /** Units a player may deviate from linear extrapolation over one snapshot. */
+  private static final double PLAYER_MOTION_TOLERANCE = 40;
 
-  /** Selector 41: eType, pos.trBase, origin, loopSound, eventParm. */
-  private static final int[] LOOPED_SPEAKER_FIELDS = {0, 5, 6, 7, 22, 23, 24, 38, 45};
-
-  /**
-   * Pins the protocol-48 entity layout documented on {@link DemoProtocol#Q3_1_27}: every gamestate
-   * baseline decodes with the 6-bit mask selector (63 = explicit declaration-order mask, 41 = the
-   * looped-speaker table entry) and the list ends with a zero byte and zero padding, without
-   * svc_EOF, client number or checksum feed.
-   */
-  @Test
-  void protocol48GamestateBaselinesDecodeWithTheMaskSelectorLayout() throws Exception {
-    var expected = java.util.Map.of("demo000", 81, "demo001", 48, "demo127", 44);
-    int checked = 0;
-    for (var demo : demos()) {
-      if (DemoProtocol.fromFileName(demo.name()).orElse(null) != DemoProtocol.Q3_1_27) continue;
-      checked++;
-      DemoRecord first;
-      try (var reader =
-          new DemoRecordReader(
-              new ByteArrayInputStream(demo.bytes()), DemoRecordReader.Policy.PLAYBACK)) {
-        first = reader.next().orElseThrow();
-      }
-      var gamestate = raw(first);
-      gamestate.intValue();
-      assertEquals(Protocol68.SVC_GAMESTATE, gamestate.byteValue());
-      gamestate.intValue();
-      int op;
-      while ((op = gamestate.byteValue()) == Protocol68.SVC_CONFIGSTRING) {
-        gamestate.shortValue();
-        gamestate.bigStringValue();
-      }
-      int baselines = 0, loopedSpeakers = 0, last = -1;
-      for (; op == Protocol68.SVC_BASELINE; op = gamestate.byteValue()) {
-        int number = gamestate.bits(Protocol68.GENTITYNUM_BITS);
-        assertTrue(number > last && number < Protocol68.ENTITYNUM_NONE, demo + " entity order");
-        last = number;
-        assertEquals(0, gamestate.bits(1), demo + " baselines are never removals");
-        int selector = gamestate.bits(6);
-        int[] fields;
-        if (selector == EXPLICIT_MASK) {
-          var mask = new int[ENTITY_48_WIDTHS.length];
-          int count = 0;
-          for (int i = 0; i < mask.length; i++) if (gamestate.bits(1) != 0) mask[count++] = i;
-          fields = java.util.Arrays.copyOf(mask, count);
-        } else {
-          assertEquals(LOOPED_SPEAKER_MASK, selector, demo + " baseline mask selector");
-          fields = LOOPED_SPEAKER_FIELDS;
-          loopedSpeakers++;
-        }
-        for (int field : fields) {
-          int width = ENTITY_48_WIDTHS[field];
-          int value;
-          if (width != 0) value = gamestate.bits(width);
-          else if (gamestate.bits(1) != 0) value = gamestate.intValue();
-          else value = gamestate.bits(13) - 4096;
-          if (field == ENTITY_48_ETYPE) assertTrue(value > 0 && value < 13, demo + " eType");
-          if (field == ENTITY_48_LOOP_SOUND && selector == LOOPED_SPEAKER_MASK)
-            assertTrue(value > 0, demo + " looped speaker sound");
-        }
-        baselines++;
-      }
-      assertEquals(0, op, demo + " the baseline list ends with a zero byte");
-      int padding = gamestate.remainingBits();
-      assertTrue(padding < 8, demo + " no svc_EOF, client number or checksum feed");
-      assertEquals(0, gamestate.bits(padding), demo + " zero padding");
-      String key =
-          demo.name().substring(demo.name().lastIndexOf('/') + 1, demo.name().indexOf('.'));
-      assertEquals(expected.get(key), baselines, demo + " baselines");
-      System.out.println(
-          "demo "
-              + demo
-              + " protocol 48: "
-              + baselines
-              + " baselines decoded, "
-              + loopedSpeakers
-              + " with table selector 41");
-    }
-    assertEquals(3, checked, "expected demo000, demo001 and demo127");
+  private static int word(byte[] state, int offset) {
+    return (state[offset] & 255)
+        | (state[offset + 1] & 255) << 8
+        | (state[offset + 2] & 255) << 16
+        | state[offset + 3] << 24;
   }
 
-  /** Consumes the acknowledgement and opcode, leaving a snapshot reader at its header. */
-  private static boolean startsSnapshot(MessageReader reader) {
-    if (reader.remainingBits() < 40) return false;
-    reader.intValue();
-    return reader.byteValue() == Protocol68.SVC_SNAPSHOT;
-  }
-
-  private static MessageReader raw(DemoRecord record) {
-    return new MessageReader(record.payload()).coding(MessageReader.Coding.RAW);
+  private static float real(byte[] state, int offset) {
+    return Float.intBitsToFloat(word(state, offset));
   }
 
   private static Totals parse(Demo demo, DemoProtocol protocol) throws IOException {

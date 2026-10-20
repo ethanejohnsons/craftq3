@@ -11,6 +11,9 @@ public final class PlayerDeltaCodec {
       POWERUPS_OFFSET = 312,
       AMMO_OFFSET = 376;
 
+  /** Canonical offset of {@code clientNum}. */
+  public static final int CLIENT_NUM_OFFSET = 140;
+
   /** Wire order of the four arrays: stats, persistant, ammo, powerups. */
   private static final int[] ARRAYS = {
     STATS_OFFSET, PERSISTANT_OFFSET, AMMO_OFFSET, POWERUPS_OFFSET

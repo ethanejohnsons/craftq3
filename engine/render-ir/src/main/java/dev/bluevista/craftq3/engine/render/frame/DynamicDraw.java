@@ -49,9 +49,21 @@ public record DynamicDraw(
     /** An inline BSP model copied on the CPU (see {@link FrameBuilder.Options}). */
     INLINE,
     SPRITE,
+    /** {@code RT_BEAM}, {@code RT_RAIL_CORE} and {@code RT_LIGHTNING}. */
     BEAM,
     RAIL_RINGS,
-    POLY
+    POLY,
+    /** The flattened copy of a model's opaque surfaces ({@code RF_SHADOW_PLANE}). */
+    SHADOW;
+
+    /**
+     * True when the backend's projected dynamic-light pass applies, as it does in Q3 for world and
+     * brush-model surfaces. Entities, sprites, beams and polys take dynamic lights through their
+     * entity lighting instead ({@link DynamicDraw#directed()}).
+     */
+    public boolean projectsDynamicLights() {
+      return this == WORLD || this == INLINE;
+    }
   }
 
   public DynamicDraw {

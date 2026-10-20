@@ -100,6 +100,18 @@ public record ViewDefinition(
     return timeMillis / 1000.0;
   }
 
+  public boolean hyperspace() {
+    return (rdflags & RDF_HYPERSPACE) != 0;
+  }
+
+  /**
+   * The grey level a hyperspace view clears its viewport to before the scene draws: the low eight
+   * bits of the refdef time, so it ramps from black to white every 256 ms.
+   */
+  public float hyperspaceGrey() {
+    return (timeMillis & 255) / 255f;
+  }
+
   /** The view volume with the default near and far planes and the clip plane if any. */
   public Frustum frustum() {
     return Frustum.of(

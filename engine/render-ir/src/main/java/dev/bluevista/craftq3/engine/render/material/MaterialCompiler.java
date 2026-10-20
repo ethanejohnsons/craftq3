@@ -142,6 +142,9 @@ public final class MaterialCompiler {
       return new TextureBundle(
           TextureBundle.Kind.ANIMATED, map.frames(), map.fps(), map.clamp(), mipmaps, picmip);
     String image = map.frames().getFirst();
+    if (map.video())
+      return new TextureBundle(
+          TextureBundle.Kind.VIDEO, List.of(image), 0, map.clamp(), false, false);
     TextureBundle.Kind kind;
     if (image.equals(TextureBundle.LIGHTMAP)) kind = TextureBundle.Kind.LIGHTMAP;
     else if (image.equals(TextureBundle.WHITE) || image.equals("*white"))

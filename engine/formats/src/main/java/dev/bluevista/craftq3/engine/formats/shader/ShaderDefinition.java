@@ -208,12 +208,31 @@ public record ShaderDefinition(
 
   public record Fog(Vec3f color, float depthForOpaque) {}
 
-  public record TextureMap(List<String> frames, float fps, boolean clamp) {
+  /**
+   * A stage's image source: one image ({@code map}, {@code clampMap}), animation frames ({@code
+   * animMap}) or, with {@code video}, the RoQ file a {@code videoMap} plays (looping, silent).
+   */
+  public record TextureMap(List<String> frames, float fps, boolean clamp, boolean video) {
     public TextureMap {
       frames = frames.stream().map(ShaderDefinition::textureName).toList();
       if (frames.isEmpty() || frames.size() > 64 || !Float.isFinite(fps) || fps < 0) {
         throw new IllegalArgumentException("Invalid shader texture animation");
       }
+      if (video && frames.size() != 1)
+        throw new IllegalArgumentException("A video map plays exactly one file");
+    }
+
+    public TextureMap(List<String> frames, float fps, boolean clamp) {
+      this(frames, fps, clamp, false);
+    }
+
+    /**
+     * {@code videoMap name}: a bare file name is looked up in {@code video/}, as the original
+     * cinematic player does; a name with a directory is used as given.
+     */
+    public static TextureMap video(String name) {
+      boolean bare = name.indexOf('/') < 0 && name.indexOf('\\') < 0;
+      return new TextureMap(List.of(bare ? "video/" + name : name), 0, false, true);
     }
 
     public String atTime(double seconds) {

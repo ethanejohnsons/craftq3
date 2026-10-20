@@ -328,6 +328,7 @@ public final class ShaderParser {
       switch (directive) {
         case "map", "clampmap" ->
             s.texture = new TextureMap(List.of(argument()), 0, directive.equals("clampmap"));
+        case "videomap" -> s.texture = TextureMap.video(argument());
         case "animmap", "clampanimmap" -> {
           float fps = nonnegative(number(), "animation frequency");
           List<String> frames = new ArrayList<>();

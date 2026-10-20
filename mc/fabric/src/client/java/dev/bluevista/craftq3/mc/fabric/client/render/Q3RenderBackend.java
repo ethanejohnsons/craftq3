@@ -106,8 +106,12 @@ public final class Q3RenderBackend implements AutoCloseable {
   private Q3WorldRenderer world;
   private SceneTextures sceneTextures;
   private FrameBuilder builder;
-  // Without a map: a registry of 2D materials only.
+  // Without a map: the 2D materials and those of views without a world (menu player models).
   private Q3MaterialTable overlayMaterials;
+  private FrameBuilder noWorldBuilder;
+  private final Q3VideoMaps videoMaps;
+  private boolean skyNearBox;
+  private boolean warnedWorldlessView;
 
   // Per frame.
   private Q3FrameBuffers frame;
@@ -193,6 +197,9 @@ public final class Q3RenderBackend implements AutoCloseable {
     GpuTextureView color;
     GpuTextureView depth;
     boolean clearColor;
+    // RDF_HYPERSPACE: grey level to clear the view's region to, or negative.
+    float hyperspace = -1;
+    int[] region;
     int viewBlock;
     GpuBufferSlice fog;
     int from, to;
@@ -262,6 +269,7 @@ public final class Q3RenderBackend implements AutoCloseable {
     this.context = Objects.requireNonNull(context, "context");
     this.baseShaders = Objects.requireNonNull(baseShaders, "baseShaders");
     this.assets = Objects.requireNonNull(assets, "assets");
+    this.videoMaps = new Q3VideoMaps(context.textures(), assets);
     for (int i = 0; i < MAX_VIEWS; i++) {
       visibleSets[i] = new VisibleSet();
       geometries[i] = new FrameGeometry();
@@ -298,10 +306,16 @@ public final class Q3RenderBackend implements AutoCloseable {
     prepareMips(textures);
     world = new Q3WorldRenderer(scene, registry, textures, this::image, context, load);
     builder = new FrameBuilder(scene, registry);
+    videoMaps.assets(assets);
     preparedMips.clear();
     int evicted = context.textures().evictOlderThan(generation);
+    // Compile every pipeline variant the map's materials (and common entity and 2D states) use
+    // now, so the first frames do not stall compiling shaders inside their render passes.
+    long compileStart = System.nanoTime();
+    context.pipelines().prepareCommon();
+    int compiled = context.pipelines().precompile();
     LOGGER.info(
-        "CraftQ3: loaded {} in {} ms: {} vertices, {} batches, {} materials, {} lightmaps, {} textures resident ({} evicted)",
+        "CraftQ3: loaded {} in {} ms: {} vertices, {} batches, {} materials, {} lightmaps, {} textures resident ({} evicted), {} pipeline variants compiled in {} ms",
         scene.name(),
         (System.nanoTime() - start) / 1_000_000,
         scene.world().vertexCount(),
@@ -309,11 +323,14 @@ public final class Q3RenderBackend implements AutoCloseable {
         registry.size(),
         textures.lightmaps().size(),
         context.textures().size(),
-        evicted);
+        evicted,
+        compiled,
+        (System.nanoTime() - compileStart) / 1_000_000);
   }
 
   /** Releases the current map's GPU data. */
   public void unloadMap() {
+    videoMaps.clear();
     if (world != null) world.close();
     world = null;
     builder = null;
@@ -360,9 +377,24 @@ public final class Q3RenderBackend implements AutoCloseable {
 
   private Q3MaterialTable materials() {
     if (world != null) return world.materials();
-    if (overlayMaterials == null)
+    if (overlayMaterials == null) {
       overlayMaterials = new Q3MaterialTable(new MaterialRegistry(shaders), context, this::image);
+      noWorldBuilder = FrameBuilder.withoutWorld(overlayMaterials.registry());
+    }
     return overlayMaterials;
+  }
+
+  /**
+   * Whether the sky's inner box ({@code skyparms} near box) is drawn over the clouds. Off by
+   * default: Quake III 1.32 loads the inner box images but never draws them.
+   */
+  public void drawSkyNearBox(boolean draw) {
+    skyNearBox = draw;
+  }
+
+  /** {@code videoMap} streams currently playing. */
+  public int videoStreams() {
+    return videoMaps.size();
   }
 
   private MaterialRegistry registry() {
@@ -408,6 +440,7 @@ public final class Q3RenderBackend implements AutoCloseable {
     mainCleared = false;
     viewsThisFrame = 0;
     cinematicsSeen.clear();
+    videoMaps.beginFrame();
     ensureStaticBlocks();
   }
 
@@ -515,6 +548,7 @@ public final class Q3RenderBackend implements AutoCloseable {
     overlayMaterials = null;
     cinematics.values().forEach(CinematicTexture::close);
     cinematics.clear();
+    videoMaps.close();
     if (staticBlocks != null) staticBlocks.close();
     staticBlocks = null;
     if (runOffsets != null) MemoryUtil.memFree(runOffsets);
@@ -568,8 +602,11 @@ public final class Q3RenderBackend implements AutoCloseable {
       LOGGER.warn("CraftQ3: more than {} views in one frame; extra views skipped", MAX_VIEWS);
       return;
     }
-    if (world == null) {
-      // 3D views need a map's scene for FrameBuilder; without one only 2D draws.
+    if (world == null && definition.worldModel()) {
+      // Q3 drops to the console here ("R_RenderScene: NULL worldmodel"); skip the view instead.
+      if (!warnedWorldlessView)
+        LOGGER.warn("CraftQ3: a view without RDF_NOWORLDMODEL arrived with no map loaded; skipped");
+      warnedWorldlessView = true;
       return;
     }
     int[] viewport =
@@ -594,14 +631,18 @@ public final class Q3RenderBackend implements AutoCloseable {
     FrameGeometry geometry = geometries[slot];
     Items items = itemLists[slot];
     items.clear();
-    boolean worldModel = definition.worldModel();
-    RenderScene scene = world.scene();
-    MaterialRegistry registry = world.materials().registry();
+    // Views without a world (menu and HUD models) also render while no map is loaded.
+    boolean hasMap = world != null;
+    boolean worldModel = definition.worldModel() && hasMap;
+    RenderScene scene = hasMap ? world.scene() : null;
+    Q3MaterialTable table = materials();
+    MaterialRegistry registry = table.registry();
     boolean mirrored = definition.mirrored();
     double seconds = definition.seconds();
 
     if (worldModel) scene.visibility().select(definition, true, true, visible);
-    builder.build(cgView, definition, worldModel ? visible : null, geometry);
+    (hasMap ? builder : noWorldBuilder)
+        .build(cgView, definition, worldModel ? visible : null, geometry);
 
     // Portal and mirror views, rendered before this view into their own targets.
     Map<Integer, GpuTextureView> portalImages = Map.of();
@@ -627,8 +668,8 @@ public final class Q3RenderBackend implements AutoCloseable {
     }
 
     // Items: visible world batches, dynamic draws, inline models.
-    WorldGeometry worldGeometry = scene.world();
-    List<DrawBatch> batches = worldGeometry.batches();
+    WorldGeometry worldGeometry = hasMap ? scene.world() : null;
+    List<DrawBatch> batches = hasMap ? worldGeometry.batches() : List.of();
     int skyMaterial = -1;
     if (worldModel) {
       for (int i = 0; i < visible.batchCount(); i++) {
@@ -674,8 +715,12 @@ public final class Q3RenderBackend implements AutoCloseable {
     PassRecord pass = new PassRecord();
     pass.from = cmdCount;
     pass.viewBlock = viewBlock;
-    pass.fog = world.fogBlock();
+    pass.fog = hasMap ? world.fogBlock() : emptyFog;
     pass.label = "CraftQ3 view " + slot;
+    if (definition.hyperspace() && portalTarget == null) {
+      pass.hyperspace = definition.hyperspaceGrey();
+      pass.region = scissor(viewport);
+    }
     if (portalTarget != null) {
       pass.color = portalTarget.colorView();
       pass.depth = portalTarget.depthView();
@@ -688,7 +733,6 @@ public final class Q3RenderBackend implements AutoCloseable {
     }
     pass.scissor = fullViewport(viewport) ? null : scissor(viewport);
 
-    Q3MaterialTable table = world.materials();
     GpuTextureView white = context.textures().white(encoder);
     GpuTextureView black = context.textures().black(encoder);
     List<DynamicLight> lights = cgView.lights();
@@ -748,7 +792,7 @@ public final class Q3RenderBackend implements AutoCloseable {
         case DYNAMIC -> {
           DynamicDraw draw = draws.get(items.ref[item]);
           stats.dynamicDraws++;
-          int fog = world.fogVolume(draw.fog());
+          int fog = hasMap ? world.fogVolume(draw.fog()) : -1;
           int drawOffset =
               drawBlock(
                   null,
@@ -762,7 +806,7 @@ public final class Q3RenderBackend implements AutoCloseable {
                   draw.shaderS(),
                   draw.shaderT());
           int firstIndex = ringIndices(geometry, draw.firstIndex(), draw.indexCount(), front);
-          GpuTextureView lightmap = world.lightmap(draw.lightmap());
+          GpuTextureView lightmap = hasMap ? world.lightmap(draw.lightmap()) : null;
           double time = program.shaderTime(draw.shaderSeconds());
           for (Q3MaterialTable.Pass p : material.passes) {
             Cmd c =
@@ -775,7 +819,10 @@ public final class Q3RenderBackend implements AutoCloseable {
                     drawOffset);
             ringGeometry(c, firstIndex, draw.indexCount(), baseVertex);
           }
-          if (material.dlight != null && touches(lights, draw)) {
+          // Entities take dynamic lights through their lighting; only surfaces are projected.
+          if (material.dlight != null
+              && draw.source().projectsDynamicLights()
+              && touches(lights, draw)) {
             Cmd c = cmd(material.dlight, white, material.dlight.sampler, white, null, drawOffset);
             ringGeometry(c, firstIndex, draw.indexCount(), baseVertex);
           }
@@ -870,6 +917,22 @@ public final class Q3RenderBackend implements AutoCloseable {
         meshGeometry(c, dome, 0, dome.indexCount());
       }
     }
+    // Q3 order: far box, then the cloud layers; the inner box would come last (see
+    // drawSkyNearBox).
+    if (skyNearBox && sky.nearBox != null) {
+      Q3WorldRenderer.SkyMesh box = world.skyBox();
+      for (int side = 0; side < sky.nearSides.length; side++) {
+        Cmd c =
+            cmd(
+                sky.nearBox,
+                sky.nearSides[side],
+                context.q3Sampler(true, true),
+                white,
+                null,
+                drawOffset);
+        meshGeometry(c, box, side * 6, 6);
+      }
+    }
   }
 
   private GpuTextureView portalImage(
@@ -892,6 +955,7 @@ public final class Q3RenderBackend implements AutoCloseable {
       CinematicTexture movie = cinematics.get(pass.cinematic);
       return movie != null ? movie.view() : context.textures().black(encoder);
     }
+    if (pass.video != null) return videoMaps.texture(encoder, pass.video, time);
     return pass.frame(time);
   }
 
@@ -1388,7 +1452,24 @@ public final class Q3RenderBackend implements AutoCloseable {
   // Execution
 
   private void execute(PassRecord record) {
-    if (record.to == record.from && !record.clearColor) return;
+    boolean clearColor = record.clearColor;
+    if (record.hyperspace >= 0) {
+      // RB_Hyperspace: the view's region flashes grey before (and under) whatever it draws.
+      if (clearColor) encoder.clearColorTexture(record.color.texture(), CLEAR);
+      clearColor = false;
+      float g = record.hyperspace;
+      int[] r = record.region;
+      encoder.clearColorAndDepthTextures(
+          record.color.texture(),
+          new Vector4f(g, g, g, 1),
+          record.depth.texture(),
+          0,
+          r[0],
+          r[1],
+          r[2],
+          r[3]);
+    }
+    if (record.to == record.from && !clearColor) return;
     GpuBufferSlice view = frame.uniformSlice(record.viewBlock, Q3Blocks.VIEW_BYTES);
     DeviceFeatures features = RenderSystem.getDevice().getDeviceInfo().features();
     int maxInterleaved =
@@ -1400,7 +1481,7 @@ public final class Q3RenderBackend implements AutoCloseable {
         encoder.createRenderPass(
             () -> record.label,
             record.color,
-            record.clearColor ? Optional.of(CLEAR) : Optional.empty(),
+            clearColor ? Optional.of(CLEAR) : Optional.empty(),
             record.depth,
             OptionalDouble.of(0))) {
       if (record.scissor != null)

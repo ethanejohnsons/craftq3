@@ -51,6 +51,9 @@ final class Q3MaterialTable implements AutoCloseable {
     /** {@code $cinematic/N} stream, or -1. */
     final long cinematic;
 
+    /** The RoQ file a {@code videoMap} stage plays, or null. */
+    final String video;
+
     final GpuSampler sampler;
     final boolean depthWrite;
 
@@ -62,6 +65,7 @@ final class Q3MaterialTable implements AutoCloseable {
         boolean lightmapTexture,
         boolean multiplyLightmap,
         long cinematic,
+        String video,
         GpuSampler sampler,
         boolean depthWrite) {
       this.pipeline = pipeline;
@@ -71,6 +75,7 @@ final class Q3MaterialTable implements AutoCloseable {
       this.lightmapTexture = lightmapTexture;
       this.multiplyLightmap = multiplyLightmap;
       this.cinematic = cinematic;
+      this.video = video;
       this.sampler = sampler;
       this.depthWrite = depthWrite;
     }
@@ -94,6 +99,11 @@ final class Q3MaterialTable implements AutoCloseable {
     final GpuTextureView[] skySides;
     final Pass[] clouds;
 
+    /** The blended inner box ({@code skyparms} near box), or null. */
+    final Pass nearBox;
+
+    final GpuTextureView[] nearSides;
+
     /** Sort rank above opaque: drawn after the opaque world, in Q3 sort order. */
     final boolean translucent;
 
@@ -106,7 +116,9 @@ final class Q3MaterialTable implements AutoCloseable {
         Pass backdrop,
         Pass skyBox,
         GpuTextureView[] skySides,
-        Pass[] clouds) {
+        Pass[] clouds,
+        Pass nearBox,
+        GpuTextureView[] nearSides) {
       this.index = index;
       this.program = program;
       this.passes = passes;
@@ -116,6 +128,8 @@ final class Q3MaterialTable implements AutoCloseable {
       this.skyBox = skyBox;
       this.skySides = skySides;
       this.clouds = clouds;
+      this.nearBox = nearBox;
+      this.nearSides = nearSides;
       this.translucent = !program.opaque();
     }
 
@@ -238,17 +252,28 @@ final class Q3MaterialTable implements AutoCloseable {
                     offset),
                 white)
             : null;
-    Pass skyBox = null;
-    GpuTextureView[] sides = null;
+    Pass skyBox = null, nearBox = null;
+    GpuTextureView[] sides = null, nearSides = null;
     Pass[] clouds = new Pass[0];
     if (program.isSky()) {
       MaterialProgram.SkyParameters sky = program.sky().orElseThrow();
+      if (!sky.nearBox().equals("-")) {
+        nearSides = boxSides(encoder, sky.nearBox());
+        nearBox =
+            synthetic(
+                program,
+                0,
+                key(
+                    BlendFactor.SRC_ALPHA,
+                    BlendFactor.ONE_MINUS_SRC_ALPHA,
+                    false,
+                    Q3Pipelines.Depth.LEQUAL,
+                    false,
+                    false),
+                white);
+      }
       if (!sky.farBox().equals("-")) {
-        sides = new GpuTextureView[SkyGeometry.SIDES.size()];
-        for (int s = 0; s < sides.length; s++) {
-          String name = sky.farBox() + "_" + SkyGeometry.SIDES.get(s);
-          sides[s] = context.textures().get(encoder, name, () -> images.image(name));
-        }
+        sides = boxSides(encoder, sky.farBox());
         skyBox =
             synthetic(
                 program,
@@ -268,7 +293,27 @@ final class Q3MaterialTable implements AutoCloseable {
       clouds = layers.toArray(Pass[]::new);
     }
     return new Material(
-        index, program, passes.toArray(Pass[]::new), fog, dlight, backdrop, skyBox, sides, clouds);
+        index,
+        program,
+        passes.toArray(Pass[]::new),
+        fog,
+        dlight,
+        backdrop,
+        skyBox,
+        sides,
+        clouds,
+        nearBox,
+        nearSides);
+  }
+
+  /** The six sides of box {@code prefix} in {@link SkyGeometry#SIDES} order. */
+  private GpuTextureView[] boxSides(CommandEncoder encoder, String prefix) {
+    GpuTextureView[] sides = new GpuTextureView[SkyGeometry.SIDES.size()];
+    for (int s = 0; s < sides.length; s++) {
+      String name = prefix + "_" + SkyGeometry.SIDES.get(s);
+      sides[s] = context.textures().get(encoder, name, () -> images.image(name));
+    }
+    return sides;
   }
 
   private Pass pass(
@@ -299,6 +344,7 @@ final class Q3MaterialTable implements AutoCloseable {
     TextureBundle bundle = stage.texture();
     boolean lightmap = bundle.kind() == TextureBundle.Kind.LIGHTMAP;
     long cinematic = -1;
+    String video = bundle.kind() == TextureBundle.Kind.VIDEO ? bundle.images().getFirst() : null;
     GpuTextureView[] frames;
     if (lightmap) {
       frames = new GpuTextureView[] {context.textures().white(encoder)};
@@ -323,6 +369,7 @@ final class Q3MaterialTable implements AutoCloseable {
         lightmap,
         (flags & Q3Blocks.FLAG_LIGHTMAP) != 0,
         cinematic,
+        video,
         sampler,
         key.depthWrite());
   }
@@ -337,6 +384,7 @@ final class Q3MaterialTable implements AutoCloseable {
         false,
         false,
         -1,
+        null,
         context.q3Sampler(true, false),
         key.depthWrite());
   }
@@ -349,7 +397,7 @@ final class Q3MaterialTable implements AutoCloseable {
           name.equals(TextureBundle.WHITE)
               ? textures.white(encoder)
               : name.equals("$missing") ? textures.missing(encoder) : textures.black(encoder);
-      // Cinematic streams on surfaces need the client's RoQ player; until then they show black.
+      // videoMap frames come from the backend's RoQ player; black until the first one decodes.
       case VIDEO -> textures.black(encoder);
       case IMAGE, ANIMATED -> textures.get(encoder, name, () -> images.image(name));
     };

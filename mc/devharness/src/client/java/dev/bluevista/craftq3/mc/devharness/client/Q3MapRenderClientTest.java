@@ -20,6 +20,7 @@ import dev.bluevista.craftq3.engine.render.ViewBasis;
 import dev.bluevista.craftq3.engine.render.ViewDefinition;
 import dev.bluevista.craftq3.engine.render.WorldGeometry;
 import dev.bluevista.craftq3.engine.render.frame.CgameFrame;
+import dev.bluevista.craftq3.engine.render.material.TextureBundle;
 import dev.bluevista.craftq3.mc.fabric.client.CraftQ3ClientMod;
 import dev.bluevista.craftq3.mc.fabric.client.debug.Q3MapViewScreen;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3RenderBackend;
@@ -58,7 +59,20 @@ import org.slf4j.LoggerFactory;
 public final class Q3MapRenderClientTest implements FabricClientGameTest {
   private static final Logger LOGGER = LoggerFactory.getLogger(Q3MapRenderClientTest.class);
   private static final List<String> MAPS =
-      List.of("q3dm17", "q3dm1", "q3tourney2", "q3dm0", "q3ctf1", "q3dm11", "simpsons_q3");
+      // pasctf3 ships the installation's only videoMap shaders (scripts/proto2.shader, naming
+      // Team Arena RoQs that are absent), though none of its faces use them; a map whose faces
+      // do also gets a view of its largest videoMap surface. Q3EffectsRenderClientTest plays one.
+      // gon3 has a skyparms near box.
+      List.of(
+          "q3dm17",
+          "q3dm1",
+          "q3tourney2",
+          "q3dm0",
+          "q3ctf1",
+          "q3dm11",
+          "simpsons_q3",
+          "pasctf3",
+          "gon3");
   private static final int WIDTH = 1920, HEIGHT = 1080;
   private static final int TIMED_FRAMES = 200;
 
@@ -166,7 +180,21 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
         screen.scene((w, h, t) -> sized(horizon, w, h, t));
         context.waitTicks(2);
         context.takeScreenshot(name + "-up25");
-        ViewDefinition skyView = facing(scene, surface(scene, WorldGeometry.SURF_SKY, false), 160);
+        int skySurface = surface(scene, WorldGeometry.SURF_SKY, false);
+        ViewDefinition skyView = facing(scene, skySurface, 160);
+        if (skyView != null
+            && scene
+                .material(scene.world().surfaceMaterial(skySurface))
+                .sky()
+                .filter(sky -> !sky.nearBox().equals("-"))
+                .isPresent()) {
+          // Q3 1.32 never draws the inner box; the opt-in drawing must not break the sky.
+          screen.scene((w, h, t) -> sized(skyView, w, h, t));
+          context.runOnClient(c -> backend.drawSkyNearBox(true));
+          context.waitTicks(2);
+          context.takeScreenshot(name + "-sky-nearbox");
+          context.runOnClient(c -> backend.drawSkyNearBox(false));
+        }
         if (skyView != null) {
           screen.scene((w, h, t) -> sized(skyView, w, h, t));
           context.waitTicks(2);
@@ -202,6 +230,23 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
                 .append(
                     context.<String, RuntimeException>computeOnClient(
                         c -> backend.stats().toString()))
+                .append('\n');
+          }
+        }
+        int videoSurface = videoSurface(scene);
+        if (videoSurface >= 0) {
+          ViewDefinition videoView = facing(scene, videoSurface, 128);
+          if (videoView != null) {
+            screen.scene((w, h, t) -> sized(videoView, w, h, t));
+            context.waitTicks(4);
+            context.takeScreenshot(name + "-videomap");
+            report
+                .append(map)
+                .append(": videoMap surface ")
+                .append(videoSurface)
+                .append(", streams ")
+                .append(
+                    context.<Integer, RuntimeException>computeOnClient(c -> backend.videoStreams()))
                 .append('\n');
           }
         }
@@ -410,6 +455,27 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
         eye,
         -1,
         0);
+  }
+
+  /** The largest drawn world surface whose material plays a {@code videoMap}, or -1. */
+  private static int videoSurface(RenderScene scene) {
+    WorldGeometry world = scene.world();
+    int best = -1;
+    double bestSize = 0;
+    for (int s = 0; s < world.surfaceCount(); s++) {
+      if (world.surfaceModel(s) != 0 || world.surfaceBatch(s) < 0) continue;
+      boolean video =
+          scene.material(world.surfaceMaterial(s)).stages().stream()
+              .anyMatch(stage -> stage.texture().kind() == TextureBundle.Kind.VIDEO);
+      if (!video) continue;
+      double size = 0;
+      for (int c = 0; c < 3; c++) size += world.surfaceBound(s, c + 3) - world.surfaceBound(s, c);
+      if (size > bestSize) {
+        bestSize = size;
+        best = s;
+      }
+    }
+    return best;
   }
 
   /** The drawn surface with the largest extent having {@code flag} (or any fog volume). */

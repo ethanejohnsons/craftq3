@@ -16,8 +16,8 @@ import java.util.List;
 /**
  * CPU stage evaluation for backends without shader-side stages: produces the colours and texture
  * coordinates of one stage of a {@link DynamicDraw} with {@link StageEvaluator}, using the same
- * lighting the GPU path receives (the draw's light-grid sample plus dynamic lights for entities;
- * the grid per vertex for world surfaces) and per-vertex fog colour for {@code rgbGen fog}.
+ * lighting the GPU path receives (the draw's entity lighting, which already includes dynamic
+ * lights; the grid per vertex for world surfaces) and per-vertex fog colour for {@code rgbGen fog}.
  */
 public final class FallbackShading {
   private FallbackShading() {}
@@ -37,10 +37,14 @@ public final class FallbackShading {
       FogVolumes fog,
       float[] texCoordsOut,
       byte[] colorsOut) {
+    // Entities already carry their dynamic lights in the draw's directed light; brush models take
+    // them per vertex, standing in for the projected light pass.
     VertexLighting lighting =
-        draw.source() == DynamicDraw.Source.WORLD
-            ? grid.perVertex()
-            : lights.isEmpty() ? null : DynamicLighting.addedToAmbient(lights);
+        switch (draw.source()) {
+          case WORLD -> grid.perVertex();
+          case INLINE -> lights.isEmpty() ? null : DynamicLighting.addedToAmbient(lights);
+          default -> null;
+        };
     VertexFog fogColor = fog == null || fog.count() == 0 ? null : fog.colorFrom(viewOrigin);
     StageEvaluator.evaluate(
         stage.shading(),

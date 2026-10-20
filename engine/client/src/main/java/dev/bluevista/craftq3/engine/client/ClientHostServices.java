@@ -5,6 +5,7 @@ import dev.bluevista.craftq3.engine.audio.NullAudioDevice;
 import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import dev.bluevista.craftq3.engine.render.RenderScene;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -62,9 +63,11 @@ public interface ClientHostServices {
    * The client loaded a new world map ({@code trap_CM_LoadMap}/{@code trap_R_LoadWorldMap}): {@code
    * map} is what collision and the renderer use and {@code assets} the content it was loaded with
    * (its file view and shader scripts), so a presenter can build the render scene without polling.
-   * Called on the client thread, inside the cgame's map load.
+   * Called on the client thread, inside the cgame's map load. {@code sceneOptions} carries {@code
+   * r_subdivisions} as the client's own mark-fragment surfaces used it.
    */
-  default void worldLoaded(String normalizedPath, BspMap map, ClientAssets assets) {}
+  default void worldLoaded(
+      String normalizedPath, BspMap map, ClientAssets assets, RenderScene.Options sceneOptions) {}
 
   /** The client released its world map (the game ended). */
   default void worldUnloaded() {}

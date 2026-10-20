@@ -20,6 +20,7 @@ import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
 import dev.bluevista.craftq3.engine.fs.FileView;
 import dev.bluevista.craftq3.engine.fs.HomeStore;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
+import dev.bluevista.craftq3.engine.render.RenderScene;
 import dev.bluevista.craftq3.engine.vm.QvmImage;
 import dev.bluevista.craftq3.engine.vm.QvmInstance;
 import dev.bluevista.craftq3.engine.vmabi.AbiProfile;
@@ -315,7 +316,7 @@ public final class HostServices implements AutoCloseable {
     }
     world = loaded;
     renderer.loadWorld(normalized, loaded.map());
-    platform.worldLoaded(normalized, loaded.map(), assets);
+    platform.worldLoaded(normalized, loaded.map(), assets, loaded.sceneOptions());
     return world;
   }
 
@@ -334,6 +335,7 @@ public final class HostServices implements AutoCloseable {
       Object source = mapSource(normalized);
       List<CollisionSource> sources = sourcesFor(normalized);
       ShaderLibrary library = assets.library();
+      RenderScene.Options options = sceneOptions();
       pending =
           CompletableFuture.supplyAsync(
               () -> {
@@ -341,7 +343,7 @@ public final class HostServices implements AutoCloseable {
                     source instanceof BspMap given
                         ? given
                         : BspReader.read((byte[]) source, normalized);
-                ClientWorld built = new ClientWorld(normalized, map, library, sources);
+                ClientWorld built = new ClientWorld(normalized, map, library, sources, options);
                 built.collision();
                 return built;
               },
@@ -374,7 +376,12 @@ public final class HostServices implements AutoCloseable {
   }
 
   private ClientWorld build(String normalized, BspMap map, List<CollisionSource> sources) {
-    return new ClientWorld(normalized, map, assets.library(), sources);
+    return new ClientWorld(normalized, map, assets.library(), sources, sceneOptions());
+  }
+
+  /** Patch tessellation for the next world, from {@code r_subdivisions}. */
+  private RenderScene.Options sceneOptions() {
+    return RenderScene.Options.subdivisions(console.cvars().value("r_subdivisions"));
   }
 
   /** {@code maps/q3dm17.bsp} → {@code q3dm17}. */

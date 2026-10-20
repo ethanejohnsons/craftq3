@@ -29,7 +29,7 @@ import then follows its policy (degrades to 0, or a VM fault under `vm_strictSys
 ## Geometry
 
 - Candidates are the triangles of world (model 0) surfaces, as built for rendering, including
-  patches tessellated with the render subdivision (see [DIVERGENCES.md](../DIVERGENCES.md)).
+  patches tessellated to the `r_subdivisions` error bound as for rendering (`PatchTessellator`).
   Surfaces flagged `SURF_SKY`, `SURF_NOIMPACT` or `SURF_NOMARKS` never receive marks. Inline
   models (doors, platforms) receive none.
 - The prism has one side plane per polygon edge plus two caps along the projection, each cap

@@ -1,6 +1,5 @@
 package dev.bluevista.craftq3.engine.render;
 
-import dev.bluevista.craftq3.engine.common.log.Log;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import dev.bluevista.craftq3.engine.formats.bsp.SurfaceType;
 import dev.bluevista.craftq3.engine.render.material.MaterialProgram;
@@ -11,18 +10,22 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
-/** Tessellates BSP faces into {@link WorldGeometry}: indexed faces, Bernstein patches, batching. */
+/**
+ * Builds {@link WorldGeometry} from BSP faces: indexed faces, patches ({@link PatchTessellator}),
+ * batching.
+ */
 final class WorldBuilder {
-  static final int MAX_VERTICES = 8_000_000;
-  static final int MAX_TRIANGLES = 8_000_000;
-  private static final Log LOG = Log.get(WorldBuilder.class);
+  // The largest map in the test corpus needs ~370K vertices and ~400K triangles even at
+  // r_subdivisions 0; the budget leaves room for larger community maps.
+  static final int MAX_VERTICES = 2_000_000;
+  static final int MAX_TRIANGLES = 2_000_000;
 
   private WorldBuilder() {}
 
   static WorldGeometry build(
       String name,
       BspMap map,
-      int subdivisions,
+      RenderScene.Options options,
       int[] faceMaterial,
       List<MaterialProgram> programs) {
     BspMap.Faces faces = map.faces();
@@ -51,6 +54,10 @@ final class WorldBuilder {
         if (surfaces[face * WorldGeometry.SURFACE_INTS + WorldGeometry.MODEL] < 0)
           surfaces[face * WorldGeometry.SURFACE_INTS + WorldGeometry.MODEL] = model;
     }
+    boolean[] inModel = new boolean[faceCount];
+    for (int face = 0; face < faceCount; face++)
+      inModel[face] = surfaces[face * WorldGeometry.SURFACE_INTS + WorldGeometry.MODEL] >= 0;
+    PatchTessellator patches = PatchTessellator.plan(name, map, raw, inModel, options);
     for (int face = 0; face < faceCount; face++) {
       int at = face * WorldGeometry.SURFACE_INTS;
       int texture = faces.texture(face);
@@ -68,7 +75,7 @@ final class WorldBuilder {
       if (surfaces[at + WorldGeometry.MODEL] >= 0) {
         SurfaceType type = faces.surfaceType(face);
         if (type.indexed()) indexed(map, face, raw, meshVertices, mesh);
-        else if (type == SurfaceType.PATCH) patch(name, map, face, raw, subdivisions, mesh);
+        else if (type == SurfaceType.PATCH) patches.emit(face, mesh);
       }
       surfaces[at + WorldGeometry.FIRST_VERTEX] = firstVertex;
       surfaces[at + WorldGeometry.VERTEX_COUNT] = mesh.vertexCount() - firstVertex;
@@ -195,102 +202,6 @@ final class WorldBuilder {
     mesh.copyIndices(meshVertices, faces.firstMeshVertex(face), indexCount, base);
   }
 
-  /**
-   * A patch of (w-1)/2 by (h-1)/2 biquadratic blocks, sampled on one shared grid: every block uses
-   * the same parameter steps, so neighbouring blocks and patches with matching control edges meet
-   * without cracks and without camera-dependent level of detail.
-   */
-  private static void patch(
-      String name, BspMap map, int face, VertexArrays raw, int subdivisions, MeshBuffer mesh) {
-    BspMap.Faces faces = map.faces();
-    int width = faces.patchWidth(face), height = faces.patchHeight(face);
-    if (width < 3
-        || height < 3
-        || (width & 1) == 0
-        || (height & 1) == 0
-        || (long) width * height > faces.vertexCount(face)) {
-      LOG.warnOnce(
-          "patch:" + name + ":" + face,
-          name + ": patch face " + face + " has invalid size " + width + "x" + height);
-      return;
-    }
-    int blocksX = (width - 1) / 2, blocksY = (height - 1) / 2;
-    int columns = blocksX * subdivisions + 1, rows = blocksY * subdivisions + 1;
-    mesh.reserveVertices(columns * rows);
-    mesh.reserveIndices(Math.multiplyExact((columns - 1) * (rows - 1), 6));
-    int base = mesh.vertexCount();
-    int first = faces.firstVertex(face);
-    float[] p = raw.positions(), n = raw.normals(), uv = raw.texCoords(), lm = raw.lightmapCoords();
-    double[] a = new double[3], b = new double[3];
-    for (int row = 0; row < rows; row++) {
-      int by = Math.min(row / subdivisions, blocksY - 1);
-      double v = (row - by * subdivisions) / (double) subdivisions;
-      basis(v, b);
-      for (int column = 0; column < columns; column++) {
-        int bx = Math.min(column / subdivisions, blocksX - 1);
-        double u = (column - bx * subdivisions) / (double) subdivisions;
-        basis(u, a);
-        double px = 0, py = 0, pz = 0, nx = 0, ny = 0, nz = 0;
-        double s = 0, t = 0, ls = 0, lt = 0, red = 0, green = 0, blue = 0, alpha = 0;
-        for (int j = 0; j < 3; j++)
-          for (int i = 0; i < 3; i++) {
-            int c = first + (2 * by + j) * width + 2 * bx + i;
-            double w = a[i] * b[j];
-            px += p[c * 3] * w;
-            py += p[c * 3 + 1] * w;
-            pz += p[c * 3 + 2] * w;
-            nx += n[c * 3] * w;
-            ny += n[c * 3 + 1] * w;
-            nz += n[c * 3 + 2] * w;
-            s += uv[c * 2] * w;
-            t += uv[c * 2 + 1] * w;
-            ls += lm[c * 2] * w;
-            lt += lm[c * 2 + 1] * w;
-            int rgba = raw.rgba(c);
-            red += (rgba >>> 24) * w;
-            green += ((rgba >>> 16) & 255) * w;
-            blue += ((rgba >>> 8) & 255) * w;
-            alpha += (rgba & 255) * w;
-          }
-        double length = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        if (length > 1e-12) {
-          double inverse = 1 / length;
-          nx *= inverse;
-          ny *= inverse;
-          nz *= inverse;
-        }
-        int color = channel(red) << 24 | channel(green) << 16 | channel(blue) << 8 | channel(alpha);
-        mesh.addVertex(
-            (float) px,
-            (float) py,
-            (float) pz,
-            (float) nx,
-            (float) ny,
-            (float) nz,
-            (float) s,
-            (float) t,
-            (float) ls,
-            (float) lt,
-            StageEvaluator.restoreMapLightColor(color, WorldGeometry.MAP_OVERBRIGHT_BITS));
-      }
-    }
-    // Q3 mesh indices wind opposite the control grid; reverse the grid traversal so patches share
-    // the culling convention of indexed faces.
-    for (int row = 0; row < rows - 1; row++)
-      for (int column = 0; column < columns - 1; column++) {
-        int v00 = base + row * columns + column, v01 = v00 + 1;
-        int v10 = v00 + columns, v11 = v10 + 1;
-        mesh.addTriangle(v00, v10, v01);
-        mesh.addTriangle(v01, v10, v11);
-      }
-  }
-
-  private static void basis(double t, double[] out) {
-    out[0] = (1 - t) * (1 - t);
-    out[1] = 2 * t * (1 - t);
-    out[2] = t * t;
-  }
-
   private static void restoreColors(MeshBuffer mesh, int first, int count) {
     VertexArrays arrays = mesh.arrays();
     for (int v = first; v < first + count; v++)
@@ -298,9 +209,5 @@ final class WorldBuilder {
           mesh.colors(),
           v,
           StageEvaluator.restoreMapLightColor(arrays.rgba(v), WorldGeometry.MAP_OVERBRIGHT_BITS));
-  }
-
-  private static int channel(double value) {
-    return Math.clamp((int) Math.round(value), 0, 255);
   }
 }

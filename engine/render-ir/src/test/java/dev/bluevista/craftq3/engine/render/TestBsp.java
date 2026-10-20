@@ -265,6 +265,7 @@ final class TestBsp {
   }
 
   static RenderScene scene(BspMap map, int subdivisions) {
-    return RenderScene.build("test", map, shaders(Map.of()), new RenderScene.Options(subdivisions));
+    return RenderScene.build(
+        "test", map, shaders(Map.of()), RenderScene.Options.uniform(subdivisions));
   }
 }

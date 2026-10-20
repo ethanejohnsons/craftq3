@@ -86,6 +86,8 @@ These are accepted, each recorded in `BspMap.diagnostics()`:
 - a face fog index that is neither -1 nor a valid effect: treated as no fog (silently for a flare
   with fog 0);
 - patch mesh-vertex offset and count, which are unused and may hold any value;
+  the renderer samples patches on an error-bounded grid (`r_subdivisions`; see
+  `engine/render-ir/.../render/PatchTessellator.java`);
 - leaf clusters outside the visibility data, lightmap indices outside the lightmap lump (-3 is
   `LIGHTMAP_BY_VERTEX`, -1 none), bad surface types and incomplete triangles. These are listed
   only by `BspValidator.strictIssues` for validation tooling.

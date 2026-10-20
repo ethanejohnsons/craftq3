@@ -56,6 +56,7 @@ This file covers how `mc:fabric` hooks into Minecraft 26.2 (Fabric API 0.156.0+2
 | `BuildingProjectileMixin` (common) | `ProjectileUtil.getHitResult`/`getHitEntitiesAlong`: `@WrapOperation` on `Level.clipIncludingBorder` | Projectiles hit BSP surfaces. |
 | `BuildingArrowMixin` (common) | `AbstractArrow.tick`: `@WrapOperation` on `clipIncludingBorder`; `shouldFall`: `@ModifyReturnValue` | Arrows stick in BSP surfaces and stay. |
 | `BuildingWalkNodeMixin` (common) | `WalkNodeEvaluator.getPathTypeOfMob` and `hasCollisions(AABB)`: `@ModifyReturnValue` | Nodes overlapping BSP solid are `BLOCKED`, open nodes over a BSP floor are walkable, and straight-line shortcuts test the BSP (replaces the lambda target). |
+| `BuildingPickMixin` (client) | `LocalPlayer.pick(Entity, D, D, F)`: `@WrapOperation` on `Entity.pick(DFZ)` | The crosshair picks BSP surfaces nearer than any block; the hit's block position is the free cell in front of the surface, so a block item places into it (the server's own rules check the placement). |
 | `BuildingHangingMixin` (common) | `HangingEntity.survives`: `@WrapOperation` on `Stream.allMatch(Predicate)`; `hasLevelCollision`: `@ModifyReturnValue` | Paintings and frames hang on BSP walls and pop on BSP solid (replaces the lambda target). |
 
 The pure-Q3 entry points need no mixin: the title screen button uses Fabric's
@@ -98,15 +99,15 @@ Done (see Implemented) unless noted. Not ported, with the reason:
 | BuildingBucketMixin, BuildingHangingItemMixin, BuildingItemFrameMixin | Not ported: placing fluids and hanging items against a BSP surface the player aims at needs a client pick hook (gap); placed blocks work through `BlockItem`. |
 | BuildingLevelRendererMixin (client) | Not needed: the dimension type has no Minecraft sky (`"skybox": "none"`), and the BSP draws through `LevelOverlayGameRendererMixin`. |
 | BuildingProjectionMixin (client) | Not needed: the BSP is drawn with Minecraft's own projection and depth. |
-| BuildingPickMixin (client) | Not ported (gap): the crosshair does not pick BSP surfaces, so blocks cannot be placed against a BSP face by clicking it; placed blocks on BSP floors are supported. |
+| BuildingPickMixin (client) | Kept, as a `@WrapOperation` on the block pick (`Entity.pick`) inside `LocalPlayer.pick` instead of a RETURN hook on `Minecraft.pick`. |
 | BuildingEntityLightMixin, BuildingLightCoordsMixin (client) | Not needed: the dimension has sky light and fixed time, so blocks and entities in a region are lit. |
 | New | `BridgeMovePacketMixin`, `BuildingFallingBlockMixin`, `BuildingFallingBlockEntityMixin`. |
 
 ### Final split
 
 - **Client** (`craftq3.client.mixins.json`): GameRenderer, LevelOverlayGameRenderer, MouseHandler,
-  SoundEngine and its 3 accessors (SoundManager, SoundEngine, Channel), BridgeCamera and
-  BridgeLocalPlayer. GuiMixin is dropped.
+  SoundEngine and its 3 accessors (SoundManager, SoundEngine, Channel), BridgeCamera,
+  BridgeLocalPlayer and BuildingPick. GuiMixin is dropped.
 - **Common** (`craftq3.mixins.json`): EntityAvatar, Level, ServerPlayer, BridgePlayerHurt,
   BridgeKnockback, BridgeExplosion, BridgeMovePacket, BridgeFood and the Building mixins. None
   references a client class; `:mc:devharness:runGameTest` boots them on a dedicated server.

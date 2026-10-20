@@ -59,7 +59,10 @@ import org.slf4j.LoggerFactory;
  *       on a BSP floor next to the spawn renders with it (screenshot). {@code /q3 leave} returns.
  * </ol>
  *
- * Screenshots and {@code craftq3-hybrid-report-<backend>.txt} go to the run directory.
+ * <p>With an {@code eula.txt} the operator agreed to in the run directory, the bridge is also
+ * entered on a dedicated server started in this process (a real network connection).
+ *
+ * <p>Screenshots and {@code craftq3-hybrid-report-<backend>.txt} go to the run directory.
  */
 public final class Q3HybridClientTest implements FabricClientGameTest {
   private static final Logger LOGGER = LoggerFactory.getLogger(Q3HybridClientTest.class);
@@ -102,10 +105,92 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
             });
       }
     }
+    // A dedicated server only starts once its operator has agreed to the Minecraft EULA
+    // (eula.txt in the run directory); this test never agrees on anyone's behalf.
+    if (!eulaAccepted()) {
+      report.append(
+          "dedicated server: skipped (no eula.txt with eula=true in the run directory)\n");
+      finish(tag);
+      return;
+    }
+    try {
+      dedicated(context, tag);
+    } catch (RuntimeException | AssertionError e) {
+      context.takeScreenshot("craftq3-hybrid-" + tag + "-dedicated-failure");
+      failures.add("dedicated aborted: " + e);
+      LOGGER.error("Hybrid dedicated-server step aborted", e);
+    }
     finish(tag);
   }
 
   // ------------------------------------------------------------------ steps
+
+  /**
+   * The same bridge through a dedicated server (in this process, a real network connection): the
+   * Quake session reaches the server's bridge game over the payload transport and renders.
+   */
+  private void dedicated(ClientGameTestContext context, String tag) {
+    try (var server = context.worldBuilder().createServer();
+        var connection = server.connect()) {
+      connection.waitForChunksRender();
+      server.runOnServer(
+          s -> {
+            ServerPlayer player = s.getPlayerList().getPlayers().getFirst();
+            ServerLevel level = player.level();
+            BlockPos feet = player.blockPosition();
+            for (int x = -6; x <= 6; x++)
+              for (int z = -6; z <= 6; z++) {
+                level.setBlockAndUpdate(feet.offset(x, -1, z), Blocks.STONE.defaultBlockState());
+                for (int y = 0; y < 4; y++)
+                  level.setBlockAndUpdate(feet.offset(x, y, z), Blocks.AIR.defaultBlockState());
+              }
+          });
+      context.waitTicks(20);
+      TestInput input = context.getInput();
+      input.pressKey(options -> options.keyChat);
+      context.waitForScreen(ChatScreen.class);
+      input.typeChars("/q3 bridge fresh");
+      input.pressKey(GLFW.GLFW_KEY_ENTER);
+      context.waitForScreen(BridgeScreen.class);
+      waitFor(
+          context,
+          "the bridge session reaches the dedicated server's game",
+          c -> {
+            BridgeScreen screen = BridgeScreen.current(c);
+            return screen != null
+                && screen.session() != null
+                && screen.session().state() == SessionState.REMOTE
+                && screen.presenter() != null
+                && screen.presenter().framesDrawn() > 60;
+          },
+          90 * SECOND_TICKS);
+      context.waitTicks(20);
+      BufferedImage view = screenshot(context, "craftq3-bridge-dedicated-" + tag);
+      check(deviation(view) > 10, "the dedicated-server bridge view looks flat");
+      boolean bridged =
+          server.computeOnServer(
+              s -> BridgedPlayer.of(s.getPlayerList().getPlayers().getFirst()) != null);
+      check(bridged, "the dedicated server did not bridge the player");
+      long sent = context.computeOnClient(c -> BridgeScreen.current(c).transport().datagramsSent());
+      long received =
+          context.computeOnClient(c -> BridgeScreen.current(c).transport().datagramsReceived());
+      report.append(
+          String.format(
+              Locale.ROOT,
+              "dedicated server: bridge connected over payloads (%d datagrams sent, %d received)%n",
+              sent,
+              received));
+      input.holdShift();
+      input.pressKey(GLFW.GLFW_KEY_ESCAPE);
+      input.releaseShift();
+      context.waitFor(c -> c.gui.screen() == null, 10 * SECOND_TICKS);
+      context.waitTicks(10);
+      boolean left =
+          server.computeOnServer(
+              s -> BridgedPlayer.of(s.getPlayerList().getPlayers().getFirst()) == null);
+      check(left, "the dedicated server kept the player bridged");
+    }
+  }
 
   private static void prepareWorld(TestSingleplayerContext world) {
     world
@@ -393,6 +478,7 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
           .append(placed)
           .append('\n');
     }
+    clickPlace(context, world, input);
     context.waitTicks(20);
     BufferedImage view = screenshot(context, "craftq3-build-" + tag);
     report.append("building screenshot: craftq3-build-").append(tag).append(".png\n");
@@ -414,6 +500,104 @@ public final class Q3HybridClientTest implements FabricClientGameTest {
     input.pressKey(GLFW.GLFW_KEY_ENTER);
     context.waitFor(c -> c.level != null && !BuildingDimension.is(c.level), 20 * SECOND_TICKS);
     report.append("building: /q3 leave returned to the overworld\n");
+  }
+
+  /**
+   * Standing on a BSP floor cell with oak planks in hand, the player looks at the BSP floor of the
+   * neighbouring cell and right-clicks: the crosshair picks the BSP surface and the planks are
+   * placed in that cell (client pick, server placement and support rules together).
+   */
+  private void clickPlace(
+      ClientGameTestContext context, TestSingleplayerContext world, TestInput input) {
+    BlockPos[] pair =
+        world
+            .getServer()
+            .computeOnServer(
+                server -> {
+                  ServerLevel level = server.getLevel(BuildingDimension.KEY);
+                  ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
+                  BuildingQueries q = CraftQ3Level.of(level).craftq3$building().at(player.getX());
+                  BlockPos feet = player.blockPosition();
+                  for (int r = 0; r < 24; r++)
+                    for (int dx = -r; dx <= r; dx++)
+                      for (int dz = -r; dz <= r; dz++)
+                        for (int dy = -10; dy <= 10; dy++) {
+                          if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                          BlockPos a = feet.offset(dx, dy, dz);
+                          BlockPos b = a.offset(2, 0, 0);
+                          if (standable(q, a)
+                              && standable(q, b)
+                              && level.getBlockState(b).isAir()
+                              && q.cellClear(a.getX() + 1, a.getY(), a.getZ())
+                              && q.cellClear(a.getX() + 1, a.getY() + 1, a.getZ())) {
+                            player.teleportTo(a.getX() + 0.5, a.getY(), a.getZ() + 0.5);
+                            player
+                                .getInventory()
+                                .setItem(
+                                    player.getInventory().getSelectedSlot(),
+                                    new net.minecraft.world.item.ItemStack(
+                                        net.minecraft.world.item.Items.OAK_PLANKS, 16));
+                            return new BlockPos[] {a, b};
+                          }
+                        }
+                  return null;
+                });
+    check(pair != null, "no pair of BSP floor cells to click on");
+    if (pair == null) return;
+    context.waitTicks(10);
+    BlockPos target = pair[1];
+    context.runOnClient(
+        c -> {
+          var player = c.player;
+          double dx = target.getX() + 0.5 - player.getX();
+          double dy = target.getY() + 0.02 - player.getEyeY();
+          double dz = target.getZ() + 0.5 - player.getZ();
+          player.setYRot((float) Math.toDegrees(Math.atan2(-dx, dz)));
+          player.setXRot((float) -Math.toDegrees(Math.atan2(dy, Math.hypot(dx, dz))));
+        });
+    context.waitTicks(2);
+    String picked =
+        context.computeOnClient(
+            c ->
+                c.hitResult instanceof net.minecraft.world.phys.BlockHitResult hit
+                    ? hit.getType() + " " + hit.getBlockPos()
+                    : String.valueOf(c.hitResult == null ? null : c.hitResult.getType()));
+    input.pressMouse(GLFW.GLFW_MOUSE_BUTTON_RIGHT);
+    context.waitTicks(10);
+    boolean planks =
+        world
+            .getServer()
+            .computeOnServer(
+                server ->
+                    server
+                        .getLevel(BuildingDimension.KEY)
+                        .getBlockState(target)
+                        .is(Blocks.OAK_PLANKS));
+    report.append(
+        "building: right-click on the BSP floor picked "
+            + picked
+            + "; planks placed at "
+            + target
+            + ": "
+            + planks
+            + "\n");
+    check(planks, "right-clicking a BSP floor did not place the block (picked " + picked + ")");
+  }
+
+  private static boolean standable(BuildingQueries q, BlockPos p) {
+    return q.cellClear(p.getX(), p.getY(), p.getZ())
+        && q.cellClear(p.getX(), p.getY() + 1, p.getZ())
+        && q.supportsFace(p.getX(), p.getY() - 1, p.getZ(), BlockFace.UP, SupportShape.FULL);
+  }
+
+  private static boolean eulaAccepted() {
+    Path eula = FabricLoader.getInstance().getGameDir().resolve("eula.txt");
+    try {
+      return Files.isRegularFile(eula)
+          && Files.readAllLines(eula).stream().anyMatch(l -> l.strip().equals("eula=true"));
+    } catch (IOException e) {
+      return false;
+    }
   }
 
   // ------------------------------------------------------------------ helpers

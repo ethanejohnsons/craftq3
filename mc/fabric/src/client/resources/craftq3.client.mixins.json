@@ -6,6 +6,7 @@
   "client": [
     "BridgeCameraMixin",
     "BridgeLocalPlayerMixin",
+    "BuildingPickMixin",
     "ChannelAccessor",
     "GameRendererMixin",
     "LevelOverlayGameRendererMixin",

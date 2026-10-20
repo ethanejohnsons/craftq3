@@ -72,6 +72,8 @@ dimension and takes you to its first spawn point. The map is solid, immutable sc
 with Minecraft blocks:
 
 - You, mobs, items and falling blocks collide with the map exactly as Quake would.
+- The crosshair picks map surfaces: right-click a map floor or wall with a block to place it in
+  the cell in front of that surface.
 - Blocks need support as usual: map floors and walls support torches, rails, carpets and the like
   where a map surface lies on the block grid. Blocks cannot be placed inside the map's walls.
 - Sand and gravel rest on map floors; water and lava stop at map surfaces.
@@ -93,9 +95,8 @@ dimension are told why. Restoring the PK3 enables it again.
 - The bridge has no bots (no navigation data for Minecraft terrain).
 - Kills by Minecraft damage show the world's obituary, not the mob's name.
 - Arrow knockback, attributed burning and potion effects do not reach the Quake player.
-- In building regions the crosshair does not pick map surfaces: you cannot place a block by
-  clicking a map wall or floor directly (place it against another block, or on the floor cell
-  in front of you); buckets and item frames need a block to aim at.
+- In building regions buckets and item frames cannot be used directly against a map surface;
+  they need a block to aim at.
 - Destination snapping of mob navigation to map floors that are off the block grid is not
   implemented; mobs still path over map floors.
 - A carried loadout's health is not restored when entering a local match from the bridge.

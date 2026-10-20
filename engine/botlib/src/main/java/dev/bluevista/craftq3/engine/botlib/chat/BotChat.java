@@ -127,7 +127,7 @@ public final class BotChat implements AutoCloseable {
     State state = state(handle);
     Definition found =
         ChatLibrary.loadChats(sources, path).stream()
-            .filter(d -> d.name().equals(chatName))
+            .filter(d -> d.name().equalsIgnoreCase(chatName)) // Q_stricmp, as the original
             .findFirst()
             .orElse(null);
     if (found == null) return false;

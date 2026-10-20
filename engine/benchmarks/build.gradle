@@ -1,0 +1,45 @@
+// JMH benchmarks for the engine's hot paths (docs/PERFORMANCE.md). `build` only compiles them;
+// they run on demand:
+//   ./gradlew :engine:benchmarks:jmh
+// Real-data benchmarks (classes named Real*Benchmark) need CRAFTQ3_Q3ROOT and are excluded
+// without it. Optional overrides: -Pjmh.includes=<regex,...> -Pjmh.wi=<n> -Pjmh.i=<n> -Pjmh.f=<n>
+// -Pjmh.w=<time> -Pjmh.r=<time> -Pjmh.prof=<profiler,...> (default gc; empty for none).
+plugins {
+    id 'craftq3.engine-module'
+    id 'me.champeau.jmh' version '0.7.3'
+}
+
+dependencies {
+    implementation project(':engine:session')
+    jmhImplementation testFixtures(project(':engine:formats'))
+}
+
+jmh {
+    jmhVersion = '1.37'
+    def q3Root = providers.environmentVariable('CRAFTQ3_Q3ROOT')
+    def p = { String name -> providers.gradleProperty(name) }
+    if (p('jmh.includes').isPresent()) includes = p('jmh.includes').get().split(',').toList()
+    if (!q3Root.isPresent() || q3Root.get().isBlank()) excludes = ['.*\\.Real[A-Za-z]*Benchmark\\..*']
+    if (p('jmh.wi').isPresent()) warmupIterations = p('jmh.wi').get() as int
+    if (p('jmh.i').isPresent()) iterations = p('jmh.i').get() as int
+    if (p('jmh.f').isPresent()) fork = p('jmh.f').get() as int
+    if (p('jmh.w').isPresent()) warmup = p('jmh.w').get()
+    if (p('jmh.r').isPresent()) timeOnIteration = p('jmh.r').get()
+    profilers = p('jmh.prof').getOrElse('gc').split(',').findAll { !it.isBlank() }.toList()
+    failOnError = true
+    resultFormat = 'JSON'
+    humanOutputFile = layout.buildDirectory.file('results/jmh/human.txt')
+}
+
+tasks.named('jmh') {
+    // The installation lives outside the build, and timings are never up to date.
+    outputs.upToDateWhen { false }
+}
+
+// The generated harness is JMH's code, not ours: -Werror stays on the benchmark sources only.
+tasks.named('jmhCompileGeneratedClasses', JavaCompile) {
+    options.compilerArgs.removeAll(['-Werror', '-Xlint:all'])
+}
+
+// Keep the benchmark sources compiling in `build` without running them.
+tasks.named('check') { dependsOn 'jmhClasses' }

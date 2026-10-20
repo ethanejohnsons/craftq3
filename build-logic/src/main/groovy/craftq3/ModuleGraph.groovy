@@ -27,6 +27,7 @@ final class ModuleGraph {
         ':engine:session'      : [':engine:client', ':engine:game'],
         ':engine:headless'     : [':engine:session'],
         ':engine:testkit'      : [':engine:formats', ':engine:vm'],
+        ':engine:benchmarks'   : [':engine:session'],
         ':mc:hybrid'           : [':engine:game'],
         ':mc:fabric'           : [':engine:session', ':mc:hybrid'],
         ':mc:devharness'       : [':mc:fabric'],

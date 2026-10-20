@@ -9,6 +9,10 @@ plugins {
 
 base { archivesName = 'craftq3-devharness' }
 
+// The maintainer's installation for the real-data client tests: CRAFTQ3_Q3ROOT reaches the mod
+// through CraftQ3Config's run-only system-property override, so no config file is written.
+def q3Root = System.getenv('CRAFTQ3_Q3ROOT')
+
 loom {
     splitEnvironmentSourceSets()
     mods {
@@ -35,6 +39,7 @@ loom {
             property 'fabric.client.gametest'
             property 'craftq3.devharness.expectedBackend', 'OpenGL'
             programArgs '--username', 'Player0', '--graphicsBackend', 'opengl'
+            if (q3Root) property 'craftq3.installation', q3Root
             ideConfigGenerated false
         }
         clientGameTestVulkan {
@@ -44,6 +49,7 @@ loom {
             property 'fabric.client.gametest'
             property 'craftq3.devharness.expectedBackend', 'Vulkan'
             programArgs '--username', 'Player0', '--graphicsBackend', 'vulkan'
+            if (q3Root) property 'craftq3.installation', q3Root
             ideConfigGenerated false
         }
     }

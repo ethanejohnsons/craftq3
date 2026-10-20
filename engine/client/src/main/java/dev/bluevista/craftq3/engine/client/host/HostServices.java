@@ -114,6 +114,7 @@ public final class HostServices implements AutoCloseable {
     output.attach(console.buffer(), () -> false);
     CvarTable cvars = console.cvars();
     EngineCvars.register(cvars);
+    registerSoundCommands();
     cvars.register(VmHost.Options.STRICT_CVAR, "0", 0);
     cvars.register(AbiProfile.OVERRIDE_CVAR, "", 0);
     cvars.register("s_volume", "0.8", CvarFlags.ARCHIVE);
@@ -125,6 +126,36 @@ public final class HostServices implements AutoCloseable {
     cvars.register("fs_game", gameDirectory(), CvarFlags.INIT | CvarFlags.SYSTEMINFO);
     cvars.register("com_blood", "1", CvarFlags.ARCHIVE);
     cvars.register("cg_predictItems", "1", CvarFlags.ARCHIVE | CvarFlags.USERINFO);
+  }
+
+  /** {@code CHAN_LOCAL_SOUND}: the channel the {@code play} command uses. */
+  private static final int CHAN_LOCAL_SOUND = 6;
+
+  /** The sound system's console commands: {@code play}, {@code music}, {@code stopsound}. */
+  private void registerSoundCommands() {
+    var commands = console.commands();
+    commands.register(
+        "play",
+        args -> {
+          if (args.argc() < 2) {
+            output.print("Usage: play <sound filename> [sound filename] ...");
+            return;
+          }
+          for (int i = 1; i < args.argc(); i++) {
+            int handle = sound.registerSound(args.argv(i), false);
+            if (handle != 0) sound.startLocalSound(handle, CHAN_LOCAL_SOUND);
+          }
+        });
+    commands.register(
+        "music",
+        args -> {
+          if (args.argc() < 2 || args.argc() > 3) {
+            output.print("music <musicfile> [loopfile]");
+            return;
+          }
+          startBackgroundTrack(args.argv(1), args.argc() == 3 ? args.argv(2) : args.argv(1));
+        });
+    commands.register("stopsound", args -> sound.stopAllSounds());
   }
 
   private String gameDirectory() {

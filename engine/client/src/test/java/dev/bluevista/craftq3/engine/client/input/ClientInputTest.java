@@ -15,7 +15,8 @@ import org.junit.jupiter.api.Test;
 
 final class ClientInputTest {
   private final Console console =
-      Console.client(new ThreadOwner("input test"), ConsoleOutput.DISCARD, ConfigSource.NONE, ConfigSink.NONE);
+      Console.client(
+          new ThreadOwner("input test"), ConsoleOutput.DISCARD, ConfigSource.NONE, ConfigSink.NONE);
   private final ClientInput input =
       new ClientInput(console.cvars(), console.buffer(), console.bindings().orElseThrow());
 
@@ -114,8 +115,7 @@ final class ClientInputTest {
     key('w', false, 1001);
     input.charEvent('w', 1001);
     input.mouseEvent(3, 4, 1002);
-    assertEquals(
-        List.of("119+", "119-", (('w' | ClientInput.K_CHAR_FLAG)) + "+", "mouse 3 4"), ui);
+    assertEquals(List.of("119+", "119-", (('w' | ClientInput.K_CHAR_FLAG)) + "+", "mouse 3 4"), ui);
     assertEquals(0, input.createCommand(1008, 1008, 0, 1, 0).forward(), "no binding fired");
     assertEquals(ClientInput.BUTTON_TALK, input.createCommand(1016, 1016, 0, 1, 0).buttons() & 2);
     input.keyEvent(ClientInput.KEY_CONSOLE, true, 1020);

@@ -268,6 +268,11 @@ public final class ClientRenderer {
     color = packed;
   }
 
+  /** Sets the colour for following stretch pics ({@code 0xRRGGBBAA}; -1 is white). */
+  public void setColor(int rgba) {
+    color = rgba;
+  }
+
   /** The current colour as {@code 0xRRGGBBAA}. */
   public int color() {
     return color;

@@ -11,7 +11,8 @@ import org.junit.jupiter.api.Test;
 final class ScriptPrecompilerTest {
   private static List<String> tokens(String text, Map<String, String> files, List<String> globals) {
     ScriptPrecompiler source =
-        new ScriptPrecompiler("test.menu", text, path -> Optional.ofNullable(files.get(path)), globals);
+        new ScriptPrecompiler(
+            "test.menu", text, path -> Optional.ofNullable(files.get(path)), globals);
     List<String> out = new ArrayList<>();
     for (ScriptToken token = source.next(); token != null; token = source.next())
       out.add(token.pcText());
@@ -76,8 +77,7 @@ final class ScriptPrecompilerTest {
             + "#ifndef ITEM_TYPE_TEXT\n hidden\n#endif\n"
             + "ITEM_TYPE_TEXT";
     assertEquals(List.of("solo", "yes", "0"), tokens(text, files, List.of()));
-    assertEquals(
-        List.of("team", "yes", "0"), tokens(text, files, List.of("MISSIONPACK 1")));
+    assertEquals(List.of("team", "yes", "0"), tokens(text, files, List.of("MISSIONPACK 1")));
   }
 
   @Test
@@ -90,8 +90,7 @@ final class ScriptPrecompilerTest {
   void errorsEndTheScript() {
     ScriptSources sources =
         new ScriptSources(
-            path -> Optional.of(path.equals("bad.menu") ? "a\n#error broken\nb" : ""),
-            line -> {});
+            path -> Optional.of(path.equals("bad.menu") ? "a\n#error broken\nb" : ""), line -> {});
     int handle = sources.load("bad.menu");
     assertTrue(handle > 0);
     assertEquals("a", sources.next(handle).orElseThrow().pcText());

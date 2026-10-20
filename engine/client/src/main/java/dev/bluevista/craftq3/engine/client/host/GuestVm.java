@@ -69,27 +69,10 @@ public abstract class GuestVm implements AutoCloseable {
   private State state = State.STOPPED;
   private RuntimeException fault;
   private long degradationsBefore;
-  private SyscallObserver observer;
 
-  /** Diagnostics: sees every syscall number and its argument words before dispatch. */
-  @FunctionalInterface
-  public interface SyscallObserver {
-    void syscall(int number, int[] args);
-  }
-
-  /** Installs a diagnostic observer for instances started from now on (null removes it). */
-  public void observeSyscalls(SyscallObserver value) {
-    observer = value;
-  }
-
-  private dev.bluevista.craftq3.engine.vm.VmTracer tracer;
-
-  /** Diagnostics: an instruction tracer for instances started from now on (null removes it). */
-  public void traceInstructions(dev.bluevista.craftq3.engine.vm.VmTracer value) {
-    tracer = value;
-  }
-
-  /** The running instance, for diagnostics (tracers, memory inspection). */
+  /**
+   * The running instance (memory inspection, a {@link dev.bluevista.craftq3.engine.vm.VmTracer}).
+   */
   public QvmInstance instance() {
     return vm;
   }
@@ -173,17 +156,12 @@ public abstract class GuestVm implements AutoCloseable {
     bind(bindings);
     if (host != null) degradationsBefore += host.degradationTotal();
     host = new VmHost(ImportTable.of(module, loaded.profile()), bindings, services.vmOptions());
-    VmHost dispatcher = host;
     vm =
         new QvmInstance(
             loaded.image(),
-            (instance, number, args) -> {
-              if (observer != null) observer.syscall(number, args);
-              return dispatcher.call(instance, number, args);
-            },
+            host,
             HostServices.VM_LIMITS,
             dev.bluevista.craftq3.engine.common.time.Clock.system());
-    if (tracer != null) vm.setTracer(tracer);
     fault = null;
     state = State.RUNNING;
     services.output().print(module.moduleName() + ": " + loaded.profile().key() + " ABI");

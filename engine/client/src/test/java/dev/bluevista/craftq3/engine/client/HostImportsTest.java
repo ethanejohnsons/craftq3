@@ -31,8 +31,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Both hosts bind every import their module's table maps in both ABI profiles (the dispatcher
- * refuses to start otherwise), and the ui host's client-state, configstring, key and CD-key
- * imports behave as the original's.
+ * refuses to start otherwise), and the ui host's client-state, configstring, key and CD-key imports
+ * behave as the original's.
  */
 final class HostImportsTest {
   private static final String KEY = "abcdefgh12345678";

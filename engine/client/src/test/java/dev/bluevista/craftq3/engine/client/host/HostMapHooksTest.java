@@ -91,7 +91,8 @@ final class HostMapHooksTest {
     public void worldLoaded(
         String normalizedPath,
         BspMap map,
-        dev.bluevista.craftq3.engine.client.render.ClientAssets a) {
+        dev.bluevista.craftq3.engine.client.render.ClientAssets a,
+        dev.bluevista.craftq3.engine.render.RenderScene.Options sceneOptions) {
       asked.add("loaded " + normalizedPath + (map == override ? " (override)" : ""));
     }
 

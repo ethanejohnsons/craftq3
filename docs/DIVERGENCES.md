@@ -41,7 +41,9 @@ match the original; a mismatch found against the original is a bug.
 | Behaviour | Original | Rewrite | Why |
 | --- | --- | --- | --- |
 | `noise` wave function | Engine noise table | 32-bit GPU-reproducible hash | Must evaluate identically in GLSL |
-| Patch tessellation | Error-based LOD (`r_subdivisions`) | Uniform 8 subdivisions | Static upload once per map; tracked as a gap |
+| Patch level of detail by distance | Grid rows and columns whose error is negligible at the viewer's distance are skipped each frame (`r_lodCurveError`) | The full `r_subdivisions` grid is always drawn | Static upload once per map |
+| Patch edge stitching | Samples are inserted wherever a neighbouring grid's border vertices fall on a grid's border | Samples are shared only along boundary spans whose three control points are identical | Covers the edges compilers share between patches, with bit-identical vertices; geometric matching added a few dozen vertices on id maps but cascaded on overlapping community patches (`simpsons_q3`: +23% triangles, 5× build time) |
+| Patch normals | Recomputed from the tessellated grid | Interpolated from the control normals and renormalised | Keeps the compiler's smoothed normals |
 | `RT_BEAM` placement | Tube offsets transformed by the entity's axes (usually left zero by cgames) | Tube from `origin` to `oldorigin` in world space | The original's result depends on unset axes; no retail cgame submits `RT_BEAM` |
 | Stencil shadows (`cg_shadows 2`) | Shadow volumes through the stencil buffer | Not drawn, so `RF_NOSHADOW` has no effect | No stencil attachment in the Blaze3D targets; tracked as a gap |
 | Projected shadows (`cg_shadows 3`) | Enabled by the renderer reading `cg_shadows`, drawn for `RF_SHADOW_PLANE` | Drawn for `RF_SHADOW_PLANE` (`FrameBuilder.Options.projectionShadows`) | The renderer has no cvars; cgames set the flag only for `cg_shadows 3`, so the result is the same |

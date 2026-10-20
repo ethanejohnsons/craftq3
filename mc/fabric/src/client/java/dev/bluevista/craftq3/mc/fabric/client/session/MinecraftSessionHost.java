@@ -8,6 +8,7 @@ import dev.bluevista.craftq3.engine.client.render.ClientAssets;
 import dev.bluevista.craftq3.engine.collision.CollisionSource;
 import dev.bluevista.craftq3.engine.common.time.Clock;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
+import dev.bluevista.craftq3.engine.render.RenderScene;
 import dev.bluevista.craftq3.engine.render.frame.CgameFrame;
 import dev.bluevista.craftq3.engine.session.SessionHost;
 import dev.bluevista.craftq3.engine.session.SessionState;
@@ -245,11 +246,15 @@ public final class MinecraftSessionHost implements SessionHost, AutoCloseable {
     return hooks.worldSources(mapName);
   }
 
-  /** The cgame loaded a map: the presenter builds its scene from the session's own BSP. */
+  /**
+   * The cgame loaded a map: the presenter builds its scene from the session's own BSP, tessellated
+   * as {@code r_subdivisions} asks.
+   */
   @Override
-  public void worldLoaded(String normalizedPath, BspMap map, ClientAssets assets) {
+  public void worldLoaded(
+      String normalizedPath, BspMap map, ClientAssets assets, RenderScene.Options sceneOptions) {
     presenter.attachAssets(assets.lookup(), assets.library());
-    presenter.mapLoaded(normalizedPath, map);
+    presenter.mapLoaded(normalizedPath, map, sceneOptions);
   }
 
   @Override

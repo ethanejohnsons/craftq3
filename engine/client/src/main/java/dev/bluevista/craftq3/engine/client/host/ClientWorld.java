@@ -31,6 +31,7 @@ public final class ClientWorld {
 
   private final ShaderLibrary shaders;
   private final CollisionSource source;
+  private final RenderScene.Options sceneOptions;
   private CollisionModel collision;
   private TraceWork work;
   private final Trace trace = new Trace();
@@ -51,10 +52,25 @@ public final class ClientWorld {
    */
   public ClientWorld(
       String name, BspMap map, ShaderLibrary shaders, List<CollisionSource> sources) {
+    this(name, map, shaders, sources, RenderScene.Options.DEFAULT);
+  }
+
+  /**
+   * @param sources foreign geometry joined into world traces and point contents, in order
+   * @param sceneOptions how the world surfaces marks are projected onto are tessellated ({@code
+   *     r_subdivisions}); the renderer's scene uses the same
+   */
+  public ClientWorld(
+      String name,
+      BspMap map,
+      ShaderLibrary shaders,
+      List<CollisionSource> sources,
+      RenderScene.Options sceneOptions) {
     this.name = Objects.requireNonNull(name);
     this.map = Objects.requireNonNull(map);
     this.shaders = Objects.requireNonNull(shaders);
     this.source = compose(List.copyOf(sources));
+    this.sceneOptions = Objects.requireNonNull(sceneOptions);
   }
 
   private static CollisionSource compose(List<CollisionSource> sources) {
@@ -82,6 +98,11 @@ public final class ClientWorld {
 
   public BspMap map() {
     return map;
+  }
+
+  /** How this world's render scene tessellates patches ({@code r_subdivisions} at load). */
+  public RenderScene.Options sceneOptions() {
+    return sceneOptions;
   }
 
   public CollisionModel collision() {
@@ -257,7 +278,7 @@ public final class ClientWorld {
     Vec3f projection = VmStructs.readVec3(memory, a[2]);
     if (projection.lengthSquared() == 0 || !projection.isFinite()) return 0;
     if (marks == null) {
-      RenderScene scene = RenderScene.build(name, map, shaders::resolve);
+      RenderScene scene = RenderScene.build(name, map, shaders::resolve, sceneOptions);
       marks = new MarkFragments(scene.world());
     }
     marks.project(polygon, count, projection, maxPoints, maxFragments, markResult);

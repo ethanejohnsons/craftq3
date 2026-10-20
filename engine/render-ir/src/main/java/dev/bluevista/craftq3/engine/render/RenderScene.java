@@ -20,13 +20,41 @@ public final class RenderScene {
   private static final float SPAWN_EYE_HEIGHT = 26;
   private static final Camera FALLBACK_CAMERA = new Camera(new Vec3f(0, 0, 64), 0, 0, 90);
 
-  /** Build options. {@code patchSubdivisions} steps per patch block side (1..16). */
-  public record Options(int patchSubdivisions) {
-    public static final Options DEFAULT = new Options(8);
+  /**
+   * Build options.
+   *
+   * @param subdivisionError Quake III's {@code r_subdivisions}: how far, in world units, a patch's
+   *     curves may stray from the chords of its tessellation (see {@link PatchTessellator}); 0
+   *     subdivides curved patches as far as the grid size allows
+   * @param uniformSubdivisions 0 for error-bounded tessellation, or 1..16 to sample every patch
+   *     block on a fixed grid of that many steps per side instead (tests and diagnostics)
+   */
+  public record Options(float subdivisionError, int uniformSubdivisions) {
+    /** The default of {@code r_subdivisions}. */
+    public static final float DEFAULT_SUBDIVISION_ERROR = 4;
+
+    public static final Options DEFAULT = new Options(DEFAULT_SUBDIVISION_ERROR, 0);
 
     public Options {
-      if (patchSubdivisions < 1 || patchSubdivisions > 16)
-        throw new IllegalArgumentException("Patch subdivisions must be 1..16");
+      if (!(subdivisionError >= 0) || Float.isInfinite(subdivisionError))
+        throw new IllegalArgumentException("Patch subdivision error must be finite and >= 0");
+      if (uniformSubdivisions < 0 || uniformSubdivisions > 16)
+        throw new IllegalArgumentException("Uniform patch subdivisions must be 0..16");
+    }
+
+    /**
+     * Error-bounded tessellation for an {@code r_subdivisions} value: negative values act as 0 and
+     * values that are not finite as the default.
+     */
+    public static Options subdivisions(float rSubdivisions) {
+      if (!Float.isFinite(rSubdivisions)) return DEFAULT;
+      return new Options(Math.max(0, rSubdivisions), 0);
+    }
+
+    /** Every patch block sampled on a fixed {@code steps}×{@code steps} grid (1..16). */
+    public static Options uniform(int steps) {
+      if (steps < 1) throw new IllegalArgumentException("Uniform patch subdivisions must be 1..16");
+      return new Options(DEFAULT_SUBDIVISION_ERROR, steps);
     }
   }
 
@@ -98,8 +126,7 @@ public final class RenderScene {
     List<MaterialProgram> programs = registry.programs();
     List<ShaderDefinition> definitions = new ArrayList<>(registry.size());
     for (int i = 0; i < registry.size(); i++) definitions.add(registry.definition(i));
-    WorldGeometry world =
-        WorldBuilder.build(name, map, options.patchSubdivisions(), faceMaterial, programs);
+    WorldGeometry world = WorldBuilder.build(name, map, options, faceMaterial, programs);
     return new RenderScene(name, map, world, programs, definitions, shaders);
   }
 

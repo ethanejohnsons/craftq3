@@ -70,10 +70,11 @@ public final class Q3FramePresenter implements AutoCloseable {
   }
 
   /**
-   * The session loaded {@code name} ({@code maps/<map>.bsp}): starts building its scene. Loading
-   * the map already shown, or already being loaded, does nothing.
+   * The session loaded {@code name} ({@code maps/<map>.bsp}): starts building its scene with {@code
+   * options} ({@code r_subdivisions}). Loading the map already shown, or already being loaded, does
+   * nothing.
    */
-  public void mapLoaded(String name, BspMap map) {
+  public void mapLoaded(String name, BspMap map, RenderScene.Options options) {
     if (closed) return;
     if (pending != null ? name.equals(pendingName) : name.equals(loadedName) && backendHasMap())
       return;
@@ -88,7 +89,7 @@ public final class Q3FramePresenter implements AutoCloseable {
             () -> {
               try {
                 long start = System.nanoTime();
-                RenderScene scene = RenderScene.build(name, map, shaders::resolve);
+                RenderScene scene = RenderScene.build(name, map, shaders::resolve, options);
                 SceneTextures textures = SceneTextures.load(assets, scene);
                 LOGGER.info(
                     "CraftQ3: prepared {} off-thread in {} ms ({} images, {} lightmaps)",

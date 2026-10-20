@@ -7,7 +7,7 @@ fragments. Cgame continues to choose the mark texture, UVs, color, lifetime and
 fade, and submits the resulting polygons through its usual renderer traps.
 
 The implementation caches model-zero triangles, including patches tessellated
-at eight subdivisions. Surface bounds reject distant candidates. Sky,
+as the renderer tessellates them (`r_subdivisions`). Surface bounds reject distant candidates. Sky,
 no-impact and no-marks surfaces are excluded; a facing test excludes geometry
 pointing away from the projection. A half-unit cap margin accommodates trace
 contact epsilon. Triangle clipping retains the surface plane and winding.

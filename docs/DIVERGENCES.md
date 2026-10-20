@@ -93,3 +93,14 @@ match the original; a mismatch found against the original is a bug.
 | Behaviour | Original | Rewrite | Why |
 | --- | --- | --- | --- |
 | Obituary of a player killed by Minecraft damage | n/a | "was in the wrong place" (`MOD_TRIGGER_HURT`, killer `<world>`, the player loses a point as for any world death); the mob is not named | Incoming damage goes through the game's own `trigger_hurt` so armor, pain, death and respawn stay qagame's, and `hurt_touch` always passes the trigger itself as attacker. Every map entity that can name another attacker (`target_laser`'s activator) uses a means of death the cgame reports as a single-client message without the killer, and making the mob's puppet fire a weapon cannot deliver exact amounts. Naming the mob would need a modified qagame, or rewriting the `EV_OBITUARY` event's killer and means of death in game memory, which is display-only (scores and `PERS_ATTACKER` would still say world) and depends on each mod's `meansOfDeath_t` and event numbering |
+
+## Minecraft adapter (`mc:fabric`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Quake hits on Minecraft mobs | n/a (Minecraft: hits within the 10-tick hurt cooldown only deal their excess) | The mob's hurt cooldown is reset before each frame's Quake damage, then Minecraft armor, resistance and death apply as usual | Quake has its own fire rates; a machinegun would otherwise lose most bullets. The Quake frag (from the puppet's health) can therefore precede the Minecraft death of an armored mob |
+| Knockback on a bridged player | Minecraft halves the body's motion and adds the push | The same, computed from the Quake player's velocity, applied as a Quake impulse | Repeated hits saturate as in Minecraft instead of adding up; Quake movement then applies gravity, friction and collision |
+| A bridged player's movement packets | Minecraft trusts the client and checks moves | Ignored; the server places the body from the Quake player state every tick | The Quake player state is authoritative, on the integrated and a dedicated server alike |
+| Bridge game settings | `fraglimit 20`, `sv_pure 1` | `fraglimit 0`, `timelimit 0`, `g_doWarmup 0`, `sv_pure 0`, `bot_enable 0` | A bridge has no end and no AAS; clients use their own installation's PK3s |
+| `quake <map>` from the bridge | n/a | Weapons, ammo, armor, holdable and powerups carry into the match; health does not | Setting health without cheats needs the host triggers, which the local server's map loading does not add (an `engine:session` hook would) |
+| Explosion damage to a bridged player | Minecraft deals at least one point within range, even behind full cover | Unchanged, also behind BSP walls in building regions; the push is a Quake impulse | Minecraft's own explosion rules |

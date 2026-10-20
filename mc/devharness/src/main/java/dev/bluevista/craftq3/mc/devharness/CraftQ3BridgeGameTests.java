@@ -60,6 +60,30 @@ public final class CraftQ3BridgeGameTests {
     new BridgeScenario(helper, mounted.get()).start();
   }
 
+  /**
+   * A player still marked as bridged when the server stopped (crash, kill) gets its Minecraft state
+   * back when it joins again, without game data.
+   */
+  @GameTest
+  public void interruptedBridgeRestoredOnJoin(GameTestHelper helper) {
+    ServerPlayer p = TestPlayers.join(helper.getLevel(), "bridge-recovered");
+    try {
+      p.setAttached(
+          BridgeData.RETURN_STATE,
+          new BridgeData.ReturnState(GameType.CREATIVE.getId(), true, false, false, false));
+      p.setGameMode(GameType.ADVENTURE);
+      p.setNoGravity(true);
+      CraftQ3Mod.instance().services().bridge().joined(p);
+      helper.assertTrue(
+          p.gameMode.getGameModeForPlayer() == GameType.CREATIVE, "game mode not restored");
+      helper.assertTrue(!p.isNoGravity(), "gravity not restored");
+      helper.assertTrue(p.getAttached(BridgeData.RETURN_STATE) == null, "marker kept");
+    } finally {
+      TestPlayers.remove(p);
+    }
+    helper.succeed();
+  }
+
   private static final class BridgeScenario {
     final GameTestHelper helper;
     final Q3Content content;

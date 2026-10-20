@@ -36,6 +36,27 @@ This file covers how `mc:fabric` hooks into Minecraft 26.2 (Fabric API 0.156.0+2
 | `SoundEngineMixin` (client) | `SoundEngine.stopAll`: `@Inject` at `INVOKE SoundEngineExecutor.startUp()V` | The only quiescent point: the old executor thread is joined and the new one not yet started, so `MinecraftAudioDevice` applies its pending commands and releases its pooled sources (and, inside `destroy`, its buffers) directly. |
 | `SoundEngineMixin` (client) | `destroy` HEAD, `loadLibrary` RETURN, `emergencyShutdown` HEAD (plain `@Inject`s) | Bracket the OpenAL context: while it is going down the device issues no OpenAL calls and reports new voices as ended; after a reload it re-uploads buffers lazily from the PCM it keeps. |
 | `SoundManagerAccessor`, `SoundEngineAccessor`, `ChannelAccessor` (client) | `SoundManager.soundEngine`; `SoundEngine.loaded`/`executor`/`library`; `Channel.source` | The device takes sources from the engine's `Library` channel pools and runs every OpenAL call on the engine's `SoundEngineExecutor`; it never opens a device or context. `Channel.source` is needed for the start offset (`AL_SAMPLE_OFFSET`) and stream buffer queueing, which `Channel` does not expose. The old `channelAccess` and `listener` accessors are gone: device channels are not registered with `ChannelAccess` (whose tick would release a stream that ran dry), and Q3 voices are played source-relative in listener space, so Minecraft's listener (and `updateSource`) is never touched. |
+| `LevelOverlayGameRendererMixin` (client) | `GameRenderer.update` HEAD; `renderLevel` at `INVOKE CommandEncoder.clearDepthTexture` with `@Local(name = "projectionMatrix")` and `@Local(name = "cameraState")`; `@WrapWithCondition` on the `renderItemInHand`, `bobHurt` and `bobView` calls in `renderLevel` | `Q3LevelOverlay`s (the bridge's cgame frame, building regions' BSPs): their frame runs before `Camera.update`, so Minecraft culls and renders with the cgame's view; they draw after the level, before the hand pass clears the depth buffer, with this frame's projection (bobbing included) and the level's depth, so blocks and Quake geometry occlude each other. The hand and view bobbing are skipped while the bridge is open (replaces `BridgeHandMixin` and the old bob cancels). Fabric's `LevelRenderEvents` fire inside the level's frame graph, where the main target is not ours to draw into. |
+| `BridgeCameraMixin` (client) | `Camera.alignWithEntity` RETURN (plain `@Inject`, `@Shadow` fields and `setPosition`); `calculateFov`: `@ModifyReturnValue` | While the bridge is open the camera takes the cgame's world view (position, rotation with roll, forward/up/left, yaw/pitch, first person) and its vertical field of view. Set before `Camera.update` derives its matrices, so the old `getViewRotationMatrix` and `extractRenderState` overrides are gone. |
+| `BridgeLocalPlayerMixin` (client) | `LocalPlayer.aiStep` HEAD (cancelling) | The local player does not move by itself while bridged (the bridge places it at the Quake player) or while building regions it is about to stand on are loading. |
+| `EntityAvatarMixin` (common) | `Entity`: duck field; `@ModifyReturnValue` on `getBoundingBox`, `getBbWidth`, `getBbHeight`, `getEyeHeight()F`, `getEyeY` | Replaces `BridgeAvatarMixin`: a bridged player's dimensions are its Quake hull (`AvatarShape`), a plain field the owning side sets (server every tick, client every frame). No client class, no lookup. |
+| `LevelMixin`, `ServerPlayerMixin` (common) | `Level`, `ServerPlayer`: duck fields | `CraftQ3Level` (the level's bridge game and building regions, client levels included) and `BridgedPlayer` (the player's bridge session), replacing the global synchronized maps. |
+| `BridgePlayerHurtMixin` (common) | `Player.actuallyHurt` HEAD (cancelling) | Accepted Minecraft damage to a bridged player (mob and player attacks, their projectiles, explosions) goes to the Quake player (`BridgeHost.minecraftDamage`); Minecraft health is untouched. `ALLOW_DAMAGE` fires before the invulnerability frames, so it is not the same moment. A dead Quake player is protected by `ServerLivingEntityEvents.ALLOW_DAMAGE`. |
+| `BridgeKnockbackMixin` (common) | `LivingEntity.knockback(DDDLDamageSource;FZ)V`: `@WrapMethod` | Minecraft computes the knockback from the Quake player's own motion and grounded state; the velocity change becomes a Quake impulse and the body's motion is restored. |
+| `BridgeExplosionMixin` (common) | `ServerExplosion.hurtEntities`: `@WrapOperation` on `Entity.push(Vec3)` and `Map.put` | An explosion's push on a bridged player becomes a Quake impulse and is not sent to its client. |
+| `BridgeMovePacketMixin` (common) | `ServerGamePacketListenerImpl.handleMovePlayer`: `@Inject` after `INVOKE PacketUtils.ensureRunningOnSameThread` (cancelling) | New: the server places a bridged player's body from the Quake player state, so the client's movement packets are ignored (on the server thread, where the session lives). |
+| `BridgeFoodMixin` (common) | `FoodData.tick(ServerPlayer)` HEAD (cancelling) | No hunger or regeneration while Quake owns the health. |
+| `BuildingEntityMixin` (common) | `Entity.collide` and `collideBoundingBox(Entity, …)`: `@WrapOperation` on `collectCollidersIgnoringWorldBorder` | The colliders of one movement gain a `BspMovementShape` (exact Quake axis sweeps, the BSP floor as a step-up candidate). |
+| `BuildingSupportMixin` (common) | `BlockStateBase.isFaceSturdy(BlockGetter, BlockPos, Direction, SupportType)`: `@ModifyReturnValue` | Block faces lying on BSP faces are sturdy (`FaceSupportIndex`). |
+| `BuildingBlockItemMixin` (common) | `BlockItem.canPlace`: `@ModifyReturnValue` | No block may bury its shape in BSP solid. |
+| `BuildingFallingBlockMixin`, `BuildingFallingBlockEntityMixin` (common) | `FallingBlock.tick` and `FallingBlockEntity.tick`: `@WrapOperation` on `FallingBlock.isFree` (`@Local(name = "pos")` in the entity) | New: sand and gravel rest on BSP floors and land on them as blocks. |
+| `BuildingExplosionMixin` (common) | `ServerExplosion.getSeenPercent`: `@ModifyExpressionValue` on `BlockHitResult.getType` with `@Local(name = "from")`; `calculateExplodedPositions`: `@WrapOperation` on `isInWorldBounds` with `@Local(name = "xp"/"yp"/"zp")` and `@Share` | BSP shelters from blast exposure and stops propagation rays (no ordinals or indices). |
+| `BuildingSightMixin` (common) | `LivingEntity.hasLineOfSight(Entity, Block, Fluid, D)`: `@ModifyExpressionValue` on `getType` with `@Local(name = "from"/"to")` | Mobs cannot see through BSP. |
+| `BuildingFluidMixin` (common) | `FlowingFluid.canPassThroughWall`: `@ModifyReturnValue` | The single test behind spreading down and sideways: no flow into BSP solid or across a BSP barrier. |
+| `BuildingProjectileMixin` (common) | `ProjectileUtil.getHitResult`/`getHitEntitiesAlong`: `@WrapOperation` on `Level.clipIncludingBorder` | Projectiles hit BSP surfaces. |
+| `BuildingArrowMixin` (common) | `AbstractArrow.tick`: `@WrapOperation` on `clipIncludingBorder`; `shouldFall`: `@ModifyReturnValue` | Arrows stick in BSP surfaces and stay. |
+| `BuildingWalkNodeMixin` (common) | `WalkNodeEvaluator.getPathTypeOfMob` and `hasCollisions(AABB)`: `@ModifyReturnValue` | Nodes overlapping BSP solid are `BLOCKED`, open nodes over a BSP floor are walkable, and straight-line shortcuts test the BSP (replaces the lambda target). |
+| `BuildingHangingMixin` (common) | `HangingEntity.survives`: `@WrapOperation` on `Stream.allMatch(Predicate)`; `hasLevelCollision`: `@ModifyReturnValue` | Paintings and frames hang on BSP walls and pop on BSP solid (replaces the lambda target). |
 
 The pure-Q3 entry points need no mixin: the title screen button uses Fabric's
 `ScreenEvents.AFTER_INIT`, `/q3 menu|map|connect|demo` are client commands, and `Q3Screen` reuses
@@ -60,47 +81,32 @@ exists.
 
 ### Phase 8: hybrid bridge and building
 
-Common (`craftq3.mixins.json`) unless marked client.
+Done (see Implemented) unless noted. Not ported, with the reason:
 
-| Old mixin | What it did | Replacement |
-|---|---|---|
-| BridgePlayerMixin | `Player.actuallyHurt` HEAD (cancel): sends damage to the bridge controller. `tick` TAIL: holds the player. | Keep `actuallyHurt` HEAD. `ServerLivingEntityEvents.ALLOW_DAMAGE` fires before invulnerability frames, so it is not equivalent. Use a server tick event for the hold. |
-| BridgeAvatarMixin | Gave `Entity.getBoundingBox`/`getBbWidth`/`getBbHeight`/`getEyeHeight` the Q3 hull at RETURN. It referenced `LocalPlayer`/`Minecraft`. | Common `@ModifyReturnValue` backed by a side-neutral shape provider. The client registers its own supplier, so no client class appears in common code. |
-| BridgeKnockbackMixin | `@WrapMethod` on `LivingEntity.knockback`: knockback becomes a controller impulse. | Keep. |
-| BridgeArrowMixin | `AbstractArrow.onHitEntity`: `@WrapOperation` on `igniteForSeconds` and `hurtOrSimulate` (with `@Share`). `doKnockback`: `@WrapMethod`. | Keep. |
-| BridgeEntityFireMixin | `Entity.setRemainingFireTicks` HEAD. | Keep. |
-| BridgeSmallFireballMixin | `SmallFireball.onHitEntity`: `@WrapOperation` on `igniteForSeconds`/`hurtServer`. `onHitBlock` RETURN. | Keep the wraps. Drop the smoke probes (devharness replaces them). |
-| BridgeHurtingProjectileMixin | `canHitEntity`: `@WrapOperation` on the `Entity.noPhysics` read. | Keep. |
-| BridgeExplosionMixin | `ServerExplosion.hurtEntities`: `@WrapOperation` on `Entity.push(Vec3)` and `Map.put`. | Keep; Fabric has no explosion event. |
-| BridgeServerPlayerMixin | Read/add save data RETURN (return marker); `hurtServer` HEAD returned false. | Marker: a persistent **data attachment** (fabric-data-attachment-api-v1) instead of NBT hooks. Damage filter: `ServerLivingEntityEvents.ALLOW_DAMAGE`. |
-| BridgeFoodMixin | Cancelled `FoodData.tick(ServerPlayer)` at HEAD (no hunger while bridged). | Keep. |
-| BridgeLocalPlayerMixin (client) | Cancelled `LocalPlayer.aiStep` at HEAD while BridgeScreen is open. | Keep (client). |
-| BridgeCameraMixin (client) | `Camera`: `@ModifyReturnValue` on `calculateFov`/`getViewRotationMatrix`; RETURN on `extractRenderState`/`alignWithEntity`. | Keep (client). |
-| BuildingEntityMixin | `Entity.collide`/`collideBoundingBox(Entity,…)`: `@WrapOperation` on `collectCollidersIgnoringWorldBorder` adds the BSP shapes. | Keep. Also cover the `collideBoundingBox(CollisionContext,…)` overload and `collectAllColliders` if needed. |
-| BuildingLevelRendererMixin (client) | `LevelRenderer.render`: `@ModifyVariable` on the clear colour. Cancelled `addSkyPass`/`addCloudsPass`/`addWeatherPass`. Drew the BSP at RETURN. | Keep the cancels and the clear colour, selecting it by name. Draw from `LevelRenderEvents` only if the BSP draw can run inside the frame-graph main pass; otherwise keep RETURN. |
-| BuildingProjectionMixin (client) | `GameRenderer.renderLevel`: `@ModifyArg` on `ProjectionMatrixBuffer.getBuffer(Matrix4f)`. | Keep. The target is unique in 26.2: the hand pass uses `getBuffer(Projection)`. |
-| BuildingPickMixin (client) | `Minecraft.pick` RETURN: replaces `hitResult` with a BSP pick. | Keep. |
-| BuildingBlockItemMixin | `BlockItem.canPlace` RETURN. | Keep; `UseBlockCallback` is too coarse. |
-| BuildingSupportMixin | `BlockStateBase.isFaceSturdy` RETURN. | Keep. |
-| BuildingProjectileMixin | `ProjectileUtil.getHitResult`: `@WrapOperation` on `Level.clipIncludingBorder`. | Keep. |
-| BuildingArrowMixin | `AbstractArrow.tick`: `@WrapOperation` on `clipIncludingBorder`. `shouldFall`: `@WrapOperation` on `noCollision`. | Keep. |
-| BuildingExplosionMixin | `ServerExplosion.getSeenPercent` (`@ModifyExpressionValue`) and `calculateExplodedPositions` (`@WrapOperation` on `isInWorldBounds`). **O** `@Local(ordinal = 1) Vec3` and **O** `@Local(index = 15/17/19) double`. | Keep, using `@Local(name = "from")` and `@Local(name = "xp"/"yp"/"zp")`. |
-| BuildingRegionAccessor | `@Accessor` for `PathNavigationRegion.level`. | Keep. |
-| BuildingWalkNodeMixin | `WalkNodeEvaluator`: path-type `@WrapMethod`/`@ModifyReturnValue` hooks. **L** `lambda$hasCollisions$0`: `@WrapOperation` on `noCollision`. | Keep the named hooks. Replace the lambda with `@ModifyReturnValue` on `hasCollisions(AABB)`, OR-ing the BSP check. |
-| BuildingGroundNavigationMixin | `GroundPathNavigation.findSurfacePosition` HEAD (early return). | Keep, or use `@ModifyReturnValue` if possible. |
-| BuildingPathNavigationMixin | `PathNavigation.getGroundY`/`isStableDestination`: `@ModifyReturnValue`. | Keep. |
-| BuildingSightMixin | `LivingEntity.hasLineOfSight`: `@ModifyExpressionValue` on `getType` with **O** `@Local(ordinal = 0/1) Vec3`. | Keep, using `@Local(name = "from")`/`@Local(name = "to")`. |
-| BuildingFluidMixin | `FlowingFluid.getNewLiquid`: `@WrapOperation` on `isSolid`. `canPassThroughWall`/`canHoldFluid` RETURN. | Keep. |
-| BuildingBucketMixin | `BucketItem.use`: `@WrapOperation` on `getPlayerPOVHitResult`. `emptyContents` HEAD. | Keep. |
-| BuildingHangingItemMixin | `HangingEntityItem.useOn`: `@WrapOperation` on `getClickedPos`. | Keep. |
-| BuildingHangingMixin | **L** `lambda$survives$0` RETURN; `hasLevelCollision` RETURN. | Replace the lambda with `@WrapOperation` on `Stream.allMatch(Predicate)` in `survives()`, passing the predicate OR'd with BSP support. |
-| BuildingItemFrameMixin | `ItemFrame.survives`: `@WrapOperation` on `isSolid`. | Keep. |
-| BuildingEntityLightMixin (client) | `EntityRenderer.getPackedLightCoords` RETURN. | Keep (client). |
-| BuildingLightCoordsMixin (client) | `LightCoordsUtil.getLightCoords` RETURN. | Keep (client). |
+| Old mixin | Status |
+|---|---|
+| BridgePlayerMixin | `actuallyHurt` kept as `BridgePlayerHurtMixin`; the hold is `BridgeRules.hold` from the bridge tick. |
+| BridgeAvatarMixin | `EntityAvatarMixin`. |
+| BridgeKnockbackMixin, BridgeExplosionMixin, BridgeFoodMixin | Kept. |
+| BridgeServerPlayerMixin | Marker: persistent data attachment `craftq3:bridge_return`; damage filter: `ALLOW_DAMAGE`. |
+| BridgeLocalPlayerMixin, BridgeCameraMixin (client) | Kept. |
+| BridgeHandMixin (client) | `@WrapWithCondition` on the hand pass in `LevelOverlayGameRendererMixin`. |
+| BridgeArrowMixin, BridgeEntityFireMixin, BridgeSmallFireballMixin, BridgeHurtingProjectileMixin | Not ported: arrow and fireball hits already reach the Quake player through `actuallyHurt`; attributed burning, arrow pushes and fireball targeting of the `noPhysics` avatar are gaps. |
+| BuildingEntityMixin, BuildingSupportMixin, BuildingBlockItemMixin, BuildingExplosionMixin, BuildingSightMixin, BuildingFluidMixin, BuildingProjectileMixin, BuildingArrowMixin, BuildingWalkNodeMixin, BuildingHangingMixin | Kept (names, not ordinals; no lambda targets). |
+| BuildingRegionAccessor | Not needed: path hooks read the mob's own level. |
+| BuildingGroundNavigationMixin, BuildingPathNavigationMixin | Not ported: with BSP floors walkable to the evaluator, ground navigation plans over them (GameTest); destination snapping to off-grid BSP floors is a gap. |
+| BuildingBucketMixin, BuildingHangingItemMixin, BuildingItemFrameMixin | Not ported: placing fluids and hanging items against a BSP surface the player aims at needs a client pick hook (gap); placed blocks work through `BlockItem`. |
+| BuildingLevelRendererMixin (client) | Not needed: the dimension type has no Minecraft sky (`"skybox": "none"`), and the BSP draws through `LevelOverlayGameRendererMixin`. |
+| BuildingProjectionMixin (client) | Not needed: the BSP is drawn with Minecraft's own projection and depth. |
+| BuildingPickMixin (client) | Not ported (gap): the crosshair does not pick BSP surfaces, so blocks cannot be placed against a BSP face by clicking it; placed blocks on BSP floors are supported. |
+| BuildingEntityLightMixin, BuildingLightCoordsMixin (client) | Not needed: the dimension has sky light and fixed time, so blocks and entities in a region are lit. |
+| New | `BridgeMovePacketMixin`, `BuildingFallingBlockMixin`, `BuildingFallingBlockEntityMixin`. |
 
 ### Final split
 
-- **Client:** GameRenderer, MouseHandler, SoundEngine and its 3 accessors (SoundManager,
-  SoundEngine, Channel), BridgeLocalPlayer, BridgeHand, BridgeCamera, BuildingLevelRenderer, BuildingProjection, BuildingPick, BuildingEntityLight and
-  BuildingLightCoords. GuiMixin is dropped.
-- **Common:** everything else. BridgeAvatarMixin must stop referencing client classes first.
+- **Client** (`craftq3.client.mixins.json`): GameRenderer, LevelOverlayGameRenderer, MouseHandler,
+  SoundEngine and its 3 accessors (SoundManager, SoundEngine, Channel), BridgeCamera and
+  BridgeLocalPlayer. GuiMixin is dropped.
+- **Common** (`craftq3.mixins.json`): EntityAvatar, Level, ServerPlayer, BridgePlayerHurt,
+  BridgeKnockback, BridgeExplosion, BridgeMovePacket, BridgeFood and the Building mixins. None
+  references a client class; `:mc:devharness:runGameTest` boots them on a dedicated server.

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "craftq3-devharness",
+  "version": "${version}",
+  "name": "CraftQ3 dev harness",
+  "description": "Never shipped. Server GameTests and client game tests for CraftQ3.",
+  "environment": "*",
+  "license": "GPL-3.0-only",
+  "entrypoints": {
+    "fabric-gametest": ["dev.bluevista.craftq3.mc.devharness.CraftQ3ServerGameTests"],
+    "fabric-client-gametest": ["dev.bluevista.craftq3.mc.devharness.client.Q3SpikeClientTest"]
+  },
+  "depends": {
+    "craftq3": "*",
+    "fabric-gametest-api-v1": "*",
+    "fabric-client-gametest-api-v1": "*"
+  }
+}

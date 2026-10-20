@@ -9,6 +9,15 @@ import net.fabricmc.api.ModInitializer;
 public final class CraftQ3Mod implements ModInitializer {
   public static final String MOD_ID = "craftq3";
 
+  private boolean initialized;
+
   @Override
-  public void onInitialize() {}
+  public void onInitialize() {
+    initialized = true;
+  }
+
+  /** Whether {@link #onInitialize()} has run on this instance (checked by devharness). */
+  public boolean initialized() {
+    return initialized;
+  }
 }

@@ -10,6 +10,10 @@
     "main": ["dev.bluevista.craftq3.mc.fabric.CraftQ3Mod"],
     "client": ["dev.bluevista.craftq3.mc.fabric.client.CraftQ3ClientMod"]
   },
+  "mixins": [
+    "craftq3.mixins.json",
+    { "config": "craftq3.client.mixins.json", "environment": "client" }
+  ],
   "depends": {
     "fabricloader": ">=${loader_version}",
     "minecraft": "${minecraft_version}",

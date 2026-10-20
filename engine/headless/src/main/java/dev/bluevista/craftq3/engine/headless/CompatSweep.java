@@ -11,6 +11,7 @@ import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
 import dev.bluevista.craftq3.engine.fs.FileRef;
 import dev.bluevista.craftq3.engine.fs.FileView;
 import dev.bluevista.craftq3.engine.fs.MountReport;
+import dev.bluevista.craftq3.engine.fs.PackMount;
 import dev.bluevista.craftq3.engine.fs.SearchPath;
 import dev.bluevista.craftq3.engine.fs.VirtualPath;
 import dev.bluevista.craftq3.engine.render.RenderScene;
@@ -51,8 +52,13 @@ import java.util.regex.Pattern;
  *
  * Writes {@code report.json} and {@code report.md} into {@code --out}. Arguments: {@code --install
  * <dir>} (default {@code $CRAFTQ3_Q3ROOT}), {@code --out <dir>}, {@code --seconds <n>} (30), {@code
- * --maps <n>} (1), {@code --bots <n>} (4), {@code --games a,b} (all), {@code --skip
- * maps,demos,cinematics,match}.
+ * --maps <n>} (1), {@code --bots <n>} (4), {@code --games a,b} or {@code --game a} (all; names as
+ * the report shows them, any case), {@code --skip maps,demos,cinematics,match}.
+ *
+ * <p>The exit code is 0 when no engine failure was found, 1 otherwise, 2 for bad arguments. A map
+ * of a third-party pack that does not parse (its BSP or AAS) is a content warning: it is reported
+ * but the original engine refuses it as well, so it does not fail the sweep. The same file in an
+ * official pack is a failure.
  */
 public final class CompatSweep {
   /** Sweep settings. */
@@ -91,7 +97,7 @@ public final class CompatSweep {
         case "--seconds" -> seconds = Integer.parseInt(args[++i]);
         case "--maps" -> maps = Integer.parseInt(args[++i]);
         case "--bots" -> bots = Integer.parseInt(args[++i]);
-        case "--games" -> {
+        case "--games", "--game" -> {
           for (String g : value.split(",")) if (!g.isBlank()) games.add(g.strip());
           i++;
         }
@@ -117,7 +123,14 @@ public final class CompatSweep {
             skip,
             dev.bluevista.craftq3.engine.session.GameLocalServer.FACTORY,
             System.out::println);
-    Report report = new CompatSweep(settings).run();
+    Report report;
+    try {
+      report = new CompatSweep(settings).run();
+    } catch (IllegalArgumentException badGame) {
+      System.err.println(badGame.getMessage());
+      System.exit(2);
+      return;
+    }
     System.out.println(report.summary());
     System.exit(report.failures() == 0 ? 0 : 1);
   }
@@ -125,7 +138,7 @@ public final class CompatSweep {
   // ================================================================ report model
 
   /** One problem in one game directory. */
-  record Problem(String area, String subject, String message) {}
+  record Problem(String area, String subject, String message, boolean failure) {}
 
   /** What one game directory produced. */
   static final class GameReport {
@@ -144,8 +157,18 @@ public final class CompatSweep {
       this.profile = profile;
     }
 
+    /** An engine failure: fails the sweep. */
     void problem(String area, String subject, String message) {
-      problems.add(new Problem(area, subject, message));
+      problems.add(new Problem(area, subject, message, true));
+    }
+
+    /** A content defect the original engine refuses too: reported, not failing. */
+    void warning(String area, String subject, String message) {
+      problems.add(new Problem(area, subject, message, false));
+    }
+
+    long failures() {
+      return problems.stream().filter(Problem::failure).count();
     }
   }
 
@@ -158,9 +181,17 @@ public final class CompatSweep {
       this.settings = settings;
     }
 
+    /** Engine failures: what the exit code reflects. */
     public int failures() {
       int count = 0;
-      for (GameReport game : games) count += game.problems.size();
+      for (GameReport game : games) count += (int) game.failures();
+      return count;
+    }
+
+    /** Content warnings (reported, not failing). */
+    public int warnings() {
+      int count = 0;
+      for (GameReport game : games) count += game.problems.size() - (int) game.failures();
       return count;
     }
 
@@ -169,19 +200,21 @@ public final class CompatSweep {
       text.append(games.size())
           .append(" game directories, ")
           .append(failures())
-          .append(" problems\n");
+          .append(" failures, ")
+          .append(warnings())
+          .append(" content warnings\n");
       for (GameReport game : games)
         text.append(
             String.format(
                 Locale.ROOT,
-                "  %-22s maps %s  match %s  demos %s  roq %s  degradations %d  problems %d%n",
+                "  %-22s maps %s  match %s  demos %s  roq %s  degradations %d  failures %d%n",
                 game.profile.name,
                 game.maps.getOrDefault("loaded", "-") + "/" + game.maps.getOrDefault("total", "-"),
                 matchSummary(game),
                 passed(game.demos) + "/" + game.demos.size(),
                 passed(game.cinematics) + "/" + game.cinematics.size(),
                 game.degradations,
-                game.problems.size()));
+                game.failures()));
       return text.toString();
     }
   }
@@ -200,8 +233,19 @@ public final class CompatSweep {
   public Report run() throws IOException {
     Files.createDirectories(settings.output());
     Report report = new Report(settings);
-    for (Profile profile : profiles()) {
-      if (!settings.games().isEmpty() && !settings.games().contains(profile.name())) continue;
+    List<Profile> profiles = profiles();
+    Set<String> wanted = new LinkedHashSet<>();
+    for (String name : settings.games()) wanted.add(name.toLowerCase(Locale.ROOT));
+    if (!wanted.isEmpty()) {
+      Set<String> known = new LinkedHashSet<>();
+      for (Profile profile : profiles) known.add(profile.name().toLowerCase(Locale.ROOT));
+      for (String name : wanted)
+        if (!known.contains(name))
+          throw new IllegalArgumentException(
+              "Unknown game " + name + "; this installation has " + profileNames(profiles));
+    }
+    for (Profile profile : profiles) {
+      if (!wanted.isEmpty() && !wanted.contains(profile.name().toLowerCase(Locale.ROOT))) continue;
       progress(
           "== " + profile.name() + (profile.note().isEmpty() ? "" : " (" + profile.note() + ")"));
       GameReport game = new GameReport(profile);
@@ -217,6 +261,10 @@ public final class CompatSweep {
     }
     write(report);
     return report;
+  }
+
+  private static List<String> profileNames(List<Profile> profiles) {
+    return profiles.stream().map(Profile::name).toList();
   }
 
   private void progress(String line) {
@@ -404,6 +452,23 @@ public final class CompatSweep {
 
   // ---------------------------------------------------------------- maps
 
+  /** A defect of {@code path}: a failure in an official pack, a content warning elsewhere. */
+  private static void report(
+      GameReport game, FileView view, String path, String area, String subject, String message) {
+    if (official(view, path)) game.problem(area, subject, message);
+    else game.warning(area, subject, message + " (third-party content)");
+  }
+
+  /** Whether {@code path} comes from {@code baseq3/pak0..8} or {@code missionpack/pak0..3}. */
+  static boolean official(FileView view, String path) {
+    Optional<FileRef> ref = view.find(VirtualPath.of(path));
+    if (ref.isEmpty() || !(ref.get().mount() instanceof PackMount pack)) return false;
+    String name = pack.name().toLowerCase(Locale.ROOT);
+    String game = pack.game().toLowerCase(Locale.ROOT);
+    return game.equals("baseq3") && name.matches("pak[0-8]")
+        || game.equals("missionpack") && name.matches("pak[0-3]");
+  }
+
   private void checkMaps(GameReport game, FileView view, List<String> maps) {
     FileViewAssets assets = new FileViewAssets(view);
     ShaderLibrary shaders = ShaderLibrary.load(assets);
@@ -418,7 +483,7 @@ public final class CompatSweep {
         bsp = BspReader.read(view.read(VirtualPath.of(path)), path);
         loaded++;
       } catch (IOException | RuntimeException failure) {
-        game.problem("map", name, "BSP: " + failure.getMessage());
+        report(game, view, path, "map", name, "BSP: " + failure.getMessage());
         continue;
       }
       String aas = path.substring(0, path.length() - 4) + ".aas";
@@ -428,7 +493,7 @@ public final class CompatSweep {
           AasReader.read(view.read(VirtualPath.of(aas)), aas);
           aasLoaded++;
         } catch (IOException | RuntimeException failure) {
-          game.problem("map", name, "AAS: " + failure.getMessage());
+          report(game, view, aas, "map", name, "AAS: " + failure.getMessage());
         }
       }
       try {
@@ -683,13 +748,16 @@ public final class CompatSweep {
                 "subject",
                 problem.subject(),
                 "message",
-                problem.message()));
+                problem.message(),
+                "failure",
+                problem.failure()));
       g.put("problems", problems);
       games.add(g);
     }
     Map<String, Object> root = new LinkedHashMap<>();
     root.put("matchSeconds", report.settings.seconds());
-    root.put("problems", report.failures());
+    root.put("failures", report.failures());
+    root.put("warnings", report.warnings());
     root.put("games", games);
     StringBuilder out = new StringBuilder();
     Json.write(out, root, 0);
@@ -702,11 +770,13 @@ public final class CompatSweep {
         .append(report.settings.seconds())
         .append(" s of game time with ")
         .append(report.settings.bots())
-        .append(" bots. Problems: ")
+        .append(" bots. Failures: ")
         .append(report.failures())
+        .append(", content warnings: ")
+        .append(report.warnings())
         .append(".\n\n");
     md.append(
-        "| Game | PK3s | Skipped | Maps | AAS | Scenes | Missing textures | ui | Match | Demos | RoQ | Degradations | Problems |\n");
+        "| Game | PK3s | Skipped | Maps | AAS | Scenes | Missing textures | ui | Match | Demos | RoQ | Degradations | Failures |\n");
     md.append(
         "| --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: | ---: |\n");
     for (GameReport game : report.games) {
@@ -742,7 +812,7 @@ public final class CompatSweep {
           .append(" | ")
           .append(game.degradations)
           .append(" | ")
-          .append(game.problems.size())
+          .append(game.failures())
           .append(" |\n");
     }
     for (GameReport game : report.games) {
@@ -756,7 +826,7 @@ public final class CompatSweep {
         }
         String message = problem.message().replace("\n", " / ");
         if (message.length() > 400) message = message.substring(0, 400) + "...";
-        md.append("- **")
+        md.append(problem.failure() ? "- **" : "- (warning) **")
             .append(problem.area())
             .append("** ")
             .append(problem.subject())

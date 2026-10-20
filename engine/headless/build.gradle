@@ -22,7 +22,8 @@ tasks.named('test') {
 }
 
 // The plan's §4 compatibility sweep over $CRAFTQ3_Q3ROOT: ./gradlew :engine:headless:compatSweep
-// (-Pcompat.seconds=120 -Pcompat.maps=2 -Pcompat.games=baseq3,cpma -Pcompat.skip=cinematics).
+// (-Pcompat.seconds=120 -Pcompat.maps=2 -Pcompat.games=baseq3,cpma -Pcompat.skip=cinematics);
+// exits non-zero only for engine failures (content warnings are reported, not failing).
 tasks.register('compatSweep', JavaExec) {
     group = 'verification'
     description = 'Runs every game directory of $CRAFTQ3_Q3ROOT through the session; writes build/compat/report.{json,md}.'
@@ -33,7 +34,7 @@ tasks.register('compatSweep', JavaExec) {
     def out = layout.buildDirectory.dir('compat')
     def seconds = providers.gradleProperty('compat.seconds').getOrElse('30')
     def maps = providers.gradleProperty('compat.maps').getOrElse('1')
-    def games = providers.gradleProperty('compat.games').getOrElse('')
+    def games = providers.gradleProperty('compat.games').orElse(providers.gradleProperty('compat.game')).getOrElse('')
     def skip = providers.gradleProperty('compat.skip').getOrElse('')
     def q3Root = providers.environmentVariable('CRAFTQ3_Q3ROOT')
     if (q3Root.isPresent()) environment 'CRAFTQ3_Q3ROOT', q3Root.get()

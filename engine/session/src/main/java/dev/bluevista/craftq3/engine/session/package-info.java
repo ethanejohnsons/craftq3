@@ -8,6 +8,9 @@
  *       GameClient}: connection or demo, cgame, recording), the ui and content ({@code
  *       ClientContent}, rebuilt for a pure server's packs), cvar forwarding ({@code CvarMirror}),
  *       {@code ERR_DROP} handling.
+ *   <li>{@code SessionPaks}: the mounted installation and the PK3s a remote server referenced,
+ *       taken from the download cache or downloaded ({@code cl_allowDownload}) by the client's
+ *       {@code DownloadManager}, mounted only while that game lasts.
  *   <li>{@link dev.bluevista.craftq3.engine.session.LocalServer}: the server half as the session
  *       sees it; {@link dev.bluevista.craftq3.engine.session.GameLocalServer} implements it with
  *       {@code engine:game}; {@link dev.bluevista.craftq3.engine.session.ServerRunner} runs it on

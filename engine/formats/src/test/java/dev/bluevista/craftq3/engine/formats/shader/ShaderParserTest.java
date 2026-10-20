@@ -63,6 +63,31 @@ class ShaderParserTest {
   }
 
   @Test
+  void videoMapPlaysARoqFromTheVideoDirectoryUnlessAPathIsGiven() {
+    var result =
+        ShaderParser.parse(
+            "video.shader",
+            """
+        textures/synthetic/screen {
+          { videoMap mpteam6.roq rgbGen identityLighting }
+          { videoMap Movies\\Intro.RoQ blendFunc add }
+          { map textures/synthetic/glass.tga blendFunc filter }
+        }
+        """);
+    assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
+    List<Stage> stages = result.definitions().getFirst().stages();
+    assertTrue(stages.get(0).texture().video());
+    assertEquals(List.of("video/mpteam6.roq"), stages.get(0).texture().frames());
+    assertEquals(RgbGenType.IDENTITY_LIGHTING, stages.get(0).rgbGen().type());
+    assertTrue(stages.get(1).texture().video());
+    assertEquals(List.of("movies/intro.roq"), stages.get(1).texture().frames());
+    assertFalse(stages.get(2).texture().video());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ShaderDefinition.TextureMap(List.of("a.roq", "b.roq"), 0, false, true));
+  }
+
+  @Test
   void preservesOrderedAnimationGeneratorsAndTextureModifiers() {
     var result =
         ShaderParser.parse(

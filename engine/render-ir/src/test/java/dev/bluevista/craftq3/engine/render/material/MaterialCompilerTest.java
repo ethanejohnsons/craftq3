@@ -266,6 +266,28 @@ class MaterialCompilerTest {
   }
 
   @Test
+  void videoMapStagesBecomeVideoBundlesThatAreNotDecodedAsImages() {
+    var parsed =
+        dev.bluevista.craftq3.engine.formats.shader.ShaderParser.parse(
+            "video.shader",
+            """
+            textures/test/screen
+            {
+              { videoMap idlogo.roq }
+              { map $lightmap blendFunc filter }
+            }
+            """);
+    MaterialProgram m = MaterialCompiler.compile(parsed.definitions().getFirst());
+    TextureBundle video = m.stages().getFirst().texture();
+    assertEquals(TextureBundle.Kind.VIDEO, video.kind());
+    assertEquals("video/idlogo.roq", video.imageAt(3));
+    assertTrue(video.fileBacked());
+    assertFalse(video.decodedImages());
+    assertFalse(video.mipmaps(), "cinematic frames are uploaded without mipmaps");
+    assertTrue(m.stages().get(1).texture().kind() == TextureBundle.Kind.LIGHTMAP);
+  }
+
+  @Test
   void packedLayoutRoundTripsEveryStageAndDeform() {
     for (String name : LIBRARY.definitions().keySet()) {
       MaterialProgram m = program(name);

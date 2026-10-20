@@ -40,7 +40,7 @@ public record SceneTextures(
     for (MaterialProgram material : scene.materials()) {
       if (material.noDraw()) continue;
       for (StageProgram stage : material.stages())
-        if (stage.texture().fileBacked())
+        if (stage.texture().decodedImages())
           for (String image : stage.texture().images()) load(assets, images, notes, bytes, image);
       material
           .sky()

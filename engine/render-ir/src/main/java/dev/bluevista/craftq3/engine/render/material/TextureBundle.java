@@ -74,4 +74,9 @@ public record TextureBundle(
   public boolean fileBacked() {
     return kind == Kind.IMAGE || kind == Kind.ANIMATED || kind == Kind.VIDEO;
   }
+
+  /** True when the named files are images to decode ahead of time (not a RoQ to stream). */
+  public boolean decodedImages() {
+    return kind == Kind.IMAGE || kind == Kind.ANIMATED;
+  }
 }

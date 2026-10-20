@@ -1,13 +1,18 @@
 package dev.bluevista.craftq3.mc.fabric.client;
 
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
 
+import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.bluevista.craftq3.engine.common.time.Clock;
 import dev.bluevista.craftq3.mc.fabric.CraftQ3Mod;
 import dev.bluevista.craftq3.mc.fabric.client.audio.MinecraftAudio;
+import dev.bluevista.craftq3.mc.fabric.client.debug.Q3MapViewer;
 import dev.bluevista.craftq3.mc.fabric.client.debug.Q3SpikeScreen;
 import dev.bluevista.craftq3.mc.fabric.client.render.Q3RenderContext;
 import dev.bluevista.craftq3.mc.fabric.command.Q3Command;
+import dev.bluevista.craftq3.mc.fabric.config.CraftQ3Config;
+import dev.bluevista.craftq3.mc.fabric.config.Q3Installation;
 import java.util.concurrent.Executor;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -42,7 +47,17 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
                                 // The chat screen closes after the command returns.
                                 client.execute(() -> openSpike(client));
                                 return 1;
-                              })));
+                              }))
+                  .then(
+                      literal("map")
+                          .then(
+                              argument("name", StringArgumentType.word())
+                                  .executes(
+                                      c ->
+                                          openMap(
+                                              c.getSource(),
+                                              installation,
+                                              StringArgumentType.getString(c, "name"))))));
           dispatcher.register(
               Q3Command.build(installation, CLIENT_FEEDBACK, FabricClientCommandSource::attended));
         });
@@ -63,6 +78,30 @@ public final class CraftQ3ClientMod implements ClientModInitializer {
   /** Opens the Blaze3D spike over the current screen, animated by the host clock. */
   public void openSpike(Minecraft client) {
     client.gui.setScreen(new Q3SpikeScreen(renderContext, Clock.system(), client.gui.screen()));
+  }
+
+  /** {@code /q3debug map <name>}: views a map of the configured installation from its spawn. */
+  private int openMap(FabricClientCommandSource source, Q3Installation installation, String map) {
+    CraftQ3Config config = installation.config();
+    var root = config.installationPath();
+    if (root.isEmpty()) {
+      source.sendError(Component.literal("No Quake III installation is configured (/q3 install)"));
+      return 0;
+    }
+    source.sendFeedback(Component.literal("Loading " + map + "..."));
+    Q3MapViewer.open(source.getClient(), renderContext, root.get(), config.game(), map)
+        .whenComplete(
+            (name, failure) ->
+                source
+                    .getClient()
+                    .execute(
+                        () -> {
+                          if (failure != null)
+                            source.sendError(
+                                Component.literal(
+                                    "Cannot view " + map + ": " + failure.getMessage()));
+                        }));
+    return 1;
   }
 
   private void close() {

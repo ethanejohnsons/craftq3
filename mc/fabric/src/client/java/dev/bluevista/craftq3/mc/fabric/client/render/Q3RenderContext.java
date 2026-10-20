@@ -44,6 +44,11 @@ import org.slf4j.Logger;
  *   <li>Dynamic vertices go into a triple-buffered {@link MappableRingBuffer} reused across frames.
  * </ul>
  *
+ * <p>For {@link Q3RenderBackend} it also owns the client-wide {@link Q3TextureCache} (one upload
+ * per image for every screen and map), the {@code q3_material} pipeline variants ({@link
+ * Q3Pipelines}), its samplers, the per-frame rings ({@code Q3FrameBuffers}) and the offscreen depth
+ * and portal targets.
+ *
  * <p>All GPU objects are created lazily on the render thread, because the device does not exist yet
  * when the client initialises. {@link #endFrame()} must be called once after each frame's CraftQ3
  * passes.
@@ -82,6 +87,11 @@ public final class Q3RenderContext implements AutoCloseable {
   private final Map<String, Q3Texture> textures = new HashMap<>();
   private final Map<String, StaticMesh> staticMeshes = new HashMap<>();
   private final List<MappableRingBuffer> retiredVertexRings = new ArrayList<>();
+  private final Q3Pipelines materialPipelines = new Q3Pipelines();
+  private final Q3TextureCache q3Textures = new Q3TextureCache();
+  private final Map<Integer, GpuSampler> q3Samplers = new HashMap<>();
+  private final List<Q3RenderTarget> renderTargets = new ArrayList<>();
+  private Q3FrameBuffers frameBuffers;
   private DynamicUniformStorage<Q3StageParams> stageUniforms;
   private DynamicUniformStorage<Q3ViewParams> viewUniforms;
   private MappableRingBuffer vertexRing;
@@ -112,6 +122,81 @@ public final class Q3RenderContext implements AutoCloseable {
 
   public RenderPipeline pipeline(Q3Blend blend) {
     return pipelines.get(blend);
+  }
+
+  /** The {@code q3_material} pipeline variants (built lazily, cached for the client's life). */
+  public Q3Pipelines pipelines() {
+    return materialPipelines;
+  }
+
+  /** The client-wide Quake III texture cache. */
+  public Q3TextureCache textures() {
+    return q3Textures;
+  }
+
+  /** Linear sampler for Q3 stages: clamped or repeating, with or without the mip chain. */
+  public GpuSampler q3Sampler(boolean clamp, boolean mipmaps) {
+    int key = (clamp ? 1 : 0) | (mipmaps ? 2 : 0);
+    GpuSampler sampler = q3Samplers.get(key);
+    if (sampler == null) {
+      AddressMode address = clamp ? AddressMode.CLAMP_TO_EDGE : AddressMode.REPEAT;
+      sampler =
+          RenderSystem.getDevice()
+              .createSampler(
+                  address,
+                  address,
+                  FilterMode.LINEAR,
+                  FilterMode.LINEAR,
+                  1,
+                  mipmaps ? OptionalDouble.empty() : OptionalDouble.of(0));
+      q3Samplers.put(key, sampler);
+    }
+    return sampler;
+  }
+
+  /** Per-frame dynamic buffers shared by every Q3 renderer of this client. */
+  Q3FrameBuffers frameBuffers() {
+    if (frameBuffers == null) frameBuffers = new Q3FrameBuffers();
+    return frameBuffers;
+  }
+
+  /**
+   * An offscreen colour+depth target of at least this size, reused across frames; {@code slot}
+   * distinguishes targets needed in the same frame (0 is the main depth, 1.. portal views).
+   */
+  Q3RenderTarget renderTarget(int slot, int width, int height, boolean color) {
+    while (renderTargets.size() <= slot) renderTargets.add(null);
+    Q3RenderTarget target = renderTargets.get(slot);
+    if (target == null || target.width() != width || target.height() != height) {
+      if (target != null) target.close();
+      target = new Q3RenderTarget("CraftQ3 target " + slot, width, height, color);
+      renderTargets.set(slot, target);
+    }
+    return target;
+  }
+
+  /** Releases offscreen targets (they are recreated on demand). */
+  void releaseRenderTargets() {
+    renderTargets.forEach(
+        t -> {
+          if (t != null) t.close();
+        });
+    renderTargets.clear();
+  }
+
+  /** Live client-wide GPU objects: textures, samplers, offscreen targets and frame rings. */
+  public String residentSummary() {
+    long targets = renderTargets.stream().filter(t -> t != null).count();
+    return "textures="
+        + q3Textures.size()
+        + " samplers="
+        + (samplers.size() + q3Samplers.size())
+        + " targets="
+        + targets
+        + " frameRings="
+        + (frameBuffers == null ? 0 : frameBuffers.rings())
+        + " pipelines="
+        + materialPipelines.variantCount();
   }
 
   public GpuSampler sampler(AddressMode address, FilterMode filter) {
@@ -204,6 +289,12 @@ public final class Q3RenderContext implements AutoCloseable {
     textures.clear();
     samplers.values().forEach(GpuSampler::close);
     samplers.clear();
+    q3Textures.close();
+    q3Samplers.values().forEach(GpuSampler::close);
+    q3Samplers.clear();
+    releaseRenderTargets();
+    if (frameBuffers != null) frameBuffers.close();
+    frameBuffers = null;
     retiredVertexRings.forEach(MappableRingBuffer::close);
     retiredVertexRings.clear();
     if (vertexRing != null) vertexRing.close();

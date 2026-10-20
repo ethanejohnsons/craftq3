@@ -212,7 +212,8 @@ The reference installation archive (`Quake III Arena.zip`, user-owned, never com
 | DDS textures in `dmmq3dm3.pk3` | Fall back to the TGA/JPG files in `dmmq3dm3_tga.pk3`, as Q3 does; a DDS decoder is optional |
 | Demos: `dm_68` (pak8, CPMA, moteof), `dm_66` (pak6, freefall), `dm_48` (pak4/pak5 attract loop) | 68 and 66/67 are required. 48 (the 1.27 format) is a stretch item at the end of Phase 5 |
 | Q3Pinball ships only `qagame.qvm` | cgame and ui fall back to baseq3 |
-| Loose `baseq3/qagame.qvm` (466,544 bytes, unknown build) | Loose files win over PK3s when the server isn't pure, so it overrides pak8. The sweep reports which QVM was chosen. This file is probably a leftover; consider removing it |
+| Loose `baseq3/qagame.qvm` (466,544 bytes, unknown build) | It sits in `baseq3/`, not `baseq3/vm/`, so the engine never loads it as the game module; `vm/qagame.qvm` resolves to `pak8.pk3`. PK3s take precedence over loose files in the same directory (original 1.32 order; `SearchOrder.LOOSE_FIRST` gives the ioquake3-style order) |
+| `cpma/cpma baseq3/` (map PK3s nested one level down) | Not a game directory, so never mounted, as in the original engine; the maps load once copied into `baseq3/` |
 | `quake3.exe`, `*x86_64.so` | Never loaded; CraftQ3 runs QVMs only |
 | `share/` (GTK and libxml docs), `games.log`, mod `q3config.cfg` | Ignored; writes go to the home store, never into the install |
 | Largest entries: 49 MB `intro.RoQ`, 110 MB `jbpow_maps_v2.pk3` | Within current limits (64 MiB per file, 2 GiB per PK3) |

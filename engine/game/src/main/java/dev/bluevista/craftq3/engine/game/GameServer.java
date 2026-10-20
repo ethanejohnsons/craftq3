@@ -14,6 +14,7 @@ import dev.bluevista.craftq3.engine.console.CvarFlags;
 import dev.bluevista.craftq3.engine.console.CvarTable;
 import dev.bluevista.craftq3.engine.formats.AssetLookup;
 import dev.bluevista.craftq3.engine.fs.PureManifest;
+import dev.bluevista.craftq3.engine.fs.VirtualPath;
 import dev.bluevista.craftq3.engine.game.bot.BotHost;
 import dev.bluevista.craftq3.engine.game.bot.BotSupport;
 import dev.bluevista.craftq3.engine.game.bot.BotlibAdapter;
@@ -660,7 +661,14 @@ public final class GameServer implements BotHost, AutoCloseable {
     timeResidual = 0;
     restartTime = 0;
     checksumFeed = random.nextInt();
-    if (pure != null) pure.restart(checksumFeed);
+    if (pure != null) {
+      pure.restart(checksumFeed);
+      // The map was read before the references were cleared; the original clears them first and
+      // then loads the map, so its pack is referenced (and offered for download).
+      pure.view().markReferenced(VirtualPath.of("maps/" + loaded.name() + ".bsp"));
+      if (loaded.aas().isPresent())
+        pure.view().markReferenced(VirtualPath.of("maps/" + loaded.name() + ".aas"));
+    }
 
     map = loaded;
     visibility = new MapVisibility(loaded.bsp());

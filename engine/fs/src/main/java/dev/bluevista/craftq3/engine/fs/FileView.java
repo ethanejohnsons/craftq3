@@ -152,6 +152,18 @@ public final class FileView implements FileSource {
     return directory.open(path, directory.names().get((int) candidate), Pk3Archive.limit(path));
   }
 
+  /**
+   * Records a reference to the pack that supplies {@code path}, as reading it would, without
+   * reading it. Used when a file was read before the references were cleared for a new level. Does
+   * nothing for loose files or files this view cannot see.
+   */
+  public void markReferenced(VirtualPath path) {
+    long candidate = resolve(path);
+    if (candidate < 0) return;
+    if (searchPath.mounts().get((int) (candidate >>> 32)) instanceof PackMount pack)
+      reference(pack, path);
+  }
+
   private void reference(PackMount pack, VirtualPath path) {
     if (references != null)
       references.referenced(pack, PureManifest.referenceFlags(path.spelling()));

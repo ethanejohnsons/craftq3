@@ -37,6 +37,11 @@ public final class Q3MapViewScreen extends Screen implements Q3FullscreenView {
     default List<CgameFrame.Quad> overlay(int width, int height) {
       return List.of();
     }
+
+    /** A whole cgame frame to render instead of {@link #view}; null for the single view. */
+    default CgameFrame frame(int width, int height, int timeMillis) {
+      return null;
+    }
   }
 
   private static final int HISTORY = 1024;
@@ -44,7 +49,8 @@ public final class Q3MapViewScreen extends Screen implements Q3FullscreenView {
   private final Q3RenderBackend backend;
   private final Clock clock;
   private final Screen parent;
-  private final boolean closeBackend;
+  private final AutoCloseable owned;
+  private final long startMillis;
   private volatile Scene scene;
   private final long[] cpuNanos = new long[HISTORY];
   private long frames;
@@ -52,13 +58,14 @@ public final class Q3MapViewScreen extends Screen implements Q3FullscreenView {
   private volatile boolean showStats = true;
 
   public Q3MapViewScreen(
-      Q3RenderBackend backend, Scene scene, Clock clock, Screen parent, boolean closeBackend) {
+      Q3RenderBackend backend, Scene scene, Clock clock, Screen parent, AutoCloseable owned) {
     super(Component.literal("CraftQ3 map view"));
     this.backend = backend;
     this.scene = scene;
     this.clock = clock;
     this.parent = parent;
-    this.closeBackend = closeBackend;
+    this.owned = owned;
+    this.startMillis = clock.millis();
   }
 
   public void scene(Scene scene) {
@@ -89,18 +96,21 @@ public final class Q3MapViewScreen extends Screen implements Q3FullscreenView {
   @Override
   public void renderFullscreen(RenderTarget target) {
     Scene current = scene;
-    int time = (int) clock.millis();
-    long start = System.nanoTime();
+    int time = (int) (clock.millis() - startMillis);
+    // The cgame's work (building the frame) is not the renderer's: measure begin..end only.
+    CgameFrame frame = current.frame(target.width, target.height, time);
+    ViewDefinition view = frame == null ? current.view(target.width, target.height, time) : null;
+    List<CgameFrame.Quad> overlay =
+        frame == null ? current.overlay(target.width, target.height) : List.of();
     backend.beginFrame(target, target.width, target.height, time);
-    backend.render(
-        current.view(target.width, target.height, time),
-        current.entities(),
-        current.polygons(),
-        current.lights());
-    List<CgameFrame.Quad> overlay = current.overlay(target.width, target.height);
-    if (!overlay.isEmpty()) backend.drawOverlay(overlay);
+    if (frame != null) {
+      backend.render(frame);
+    } else {
+      backend.render(view, current.entities(), current.polygons(), current.lights());
+      if (!overlay.isEmpty()) backend.drawOverlay(overlay);
+    }
     backend.endFrame();
-    cpuNanos[(int) (frames % HISTORY)] = System.nanoTime() - start;
+    cpuNanos[(int) (frames % HISTORY)] = backend.stats().cpuNanos;
     frames++;
     if (frames % 60 == 0) lastStats = backend.stats().toString();
   }
@@ -122,7 +132,13 @@ public final class Q3MapViewScreen extends Screen implements Q3FullscreenView {
 
   @Override
   public void onClose() {
-    if (closeBackend) backend.close();
+    if (owned != null) {
+      try {
+        owned.close();
+      } catch (Exception e) {
+        LOGGER.warn("CraftQ3: closing the map view failed", e);
+      }
+    }
     minecraft.gui.setScreen(parent);
   }
 

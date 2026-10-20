@@ -6,6 +6,7 @@ import dev.bluevista.craftq3.engine.common.time.ManualClock;
 import dev.bluevista.craftq3.engine.formats.FileViewAssets;
 import dev.bluevista.craftq3.engine.formats.bsp.BspMap;
 import dev.bluevista.craftq3.engine.formats.bsp.BspReader;
+import dev.bluevista.craftq3.engine.formats.image.Q3Image;
 import dev.bluevista.craftq3.engine.formats.md3.Md3Model;
 import dev.bluevista.craftq3.engine.formats.md3.Md3Reader;
 import dev.bluevista.craftq3.engine.formats.shader.ShaderLibrary;
@@ -100,7 +101,7 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
         Q3MapViewScreen.Scene view =
             spawnScene(scene, map.equals("q3dm17") ? submissions(scene, search) : null);
         Q3MapViewScreen screen =
-            context.computeOnClient(c -> new Q3MapViewScreen(backend, view, clock, null, false));
+            context.computeOnClient(c -> new Q3MapViewScreen(backend, view, clock, null, null));
         screen.showStats(false);
         context.setScreen(() -> screen);
         context.waitForScreen(Q3MapViewScreen.class);
@@ -225,7 +226,7 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
                 again.scene(),
                 maps.getFirst().equals("q3dm17") ? submissions(again.scene(), search) : null);
         Q3MapViewScreen screen =
-            context.computeOnClient(c -> new Q3MapViewScreen(backend, view, clock, null, false));
+            context.computeOnClient(c -> new Q3MapViewScreen(backend, view, clock, null, null));
         screen.showStats(false);
         context.setScreen(() -> screen);
         context.waitForScreen(Q3MapViewScreen.class);
@@ -294,7 +295,48 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
       RenderScene scene, Q3MapViewScreen.Scene submissions) {
     ViewDefinition spawn = Q3RenderBackend.spawnView(scene, WIDTH, HEIGHT, 0);
     if (submissions != null) return submissions;
-    return (w, h, t) -> sized(spawn, w, h, t);
+    List<CgameFrame.RefEntity> inline = inlineModels(scene);
+    return new Q3MapViewScreen.Scene() {
+      @Override
+      public ViewDefinition view(int width, int height, int timeMillis) {
+        return sized(spawn, width, height, timeMillis);
+      }
+
+      @Override
+      public List<CgameFrame.RefEntity> entities() {
+        return inline;
+      }
+    };
+  }
+
+  /** Every inline BSP model (doors, platforms) at rest, as the cgame submits them. */
+  private static List<CgameFrame.RefEntity> inlineModels(RenderScene scene) {
+    List<CgameFrame.RefEntity> out = new ArrayList<>();
+    for (int model = 1; model < scene.bsp().models().size(); model++)
+      out.add(
+          new CgameFrame.RefEntity(
+              CgameFrame.EntityType.MODEL,
+              0,
+              null,
+              model,
+              new Md3Model.Tag(
+                  "", Vec3f.ZERO, new Vec3f(1, 0, 0), new Vec3f(0, 1, 0), new Vec3f(0, 0, 1)),
+              Vec3f.ZERO,
+              0,
+              0,
+              0,
+              Vec3f.ZERO,
+              0,
+              0,
+              Optional.empty(),
+              Optional.empty(),
+              0xffffffff,
+              0,
+              0,
+              0,
+              0,
+              0));
+    return out;
   }
 
   private static ViewDefinition sized(ViewDefinition view, int width, int height, int time) {
@@ -398,7 +440,8 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
       throw new UncheckedIOException(e);
     }
     Vec3f armorAt = o.multiplyAdd(96, f).multiplyAdd(-16, u);
-    List<CgameFrame.RefEntity> entities =
+    List<CgameFrame.RefEntity> entities = new ArrayList<>(inlineModels(scene));
+    entities.addAll(
         List.of(
             entity(CgameFrame.EntityType.MODEL, armor, armorAt, armorAt, Optional.empty(), 0),
             entity(
@@ -414,7 +457,17 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
                 o.multiplyAdd(48, f).multiplyAdd(-24, r).multiplyAdd(-12, u),
                 o.multiplyAdd(600, f).multiplyAdd(-24, r),
                 Optional.of("railCore"),
-                3));
+                3)));
+    // A second, world-less view in a corner (a HUD model), as the cgame draws the status bar head.
+    CgameFrame.RefEntity hudArmor =
+        entity(
+            CgameFrame.EntityType.MODEL,
+            armor,
+            new Vec3f(70, 0, -8),
+            new Vec3f(70, 0, -8),
+            Optional.empty(),
+            0);
+    Q3Image movie = checker();
     Vec3f p = o.multiplyAdd(140, f).multiplyAdd(-60, r);
     float[] positions = new float[12];
     Vec3f[] corners = {
@@ -460,6 +513,47 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
       }
 
       @Override
+      public CgameFrame frame(int width, int height, int timeMillis) {
+        ViewDefinition main = sized(spawn, width, height, timeMillis);
+        List<CgameFrame.Command> commands = new ArrayList<>();
+        commands.add(
+            new CgameFrame.View(
+                refdef(main, 0, 0, width, height, 0), entities, List.of(poly), lights));
+        commands.add(
+            new CgameFrame.View(
+                refdef(
+                    new ViewDefinition(
+                        ViewDefinition.Kind.MAIN,
+                        Vec3f.ZERO,
+                        new ViewBasis(new Vec3f(1, 0, 0), new Vec3f(0, -1, 0), new Vec3f(0, 0, 1)),
+                        40,
+                        40,
+                        0,
+                        0,
+                        1,
+                        1,
+                        timeMillis,
+                        0,
+                        AreaMask.NONE,
+                        Optional.empty(),
+                        Vec3f.ZERO,
+                        -1,
+                        0),
+                    width - 340,
+                    40,
+                    300,
+                    300,
+                    ViewDefinition.RDF_NOWORLDMODEL),
+                List.of(hudArmor),
+                List.of(),
+                List.of()));
+        commands.addAll(overlay(width, height));
+        commands.add(new CgameFrame.Image(7, width - 340, height - 240, 300, 200, movie));
+        return new CgameFrame(
+            commands, dev.bluevista.craftq3.engine.render.frame.SceneAssets.EMPTY);
+      }
+
+      @Override
       public List<CgameFrame.Quad> overlay(int width, int height) {
         List<CgameFrame.Quad> quads = new ArrayList<>();
         quads.add(
@@ -494,6 +588,44 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
         return quads;
       }
     };
+  }
+
+  private static CgameFrame.Refdef refdef(
+      ViewDefinition view, int x, int y, int width, int height, int rdflags) {
+    float fovY =
+        (float)
+            Math.toDegrees(
+                2 * Math.atan(Math.tan(Math.toRadians(view.fovX()) / 2) * height / width));
+    return new CgameFrame.Refdef(
+        x,
+        y,
+        width,
+        height,
+        view.fovX(),
+        fovY,
+        view.origin(),
+        view.basis().forward(),
+        view.basis().left(),
+        view.basis().up(),
+        view.timeMillis(),
+        rdflags,
+        AreaMask.NONE,
+        List.of());
+  }
+
+  /** A 64×64 test card standing in for a RoQ frame. */
+  private static Q3Image checker() {
+    byte[] rgba = new byte[64 * 64 * 4];
+    for (int y = 0; y < 64; y++)
+      for (int x = 0; x < 64; x++) {
+        int i = (y * 64 + x) * 4;
+        boolean on = ((x / 8) + (y / 8)) % 2 == 0;
+        rgba[i] = (byte) (on ? 255 : 30);
+        rgba[i + 1] = (byte) (on ? 200 : 30);
+        rgba[i + 2] = (byte) (on ? 40 : 120);
+        rgba[i + 3] = (byte) 255;
+      }
+    return new Q3Image(64, 64, rgba);
   }
 
   private static CgameFrame.RefEntity entity(

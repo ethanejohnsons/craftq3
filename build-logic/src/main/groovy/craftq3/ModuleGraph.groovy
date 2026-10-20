@@ -31,6 +31,7 @@ final class ModuleGraph {
         ':engine:testkit'      : [':engine:formats', ':engine:vm'],
         ':mc:hybrid'           : [':engine:game'],
         ':mc:fabric'           : [':engine:session', ':mc:hybrid'],
+        ':mc:devharness'       : [':mc:fabric'],
         ':tools:trace-format'  : [],
         ':tools:legacy-oracle' : [':tools:trace-format'],
         ':tools:arch-check'    : [],

@@ -1,0 +1,67 @@
+// Never shipped. Fabric server GameTests (`main`) and client game tests (`client`) that exercise
+// the real mod in a real game: `runGameTest` boots the dedicated GameTest server, and
+// `runClientGameTest` / `runClientGameTestVulkan` drive a real client on OpenGL / Vulkan. Each run
+// uses its own directory under build/run/, so the user's Minecraft settings are never touched.
+plugins {
+    id 'craftq3.java-conventions'
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base { archivesName = 'craftq3-devharness' }
+
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        'craftq3-devharness' {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+    runs {
+        // Dedicated GameTest server. Fabric's gametest runner skips the EULA prompt itself when
+        // -Dfabric-api.gametest is set; no eula.txt is written by this build.
+        gameTest {
+            server()
+            name 'CraftQ3 Server GameTests'
+            runDir 'build/run/gameTest'
+            property 'fabric-api.gametest'
+            property 'fabric-api.gametest.report-file', file('build/test-results/gameTest/TEST-gametest.xml').absolutePath
+            ideConfigGenerated false
+        }
+        clientGameTest {
+            client()
+            name 'CraftQ3 Client GameTests (OpenGL)'
+            runDir 'build/run/clientGameTest'
+            property 'fabric.client.gametest'
+            property 'craftq3.devharness.expectedBackend', 'OpenGL'
+            programArgs '--username', 'Player0', '--graphicsBackend', 'opengl'
+            ideConfigGenerated false
+        }
+        clientGameTestVulkan {
+            client()
+            name 'CraftQ3 Client GameTests (Vulkan)'
+            runDir 'build/run/clientGameTestVulkan'
+            property 'fabric.client.gametest'
+            property 'craftq3.devharness.expectedBackend', 'Vulkan'
+            programArgs '--username', 'Player0', '--graphicsBackend', 'vulkan'
+            ideConfigGenerated false
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    // The mod's jar holds both its source sets (Loom merges `client` into `jar`), so compile and
+    // run against the jar rather than the main-only classes directory.
+    implementation(project(':mc:fabric')) {
+        attributes { attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR)) }
+    }
+    implementation project(':engine:common') // ManualClock for deterministic shader time
+}
+
+processResources {
+    inputs.properties version: project.version
+    filesMatching("fabric.mod.json") { expand version: project.version }
+}

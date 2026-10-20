@@ -1,4 +1,21 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:common')
+    testImplementation project(':engine:testkit')
+}
+
+// Micro benchmarks are tagged and never part of `test`; run them with `:engine:vm:benchmark`.
+tasks.named('test', Test) {
+    useJUnitPlatform { excludeTags 'benchmark' }
+}
+tasks.register('benchmark', Test) {
+    description = 'Runs the QVM interpreter micro benchmarks and prints instructions per second.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'benchmark' }
+    testLogging { showStandardStreams = true }
+    enableAssertions = false
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
 }

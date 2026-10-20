@@ -16,7 +16,7 @@ import dev.bluevista.craftq3.engine.formats.AssetLookup;
 import dev.bluevista.craftq3.engine.fs.PureManifest;
 import dev.bluevista.craftq3.engine.game.bot.BotHost;
 import dev.bluevista.craftq3.engine.game.bot.BotSupport;
-import dev.bluevista.craftq3.engine.game.bot.NoBotlib;
+import dev.bluevista.craftq3.engine.game.bot.BotlibAdapter;
 import dev.bluevista.craftq3.engine.game.map.BspMapSource;
 import dev.bluevista.craftq3.engine.game.map.EntityTokens;
 import dev.bluevista.craftq3.engine.game.map.GameMap;
@@ -209,7 +209,7 @@ public final class GameServer implements BotHost, AutoCloseable {
         builder.programLoader != null
             ? builder.programLoader
             : () -> QvmGameProgram.load(files, cvars.string(AbiProfile.OVERRIDE_CVAR), clock);
-    this.bots = builder.bots != null ? builder.bots : new NoBotlib();
+    this.bots = builder.bots != null ? builder.bots : new BotlibAdapter();
     this.pure = builder.pure;
     this.random = new Random(builder.seed);
     for (int i = 0; i < clients.length; i++) clients[i] = new ServerClient(i);
@@ -302,7 +302,7 @@ public final class GameServer implements BotHost, AutoCloseable {
       return this;
     }
 
-    /** Botlib (default: none, so the game disables its bots). */
+    /** Botlib (default: {@link BotlibAdapter} over {@code engine:botlib}). */
     public Builder bots(BotSupport value) {
       bots = Objects.requireNonNull(value);
       return this;

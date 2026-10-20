@@ -1101,7 +1101,6 @@ public final class EngineSession implements AutoCloseable {
       LOG.warn("Cleanup after an error failed: " + cleanup);
     }
     console.cvars().set("com_errorMessage", message);
-    console.buffer().clear();
     if (!content.uiRunning() && uiRestarts < UI_RESTARTS) {
       uiRestarts++;
       content.ui.shutdown();

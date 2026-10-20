@@ -3,15 +3,15 @@ plugins {
     id 'craftq3.module-graph'
 }
 
-def rewriteProjects = { subprojects.findAll { craftq3.ModuleGraph.isRewrite(it) && it.childProjects.isEmpty() } }
-def portableProjects = { rewriteProjects().findAll { !(it.path in [':mc:fabric', ':mc:devharness']) } }
+def modules = { subprojects.findAll { craftq3.ModuleGraph.isModule(it) && it.childProjects.isEmpty() } }
+def portableProjects = { modules().findAll { !(it.path in [':mc:fabric', ':mc:devharness']) } }
 
 tasks.named('build') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:build" } }
 tasks.named('check') { dependsOn subprojects.findAll { it.childProjects.isEmpty() }.collect { "${it.path}:check" } }
 
-// Everything that must pass on Windows, Linux and macOS: the rewrite without Minecraft.
+// Everything that must pass on Windows, Linux and macOS: the engine without Minecraft.
 tasks.register('portableCheck') {
     group = 'verification'
-    description = 'Checks every rewrite project except the Minecraft mod; run by the CI OS matrix.'
+    description = 'Checks every project except the Minecraft mod and dev harness; run by the CI OS matrix.'
     dependsOn portableProjects().collect { "${it.path}:check" }
 }

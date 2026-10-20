@@ -1,4 +1,4 @@
-// Shared Java settings for every CraftQ3 project, legacy and rewrite alike.
+// Shared Java settings for every CraftQ3 project.
 plugins {
     id 'java-library'
     id 'com.diffplug.spotless'

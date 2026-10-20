@@ -1,6 +1,8 @@
 # Porting guide for rewrite modules
 
-How a legacy module becomes a rewrite module. Read [REWRITE.md](REWRITE.md) first.
+How the previous implementation was ported into the current modules during the 2026 rewrite;
+the rules still apply to new code. The previous implementation lives in the history of `main`.
+Read [REWRITE.md](REWRITE.md) first.
 
 ## Rules
 

@@ -7,8 +7,6 @@ import org.gradle.api.artifacts.ProjectDependency
 /**
  * The allowed dependency edges between rewrite projects. A project may depend on anything in the
  * transitive closure of its listed edges; anything else fails the build at configuration time.
- * Legacy projects (":craftq3-*") are the behavioural oracle and may only be reached from
- * ":tools:legacy-oracle".
  */
 final class ModuleGraph {
     static final Map<String, List<String>> EDGES = [
@@ -32,15 +30,13 @@ final class ModuleGraph {
         ':mc:hybrid'           : [':engine:game'],
         ':mc:fabric'           : [':engine:session', ':mc:hybrid'],
         ':mc:devharness'       : [':mc:fabric'],
-        ':tools:trace-format'  : [],
-        ':tools:legacy-oracle' : [':tools:trace-format'],
         ':tools:arch-check'    : [],
     ]
 
     /** Test-only edges every rewrite project may use. */
-    static final List<String> TEST_EDGES = [':engine:testkit', ':tools:trace-format']
+    static final List<String> TEST_EDGES = [':engine:testkit']
 
-    static boolean isRewrite(Project p) {
+    static boolean isModule(Project p) {
         p.path.startsWith(':engine:') || p.path.startsWith(':mc:') || p.path.startsWith(':tools:')
     }
 
@@ -56,7 +52,7 @@ final class ModuleGraph {
 
     static void verify(Project root) {
         List<String> violations = []
-        root.subprojects.findAll { isRewrite(it) && it.childProjects.isEmpty() }.each { Project p ->
+        root.subprojects.findAll { isModule(it) && it.childProjects.isEmpty() }.each { Project p ->
             if (!EDGES.containsKey(p.path)) {
                 violations << "${p.path} is not declared in ModuleGraph.EDGES"
                 return
@@ -69,7 +65,6 @@ final class ModuleGraph {
                     if (target == p.path) return
                     if (allowed.contains(target)) return
                     if (testConf && (TEST_EDGES.contains(target) || target == ':engine:testkit')) return
-                    if (p.path == ':tools:legacy-oracle' && target.startsWith(':craftq3-')) return
                     if (p.path == ':tools:arch-check' && testConf) return
                     violations << "${p.path} (${conf.name}) -> ${target}"
                 }

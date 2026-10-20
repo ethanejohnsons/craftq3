@@ -10,7 +10,7 @@ import java.nio.ByteOrder;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 
-final class QvmSecurityTest {
+class QvmSecurityTest extends ModeSuite {
   @Test
   void boundedMalformedCorpusCanOnlyDecodeRunOrProduceAContainedFault() {
     var random = new Random(0x514d564d);
@@ -41,7 +41,7 @@ final class QvmSecurityTest {
         continue;
       }
       if (image.memorySize() > 16384) continue;
-      var vm = new QvmInstance(image, (v, s, a) -> 0, limits, () -> 0);
+      var vm = QvmAssembler.instance(image, (v, s, a) -> 0, limits, () -> 0);
       ran++;
       try {
         vm.vmMain(i);
@@ -89,7 +89,7 @@ final class QvmSecurityTest {
     }
     var clock = new ManualClock(1000);
     var expired =
-        new QvmInstance(
+        QvmAssembler.instance(
             module.image(),
             (m, s, a) -> {
               clock.advance(5);

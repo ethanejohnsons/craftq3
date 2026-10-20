@@ -18,9 +18,10 @@ import dev.bluevista.craftq3.engine.common.time.Clock;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
- * One running VM: its data segment and interpreter state over a shared {@link QvmImage}. Used by a
+ * One running VM: its data segment and execution state over a shared {@link QvmImage}. Used by a
  * single owner thread ({@link #owner()}). Syscall handlers may re-enter {@link #vmMain}
  * synchronously; a fault leaves the instance faulted until {@link #reset()}.
  *
@@ -28,6 +29,10 @@ import java.util.Objects;
  * (frame sizes, saved return addresses, one returned operand) and confines jumps to the current
  * procedure. Instruction budgets are charged per straight-line run at each control transfer, not
  * per instruction, so a budget may be exceeded by at most one run before it faults.
+ *
+ * <p>The image runs in the interpreter or as JVM bytecode compiled from it ({@link ExecutionMode});
+ * both have the same observable behaviour, down to fault reasons, instruction counts and the points
+ * at which budgets are checked.
  */
 public final class QvmInstance {
   /** Execution limits, applied per outermost {@link #vmMain} call (nested calls share them). */
@@ -57,6 +62,22 @@ public final class QvmInstance {
     }
   }
 
+  /**
+   * How an instance executes its image. Every mode has the same observable semantics (results,
+   * faults, budgets, statistics); see {@code docs/formats/QVM.md}.
+   */
+  public enum ExecutionMode {
+    /** The reference interpreter only. */
+    INTERPRET,
+    /**
+     * Compiled to JVM bytecode; construction fails if the image cannot be compiled at all.
+     * Procedures the compiler does not handle still run in the interpreter.
+     */
+    COMPILE,
+    /** Compiled when possible, otherwise the whole image is interpreted (logged once per image). */
+    AUTO
+  }
+
   /** Counters since construction or the last {@link #reset()}. */
   public record Stats(
       long instructions,
@@ -73,7 +94,9 @@ public final class QvmInstance {
   /** Return sentinel, syscall slot, command and {@link #MAX_VMMAIN_ARGS} argument words. */
   private static final int VMMAIN_FRAME_BYTES = 12 + 4 * MAX_VMMAIN_ARGS;
 
-  private static final int VMMAIN_RETURN = -1;
+  /** The return address of an invocation's root procedure. */
+  static final int VMMAIN_RETURN = -1;
+
   private static final int CANCEL_CHECK_INTERVAL = 1 << 16;
   private static final int FRAME_WORDS = 3;
   private static final VarHandle INT = QvmMemory.INT;
@@ -86,13 +109,16 @@ public final class QvmInstance {
   private final Clock clock;
   private final QvmMemory memory;
   private final ThreadOwner owner;
-  private final int[] operandStack;
+  // Read by compiled code (package-private, never reassigned).
+  final int[] operandStack;
   private final int[] frames;
   private final int[][] argumentBuffers;
+  private final int stackBottom;
+  private final QvmCode code;
   private VmTracer tracer;
 
-  // Interpreter state shared with nested invocations; the dispatch loop works on locals and
-  // publishes them here only around syscalls.
+  // Execution state shared with nested invocations; the dispatch loop and compiled code work on
+  // locals and publish them here only around syscalls.
   private int programStack;
   private int operandTop;
   private int callDepth;
@@ -104,6 +130,7 @@ public final class QvmInstance {
   private long invocations;
   private int maxCallDepth;
   private int lastPc = -1;
+  private long deoptimizations;
 
   private long budgetEnd;
   private long syscallEnd;
@@ -114,7 +141,17 @@ public final class QvmInstance {
     this(image, syscalls, Limits.defaults(), Clock.system());
   }
 
+  /** An instance in {@link ExecutionMode#AUTO}. */
   public QvmInstance(QvmImage image, Syscalls syscalls, Limits limits, Clock clock) {
+    this(image, syscalls, limits, clock, ExecutionMode.AUTO);
+  }
+
+  /**
+   * @throws IllegalStateException in {@link ExecutionMode#COMPILE} when the image cannot be
+   *     compiled
+   */
+  public QvmInstance(
+      QvmImage image, Syscalls syscalls, Limits limits, Clock clock, ExecutionMode mode) {
     this.image = Objects.requireNonNull(image);
     this.handler = Objects.requireNonNull(syscalls);
     this.limits = Objects.requireNonNull(limits);
@@ -124,6 +161,13 @@ public final class QvmInstance {
     operandStack = new int[limits.operandStackSize()];
     frames = new int[FRAME_WORDS * limits.maxCallDepth()];
     argumentBuffers = new int[limits.maxInvocationDepth()][];
+    stackBottom = image.stackBottom();
+    code =
+        switch (Objects.requireNonNull(mode)) {
+          case INTERPRET -> null;
+          case COMPILE -> image.compiled(true);
+          case AUTO -> image.compiled(false);
+        };
     reset();
   }
 
@@ -153,6 +197,28 @@ public final class QvmInstance {
     return faulted;
   }
 
+  /**
+   * {@link ExecutionMode#COMPILE} when this instance runs compiled code (procedures the compiler
+   * did not handle are interpreted), else {@link ExecutionMode#INTERPRET}. While a tracer is
+   * installed every invocation is interpreted.
+   */
+  public ExecutionMode executionMode() {
+    return code != null ? ExecutionMode.COMPILE : ExecutionMode.INTERPRET;
+  }
+
+  /** What the compiler made of the image, when this instance runs compiled code. */
+  public Optional<QvmCompileReport> compileReport() {
+    return code == null ? Optional.empty() : Optional.of(code.report());
+  }
+
+  /**
+   * Computed jumps in compiled code to a target the compiler had not anticipated; each finished its
+   * procedure activation in the interpreter. Diagnostics only (version 1 modules).
+   */
+  public long deoptimizations() {
+    return deoptimizations;
+  }
+
   /** Installs a tracer for subsequent invocations, or removes it with {@code null}. */
   public void setTracer(VmTracer tracer) {
     this.tracer = tracer;
@@ -175,6 +241,7 @@ public final class QvmInstance {
     instructions = syscalls = invocations = 0;
     maxCallDepth = 0;
     lastPc = -1;
+    deoptimizations = 0;
   }
 
   public int vmMain(int command) {
@@ -226,6 +293,17 @@ public final class QvmInstance {
     } catch (QvmException failure) {
       faulted = true;
       throw failure;
+    } catch (StackOverflowError overflow) {
+      // Compiled code uses one host frame per guest call: deep recursion can exhaust the thread.
+      faulted = true;
+      throw new QvmException(
+          STACK,
+          image.name(),
+          lastPc,
+          opcodeAt(lastPc),
+          NO_SYSCALL,
+          "Host thread stack exhausted",
+          overflow);
     } catch (RuntimeException failure) {
       faulted = true;
       throw new QvmException(
@@ -245,11 +323,35 @@ public final class QvmInstance {
   }
 
   /**
-   * The dispatch loop for one invocation, starting at the procedure at instruction 0 with its
-   * incoming frame at {@code frame}. The current procedure lives in locals ({@code entry}, {@code
-   * ret}, {@code base}, {@code frameSize}); callers are saved as triples in {@link #frames}.
+   * Runs one invocation: the procedure at instruction 0 with its incoming frame at {@code frame},
+   * as compiled code when the image was compiled and no tracer is installed.
    */
   private int execute(int frame) {
+    final int depth = callDepth;
+    final int sp = operandTop;
+    if (depth + 1 > limits.maxCallDepth()) throw fault(STACK, 0, "Call depth limit exceeded");
+    int frameSize = image.operands[0];
+    int ps = frame - frameSize;
+    if (ps < stackBottom) throw fault(STACK, 0, "Program stack exhausted");
+    if (depth + 1 > maxCallDepth) maxCallDepth = depth + 1;
+    VmTracer tracer = this.tracer;
+    if (tracer == null && code != null) return code.invoke(0, this, ps, VMMAIN_RETURN, depth, sp);
+    if (tracer != null) tracer.instruction(0, Opcode.ENTER, frameSize, sp, ps);
+    return interpret(0, 1, ps, VMMAIN_RETURN, depth, sp, 0);
+  }
+
+  /**
+   * The dispatch loop: runs procedure {@code entry} from instruction {@code start} until that
+   * procedure returns. The current procedure lives in locals ({@code entry}, {@code ret}, {@code
+   * base}, {@code frameSize}); callers are saved as triples in {@link #frames}. Callees the image's
+   * compiled code covers run compiled (never while tracing).
+   *
+   * @param ret the procedure's return address ({@link #VMMAIN_RETURN} for an invocation's root)
+   * @param depth the procedure's call depth
+   * @param sp the operand stack index of the procedure's first operand
+   * @param runStart the first instruction of the current straight-line run (not yet charged)
+   */
+  private int interpret(int entry, int start, int ps, int ret, int depth, int sp, int runStart) {
     final int[] ops = image.opcodes;
     final int[] imm = image.operands;
     final int[] procedures = image.procedures;
@@ -259,26 +361,17 @@ public final class QvmInstance {
     final byte[] mem = memory.data;
     final int mask = mem.length - 1;
     final int size = mem.length;
-    final int stackBottom = image.stackBottom();
+    final int stackBottom = this.stackBottom;
     final int[] stack = operandStack;
     final int[] saved = frames;
     final int maxDepth = limits.maxCallDepth();
     final VmTracer tracer = this.tracer;
-    final int rootDepth = callDepth;
+    final QvmCode code = tracer == null ? this.code : null;
+    final int rootDepth = depth;
 
-    int depth = rootDepth;
-    int sp = operandTop;
-    if (depth + 1 > maxDepth) throw fault(STACK, 0, "Call depth limit exceeded");
-    int entry = 0;
-    int ret = VMMAIN_RETURN;
     int base = sp;
-    int frameSize = imm[0];
-    int ps = frame - frameSize;
-    if (ps < stackBottom) throw fault(STACK, 0, "Program stack exhausted");
-    if (depth + 1 > maxCallDepth) maxCallDepth = depth + 1;
-    if (tracer != null) tracer.instruction(0, Opcode.ENTER, frameSize, sp, ps);
-    int pc = 1;
-    int runStart = 0;
+    int frameSize = imm[entry];
+    int pc = start;
     try {
       for (; ; ) {
         final int at = pc;
@@ -298,7 +391,7 @@ public final class QvmInstance {
               throw fault(CONTROL_FLOW, at, "Guest modified a saved return address");
             charge(pc - runStart, at);
             if (depth == rootDepth) {
-              lastPc = at;
+              if (ret == VMMAIN_RETURN) lastPc = at;
               return stack[sp - 1];
             }
             ps = caller;
@@ -329,6 +422,14 @@ public final class QvmInstance {
               if (calleeStack < stackBottom) throw fault(STACK, at, "Program stack exhausted");
               if (depth + 2 > maxDepth) throw fault(STACK, at, "Call depth limit exceeded");
               INT.set(mem, ps, pc);
+              if (code != null && code.compiled(target)) {
+                if (depth + 2 > maxCallDepth) maxCallDepth = depth + 2;
+                charge(pc - runStart + 1, at);
+                int result = code.invoke(target, this, calleeStack, pc, depth + 1, sp);
+                stack[sp++] = result;
+                runStart = pc;
+                continue;
+              }
               int slot = depth * FRAME_WORDS;
               saved[slot] = entry;
               saved[slot + 1] = ret;
@@ -620,7 +721,7 @@ public final class QvmInstance {
   }
 
   /** x86 {@code cvttss2si}: NaN and out-of-range values become {@code 0x80000000}. */
-  private static int truncate(float value) {
+  static int truncate(float value) {
     return !Float.isFinite(value) || value >= 0x1.0p31f || value < -0x1.0p31f
         ? Integer.MIN_VALUE
         : (int) value;
@@ -695,7 +796,7 @@ public final class QvmInstance {
           null);
   }
 
-  private QvmException memoryFault(int pc, int address, int length) {
+  QvmException memoryFault(int pc, int address, int length) {
     return fault(
         MEMORY_BOUNDS,
         pc,
@@ -719,5 +820,138 @@ public final class QvmInstance {
 
   private Opcode opcodeAt(int pc) {
     return pc >= 0 && pc < image.instructionCount() ? Opcode.of(image.opcodes[pc]) : null;
+  }
+
+  // ---- entry points for compiled code (QvmCompiler); each mirrors an interpreter step ----------
+
+  /** The data segment's bytes, loaded once per compiled procedure activation. */
+  byte[] data() {
+    return memory.data;
+  }
+
+  /**
+   * A straight-line run of {@code executed} instructions ending at {@code pc} transfers control.
+   */
+  void jitCharge(int executed, int pc) {
+    if ((instructions += executed) >= checkpoint) checkpointReached(pc);
+  }
+
+  /**
+   * A {@code CALL} at {@code pc} to a procedure with a {@code calleeSize}-byte frame: checks the
+   * program stack and call depth, saves the return address and charges the run (including the
+   * callee's {@code ENTER}). Returns the callee's program stack pointer.
+   */
+  int jitEnter(int ps, int depth, int calleeSize, int executed, int pc) {
+    int calleeStack = ps - calleeSize;
+    if (calleeStack < stackBottom) throw fault(STACK, pc, "Program stack exhausted");
+    if (depth + 2 > limits.maxCallDepth()) throw fault(STACK, pc, "Call depth limit exceeded");
+    INT.set(memory.data, ps, pc + 1);
+    if (depth + 2 > maxCallDepth) maxCallDepth = depth + 2;
+    charge(executed, pc);
+    return calleeStack;
+  }
+
+  /** A {@code CALL} at {@code pc} of syscall {@code number}. */
+  int jitSyscall(int number, int ps, int depth, int top, int executed, int pc) {
+    charge(executed, pc);
+    programStack = ps;
+    operandTop = top;
+    callDepth = depth + 1;
+    return syscall(pc, number, ps);
+  }
+
+  /** A {@code CALL} at {@code pc} whose target was computed. */
+  int jitCall(int target, int ps, int depth, int top, int executed, int pc) {
+    if (target < 0) return jitSyscall(-1 - target, ps, depth, top, executed, pc);
+    if (target >= image.instructionCount() || image.opcodes[target] != Op.ENTER)
+      throw fault(CONTROL_FLOW, pc, "CALL target " + target + " is not a procedure");
+    int calleeStack = jitEnter(ps, depth, image.operands[target], executed + 1, pc);
+    return code.invoke(target, this, calleeStack, pc + 1, depth + 1, top);
+  }
+
+  /**
+   * A {@code LEAVE} at {@code pc} whose frame size and operand count are statically correct: checks
+   * the saved return address at {@code caller}, then charges the run.
+   */
+  void jitLeave(int caller, int ret, int executed, int pc) {
+    if ((int) INT.get(memory.data, caller) != ret)
+      throw fault(CONTROL_FLOW, pc, "Guest modified a saved return address");
+    charge(executed, pc);
+    if (ret == VMMAIN_RETURN) lastPc = pc;
+  }
+
+  /** A whole activation of procedure {@code entry} run by the interpreter. */
+  int jitInterpret(int ps, int ret, int depth, int base, int entry) {
+    return interpret(
+        entry, entry + 1, ps, ret, depth, base, ret == VMMAIN_RETURN ? entry : entry + 1);
+  }
+
+  /**
+   * A computed {@code JUMP} at {@code pc} in procedure {@code entry} to a target the compiled code
+   * does not cover: faults like the interpreter, or (version 1) charges the run and finishes the
+   * activation in the interpreter from {@code target}.
+   */
+  int jitJump(int target, int entry, int ps, int ret, int depth, int base, int executed, int pc) {
+    if (target < 0
+        || target >= image.instructionCount()
+        || image.procedures[target] != entry
+        || target == entry)
+      throw fault(CONTROL_FLOW, pc, "Jump to " + target + " leaves the procedure");
+    if (image.version() == 2)
+      throw fault(CONTROL_FLOW, pc, "Indirect target " + target + " not in v2 jump table");
+    charge(executed, pc);
+    deoptimizations++;
+    return interpret(entry, target, ps, ret, depth, base, target);
+  }
+
+  /** A {@code BLOCK_COPY} at {@code pc}. */
+  void jitBlockCopy(int destination, int source, int length, int executed, int pc) {
+    byte[] mem = memory.data;
+    int mask = mem.length - 1;
+    source &= mask;
+    destination &= mask;
+    charge(executed + (length + 3L) / 4, pc);
+    if (length > mem.length - source) throw memoryFault(pc, source, length);
+    if (length > mem.length - destination) throw memoryFault(pc, destination, length);
+    System.arraycopy(mem, source, mem, destination, length);
+  }
+
+  /** Fault kinds the compiler knows statically, with the interpreter's reasons and messages. */
+  static final int FAULT_UNSUPPORTED = 0;
+
+  static final int FAULT_FELL_INTO_ENTER = 1;
+  static final int FAULT_RAN_PAST_END = 2;
+  static final int FAULT_LEAVE_FRAME = 3;
+  static final int FAULT_LEAVE_OPERANDS = 4;
+  static final int FAULT_UNDERFLOW = 5;
+  static final int FAULT_CALL_TARGET = 6;
+  static final int FAULT_JUMP_TARGET = 7;
+  static final int FAULT_JUMP_TABLE = 8;
+  static final int FAULT_ARG = 9;
+  static final int FAULT_LOCAL = 10;
+  static final int FAULT_DIVISION = 11;
+
+  /** The fault {@code kind} at {@code pc}; {@code value} is the target for the target kinds. */
+  QvmException jitFault(int kind, int pc, int value) {
+    return switch (kind) {
+      case FAULT_UNSUPPORTED ->
+          fault(
+              UNSUPPORTED_OPCODE, pc, "Unsupported executed opcode " + OPCODES[image.opcodes[pc]]);
+      case FAULT_FELL_INTO_ENTER -> fault(CONTROL_FLOW, pc, "Fell into ENTER without CALL");
+      case FAULT_RAN_PAST_END -> fault(CONTROL_FLOW, pc, "Execution ran past the last instruction");
+      case FAULT_LEAVE_FRAME -> fault(STACK, pc, "Mismatched procedure frame on LEAVE");
+      case FAULT_LEAVE_OPERANDS -> fault(STACK, pc, "Procedure must return exactly one operand");
+      case FAULT_UNDERFLOW -> fault(STACK, pc, "Operand stack underflow");
+      case FAULT_CALL_TARGET ->
+          fault(CONTROL_FLOW, pc, "CALL target " + value + " is not a procedure");
+      case FAULT_JUMP_TARGET ->
+          fault(CONTROL_FLOW, pc, "Jump to " + value + " leaves the procedure");
+      case FAULT_JUMP_TABLE ->
+          fault(CONTROL_FLOW, pc, "Indirect target " + value + " not in v2 jump table");
+      case FAULT_ARG -> fault(STACK, pc, "ARG writes outside outgoing argument area");
+      case FAULT_LOCAL -> fault(MEMORY_BOUNDS, pc, "Local address exceeds VM memory");
+      case FAULT_DIVISION -> fault(ARITHMETIC, pc, "Integer division by zero");
+      default -> throw new IllegalArgumentException("Unknown fault kind " + kind);
+    };
   }
 }

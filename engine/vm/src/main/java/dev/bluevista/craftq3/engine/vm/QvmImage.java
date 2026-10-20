@@ -1,6 +1,7 @@
 package dev.bluevista.craftq3.engine.vm;
 
 import dev.bluevista.craftq3.engine.common.io.Ranges;
+import dev.bluevista.craftq3.engine.common.log.Log;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -63,6 +64,13 @@ public final class QvmImage {
   final int[] procedures;
   final byte[] flags;
   final byte[] initialData;
+
+  private static final Log LOG = Log.get(QvmImage.class);
+
+  // Compiled code, made once on first request and shared by every instance.
+  private final Object compileLock = new Object();
+  private volatile QvmCode compiled;
+  private RuntimeException compileFailure;
 
   private QvmImage(
       String name,
@@ -234,6 +242,35 @@ public final class QvmImage {
   public boolean jumpTableTarget(int pc) {
     checkPc(pc);
     return (flags[pc] & FLAG_JUMP_TABLE_TARGET) != 0;
+  }
+
+  /**
+   * This image compiled to JVM bytecode, compiling it on first use (thread-safe; the result is
+   * shared). Returns {@code null} when it cannot be compiled, which is logged once per image.
+   *
+   * @param required throw instead of returning {@code null}
+   * @throws IllegalStateException when {@code required} and the image cannot be compiled
+   */
+  QvmCode compiled(boolean required) {
+    QvmCode code = compiled;
+    if (code != null) return code;
+    synchronized (compileLock) {
+      if (compiled == null && compileFailure == null) {
+        try {
+          compiled = QvmCompiler.compile(this);
+          LOG.debug("Compiled " + compiled.report());
+        } catch (RuntimeException | LinkageError failure) {
+          compileFailure =
+              failure instanceof RuntimeException runtime
+                  ? runtime
+                  : new IllegalStateException(failure);
+          LOG.warn("Cannot compile " + name + "; it runs in the interpreter", failure);
+        }
+      }
+      if (compiled == null && required)
+        throw new IllegalStateException("Cannot compile " + name, compileFailure);
+      return compiled;
+    }
   }
 
   /** A copy of the initialized data and literal bytes. */

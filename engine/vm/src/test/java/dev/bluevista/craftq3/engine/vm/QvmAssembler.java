@@ -1,5 +1,6 @@
 package dev.bluevista.craftq3.engine.vm;
 
+import dev.bluevista.craftq3.engine.common.time.Clock;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -11,6 +12,22 @@ final class QvmAssembler {
       (vm, number, args) -> {
         throw new IllegalStateException("Unexpected syscall " + number);
       };
+
+  /**
+   * The execution mode of instances made by this class on the current thread; suites set it per
+   * test so each runs against the interpreter and the compiler.
+   */
+  static final ThreadLocal<QvmInstance.ExecutionMode> MODE =
+      ThreadLocal.withInitial(() -> QvmInstance.ExecutionMode.INTERPRET);
+
+  static QvmInstance instance(QvmImage image, Syscalls syscalls) {
+    return instance(image, syscalls, QvmInstance.Limits.defaults(), Clock.system());
+  }
+
+  static QvmInstance instance(
+      QvmImage image, Syscalls syscalls, QvmInstance.Limits limits, Clock clock) {
+    return new QvmInstance(image, syscalls, limits, clock, MODE.get());
+  }
 
   private record Instruction(Opcode opcode, int operand) {}
 
@@ -91,15 +108,14 @@ final class QvmAssembler {
   }
 
   QvmInstance vm() {
-    return new QvmInstance(image(), NO_SYSCALLS);
+    return instance(image(), NO_SYSCALLS);
   }
 
   QvmInstance vm(Syscalls syscalls) {
-    return new QvmInstance(image(), syscalls);
+    return instance(image(), syscalls);
   }
 
   QvmInstance vm(Syscalls syscalls, QvmInstance.Limits limits) {
-    return new QvmInstance(
-        image(), syscalls, limits, dev.bluevista.craftq3.engine.common.time.Clock.system());
+    return instance(image(), syscalls, limits, Clock.system());
   }
 }

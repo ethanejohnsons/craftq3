@@ -8,7 +8,7 @@ import dev.bluevista.craftq3.engine.common.time.Clock;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
-final class QvmInstanceTest {
+class QvmInstanceTest extends ModeSuite {
   private static final Syscalls ZERO = (vm, number, args) -> 0;
 
   private static QvmInstance.Limits limits(
@@ -433,7 +433,7 @@ final class QvmInstanceTest {
   @Test
   void defaultLimitsAndClockAreUsable() {
     var vm =
-        new QvmInstance(
+        QvmAssembler.instance(
             returnValue(3).image(), ZERO, QvmInstance.Limits.defaults(), Clock.system());
     assertEquals(3, vm.vmMain(0));
     assertThrows(IllegalArgumentException.class, () -> new QvmInstance.Limits(0, 1, 0, 16, 1, 1));

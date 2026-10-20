@@ -18,7 +18,7 @@ import org.junit.jupiter.api.TestInstance;
  * traps natively).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-final class OpcodeConformanceTest {
+class OpcodeConformanceTest extends ModeSuite {
   private static final int NAN = Float.floatToIntBits(Float.NaN);
   private static final int MIN = Integer.MIN_VALUE;
 
@@ -30,9 +30,21 @@ final class OpcodeConformanceTest {
     assertTrue(missing.isEmpty(), "never executed: " + missing);
   }
 
+  /**
+   * An instance that records coverage: executed opcodes in the interpreter; in compile mode (where
+   * a tracer would force the interpreter) the opcodes of images whose every procedure compiled.
+   */
   private QvmInstance traced(QvmAssembler code, Syscalls syscalls) {
     var vm = code.vm(syscalls);
-    vm.setTracer((pc, opcode, operand, depth, stack) -> executed.add(opcode));
+    if (!compiled()) {
+      vm.setTracer((pc, opcode, operand, depth, stack) -> executed.add(opcode));
+      return vm;
+    }
+    assertEquals(QvmInstance.ExecutionMode.COMPILE, vm.executionMode());
+    var report = vm.compileReport().orElseThrow();
+    if (report.interpreted() == 0)
+      for (int pc = 0; pc < vm.image().instructionCount(); pc++)
+        executed.add(vm.image().opcode(pc));
     return vm;
   }
 

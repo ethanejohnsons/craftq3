@@ -10,7 +10,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
-final class QvmImageTest {
+class QvmImageTest extends ModeSuite {
   private static QvmAssembler constant() {
     return new QvmAssembler().op(ENTER, 8).op(CONST, 42).op(LEAVE, 8);
   }
@@ -47,7 +47,7 @@ final class QvmImageTest {
     assertEquals(0x78, snapshot[0]);
     snapshot[0] = 0;
     assertEquals(0x78, image.initialData()[0]);
-    var vm = new QvmInstance(image, (v, number, args) -> 0);
+    var vm = QvmAssembler.instance(image, (v, number, args) -> 0);
     assertEquals(0x12345678, vm.memory().readInt(0));
     assertEquals("x", vm.memory().readString(8, 2));
     assertEquals(0, vm.memory().readInt(12));
@@ -70,7 +70,7 @@ final class QvmImageTest {
     var tight = constant().bss(QvmImage.PROGRAM_STACK_SIZE * 2 - 64 - 4).image();
     assertEquals(QvmImage.PROGRAM_STACK_SIZE * 2, tight.memorySize());
     assertEquals(QvmImage.PROGRAM_STACK_SIZE, tight.stackBottom());
-    var vm = new QvmInstance(tight, QvmAssembler.NO_SYSCALLS);
+    var vm = QvmAssembler.instance(tight, QvmAssembler.NO_SYSCALLS);
     assertEquals(tight.memorySize(), vm.programStack());
     assertEquals(42, vm.vmMain(0));
 
@@ -100,7 +100,7 @@ final class QvmImageTest {
     byte[] bytes = deep.bytes();
     var reserved = QvmImage.parse("deep", bytes, QvmImage.StackPolicy.RESERVED);
     assertEquals(QvmImage.PROGRAM_STACK_SIZE, reserved.programStackSize());
-    var reservedVm = new QvmInstance(reserved, QvmAssembler.NO_SYSCALLS);
+    var reservedVm = QvmAssembler.instance(reserved, QvmAssembler.NO_SYSCALLS);
     var exhausted = assertThrows(QvmException.class, () -> reservedVm.vmMain(0));
     assertTrue(exhausted.getMessage().contains("stack"), exhausted::getMessage);
 
@@ -109,7 +109,7 @@ final class QvmImageTest {
     assertEquals(0xF000, extended.stackBottom());
     assertEquals(0x11000, extended.programStackSize());
     assertEquals(reserved.instructionCount(), extended.instructionCount());
-    assertEquals(42, new QvmInstance(extended, QvmAssembler.NO_SYSCALLS).vmMain(0));
+    assertEquals(42, QvmAssembler.instance(extended, QvmAssembler.NO_SYSCALLS).vmMain(0));
 
     // BSS smaller than the extent: the stack must lie entirely above data, literals and BSS.
     var above = new QvmAssembler().data(new int[0x8000]).bss(4);
@@ -146,8 +146,8 @@ final class QvmImageTest {
             .op(LOAD4)
             .op(LEAVE, 8);
     var image = code.image();
-    var first = new QvmInstance(image, QvmAssembler.NO_SYSCALLS);
-    var second = new QvmInstance(image, QvmAssembler.NO_SYSCALLS);
+    var first = QvmAssembler.instance(image, QvmAssembler.NO_SYSCALLS);
+    var second = QvmAssembler.instance(image, QvmAssembler.NO_SYSCALLS);
     assertEquals(21, first.vmMain(0));
     assertEquals(22, first.vmMain(0));
     assertEquals(21, second.vmMain(0));

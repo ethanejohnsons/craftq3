@@ -152,7 +152,6 @@ public abstract class GuestVm implements AutoCloseable {
     cinematics = new Cinematics(services::openFile, services.sound(), services.output()::print);
     shared = services.shared(module, files, this::unhandledCommand);
     Bindings bindings = shared.install(new Bindings(module));
-    nullFileHandles(bindings);
     bind(bindings);
     if (host != null) degradationsBefore += host.degradationTotal();
     host = new VmHost(ImportTable.of(module, loaded.profile()), bindings, services.vmOptions());
@@ -165,56 +164,6 @@ public abstract class GuestVm implements AutoCloseable {
     fault = null;
     state = State.RUNNING;
     services.output().print(module.moduleName() + ": " + loaded.profile().key() + " ABI");
-  }
-
-  /**
-   * The original {@code FS_Read}/{@code FS_Write} return 0 and {@code FS_FCloseFile} does nothing
-   * for handle 0, which guests pass after a failed open; only other invalid handles degrade.
-   */
-  private void nullFileHandles(Bindings b) {
-    var files = shared.files();
-    VmImport read, write, close;
-    switch (module) {
-      case UI -> {
-        read = dev.bluevista.craftq3.engine.vmabi.UiImport.UI_FS_READ;
-        write = dev.bluevista.craftq3.engine.vmabi.UiImport.UI_FS_WRITE;
-        close = dev.bluevista.craftq3.engine.vmabi.UiImport.UI_FS_FCLOSEFILE;
-      }
-      case CGAME -> {
-        read = dev.bluevista.craftq3.engine.vmabi.CgameImport.CG_FS_READ;
-        write = dev.bluevista.craftq3.engine.vmabi.CgameImport.CG_FS_WRITE;
-        close = dev.bluevista.craftq3.engine.vmabi.CgameImport.CG_FS_FCLOSEFILE;
-      }
-      default -> {
-        return;
-      }
-    }
-    if (module == VmModule.UI)
-      b.override(dev.bluevista.craftq3.engine.vmabi.UiImport.UI_FS_GETFILELIST, this::fileList);
-    b.override(read, (vm, a) -> a[2] == 0 ? 0 : files.read(vm, a));
-    b.override(write, (vm, a) -> a[2] == 0 ? 0 : files.write(vm, a));
-    b.override(close, (vm, a) -> a[0] == 0 ? 0 : files.close(vm, a));
-  }
-
-  /**
-   * {@code trap_FS_GetFileList}: as the shared service, except that a {@code "/"} listing names
-   * subdirectories with a trailing slash, as the original's listing of PK3 directory entries does
-   * (guests strip that last character, some without checking it).
-   */
-  private int fileList(QvmInstance vm, int[] a) {
-    String directory = GuestText.readPath(vm.memory(), a[0]);
-    String extension = GuestText.readPath(vm.memory(), a[1]);
-    if (!"/".equals(extension)) return shared.files().list(vm, a);
-    if (a[3] < 0) throw new IllegalArgumentException("Negative file list size " + a[3]);
-    vm.memory().resolve(a[2], a[3]);
-    List<String> names = new ArrayList<>();
-    try {
-      for (String name : shared.files().files().list(directory, extension)) names.add(name + "/");
-    } catch (IOException unreadable) {
-      names.clear();
-    }
-    return dev.bluevista.craftq3.engine.vmabi.service.FileServices.encodeNames(
-        vm.memory(), a[2], a[3], names);
   }
 
   /** Binds every HOST import of the module. */

@@ -94,9 +94,69 @@ public final class QvmImage {
     this.initialData = initialData;
   }
 
+  /** How far down the program stack of a parsed module may grow. */
+  public enum StackPolicy {
+    /** Exactly {@link #PROGRAM_STACK_SIZE}, the region q3asm reserves. */
+    RESERVED,
+    /**
+     * As the original interpreter, which has no stack-bottom check: the stack starts at the top of
+     * the power-of-two data segment and may use everything down to the end of the guest's globals
+     * (the 64 KiB q3asm reserves at the end of BSS plus the rounding slack). Some builds (Q3Rally)
+     * need more than the reservation. Never smaller than {@link #RESERVED}.
+     */
+    NATIVE_EXTENT
+  }
+
   /** Parses with Quake III's {@link #PROGRAM_STACK_SIZE}. */
   public static QvmImage parse(String name, byte[] bytes) {
     return parse(name, bytes, PROGRAM_STACK_SIZE);
+  }
+
+  /**
+   * Parses with Quake III's {@link #PROGRAM_STACK_SIZE}, then applies {@code policy}. Validation is
+   * that of the reserved stack, so a module accepted under {@link StackPolicy#RESERVED} is accepted
+   * under every policy.
+   *
+   * @throws QvmFormatException naming the module and the first problem found
+   */
+  public static QvmImage parse(String name, byte[] bytes, StackPolicy policy) {
+    QvmImage image = parse(name, bytes);
+    return switch (policy) {
+      case RESERVED -> image;
+      case NATIVE_EXTENT -> image.withStackSize(nativeStackExtent(image));
+    };
+  }
+
+  /**
+   * The bytes between the top of the data segment and the end of the guest's globals, word-aligned.
+   * When BSS holds the q3asm reservation, the globals end that far below the end of BSS; but a
+   * stack larger than BSS itself must lie entirely above data, literals and BSS.
+   */
+  private static int nativeStackExtent(QvmImage image) {
+    long total = (long) image.dataLength + image.literalLength + image.bssLength;
+    long globalsEnd = image.bssLength >= PROGRAM_STACK_SIZE ? total - PROGRAM_STACK_SIZE : total;
+    long available = (image.memorySize - globalsEnd) & ~3L;
+    if (image.bssLength < available) available = (image.memorySize - total) & ~3L;
+    return (int) Math.max(available, image.programStackSize);
+  }
+
+  /** This image with a larger program stack; the decoded code and data are shared. */
+  private QvmImage withStackSize(int stackSize) {
+    if (stackSize == programStackSize) return this;
+    return new QvmImage(
+        name,
+        version,
+        dataLength,
+        literalLength,
+        bssLength,
+        jumpTableTargets,
+        memorySize,
+        stackSize,
+        opcodes,
+        operands,
+        procedures,
+        flags,
+        initialData);
   }
 
   /**

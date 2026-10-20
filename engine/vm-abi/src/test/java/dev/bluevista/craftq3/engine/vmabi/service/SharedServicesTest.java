@@ -157,6 +157,11 @@ final class SharedServicesTest {
     open.memory().writeString(0x100, "menu/main.menu", 64);
     assertEquals(-1, open.vmMain(0));
     assertTrue(host.degradations().isEmpty());
+    // Handle 0 (left by a failed open) is benign even in strict mode, as in the original.
+    assertEquals(0, TestVm.caller(host, UiImport.UI_FS_READ.number(), 0x100, 4, 0).vmMain(0));
+    assertEquals(0, TestVm.caller(host, UiImport.UI_FS_WRITE.number(), 0x100, 4, 0).vmMain(0));
+    assertEquals(0, TestVm.caller(host, UiImport.UI_FS_FCLOSEFILE.number(), 0).vmMain(0));
+    assertTrue(host.degradations().isEmpty());
     // Strict mode: a bad handle is a guest error and faults.
     assertThrows(
         QvmException.class,

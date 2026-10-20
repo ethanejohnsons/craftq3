@@ -249,34 +249,11 @@ public final class HostServices implements AutoCloseable {
   public LoadedModule loadModule(VmModule module) throws IOException {
     VirtualPath path = VirtualPath.of(module.path());
     byte[] bytes = view.read(path);
-    QvmImage image = withNativeStack(QvmImage.parse(module.moduleName(), bytes), bytes);
+    QvmImage image = QvmImage.parse(module.moduleName(), bytes, QvmImage.StackPolicy.NATIVE_EXTENT);
     AbiProfile profile =
         AbiProfile.resolve(console.cvars().string(AbiProfile.OVERRIDE_CVAR), image, bytes);
     String source = view.find(path).map(Object::toString).orElse(module.path());
     return new LoadedModule(module, image, profile, source);
-  }
-
-  /**
-   * The original interpreter has no stack-bottom check: the program stack starts at the top of the
-   * power-of-two data segment and may use everything down to the end of the guest's globals (the 64
-   * KiB q3asm reserves at the end of BSS plus the rounding slack). Some menus (Q3Rally) need more
-   * than the reservation, so the image is re-parsed with that whole region as its stack.
-   */
-  static QvmImage withNativeStack(QvmImage image, byte[] bytes) {
-    long total = (long) image.dataLength() + image.literalLength() + image.bssLength();
-    long globalsEnd =
-        image.bssLength() >= QvmImage.PROGRAM_STACK_SIZE
-            ? total - QvmImage.PROGRAM_STACK_SIZE
-            : total;
-    long available = (image.memorySize() - globalsEnd) & ~3L;
-    if (available <= image.programStackSize()) return image;
-    if (image.bssLength() < available) available = (image.memorySize() - total) & ~3L;
-    if (available <= image.programStackSize()) return image;
-    try {
-      return QvmImage.parse(image.name(), bytes, (int) available);
-    } catch (RuntimeException rejected) {
-      return image;
-    }
   }
 
   private ClientWorld world;

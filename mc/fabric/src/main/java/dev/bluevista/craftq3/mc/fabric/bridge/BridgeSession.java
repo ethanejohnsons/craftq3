@@ -151,8 +151,8 @@ public final class BridgeSession {
 
   /**
    * Minecraft damage reached the player ({@code Player.actuallyHurt}): mob and player attacks,
-   * their projectiles and explosions become Quake damage; Quake owns falling, drowning, lava and
-   * the rest, so environmental damage is ignored. Minecraft health never changes while bridged.
+   * their projectiles and every explosion become Quake damage; Quake owns falling, drowning, lava
+   * and the rest, so environmental damage is ignored. Minecraft health never changes while bridged.
    */
   public void minecraftDamage(DamageSource source, float amount) {
     if (ended || host == null || !alive || !(amount > 0)) return;
@@ -168,7 +168,7 @@ public final class BridgeSession {
       return BridgedPlayer.of(living) == null;
     }
     if (source.getDirectEntity() instanceof Projectile) return cause != null;
-    return source.is(DamageTypeTags.IS_EXPLOSION) && cause != null;
+    return source.is(DamageTypeTags.IS_EXPLOSION);
   }
 
   /**

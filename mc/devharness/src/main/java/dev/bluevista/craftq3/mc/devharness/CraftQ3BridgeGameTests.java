@@ -94,6 +94,7 @@ public final class CraftQ3BridgeGameTests {
           .step("jump", 60, this::jump)
           .step("rail a zombie", 400, this::rail)
           .step("zombie hits the player", 200, this::zombieHits)
+          .step("an explosion hurts and pushes", 100, this::blast)
           .step("pickup placement persists", 5, this::pickup)
           .step("leave saves the loadout", 20, this::leave)
           .step("enter again restores it", 400, this::reenter)
@@ -247,6 +248,42 @@ public final class CraftQ3BridgeGameTests {
       check(health + armor < healthBefore + armorBefore, "no Quake damage from the zombie");
       check(player.getHealth() == minecraftHealthBefore, "Minecraft health changed");
       TestPlayers.discard(attacker);
+      return true;
+    }
+
+    private net.minecraft.world.phys.Vec3 blastStart;
+    private int blastHealth;
+
+    /** TNT-free blast two blocks west of the player: Quake damage and a push to the east. */
+    private boolean blast(int ticks) {
+      client.send();
+      // Let the zombie's knockback settle first.
+      if (ticks < 40) return false;
+      if (ticks == 40) {
+        blastStart = player.position();
+        blastHealth = client.stat(Loadout.STAT_HEALTH) + client.stat(Loadout.STAT_ARMOR);
+        level.explode(
+            null,
+            player.getX() - 2,
+            player.getY() + 0.5,
+            player.getZ(),
+            2f,
+            net.minecraft.world.level.Level.ExplosionInteraction.NONE);
+        return false;
+      }
+      if (ticks < 70) return false;
+      int now = client.stat(Loadout.STAT_HEALTH) + client.stat(Loadout.STAT_ARMOR);
+      double moved = player.getX() - blastStart.x;
+      scenario.note(
+          "blast: Quake health+armor "
+              + blastHealth
+              + " -> "
+              + now
+              + ", pushed "
+              + moved
+              + " blocks east");
+      check(now < blastHealth, "the explosion did no Quake damage");
+      check(moved > 0.2, "the explosion did not push the Quake player away");
       return true;
     }
 

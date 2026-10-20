@@ -4,6 +4,7 @@
   "package": "dev.bluevista.craftq3.mc.fabric.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "BridgeExplosionMixin",
     "BridgeFoodMixin",
     "BridgeKnockbackMixin",
     "BridgeMovePacketMixin",

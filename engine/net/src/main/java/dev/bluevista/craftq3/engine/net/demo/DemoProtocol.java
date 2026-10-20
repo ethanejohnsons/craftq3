@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 /**
  * Demo protocols found in Quake III installations, named by the {@code .dm_NN} extension the engine
- * writes ({@code demos/<name>.dm_<protocol>}).
+ * writes ({@code demos/<name>.dm_<protocol>}), or {@code .dm3} for the 1999 releases.
  *
  * <p><b>66, 67 and 68</b> (1.29/1.30, 1.31, 1.32) share one server-message layout: fixed-Huffman
  * bit fields, svc opcodes 1 to 8, the field-count ({@code lc}) entity and player deltas of {@link
@@ -19,15 +19,48 @@ import java.util.regex.Pattern;
  * handshake, not the message stream a demo stores. No {@code .dm_67} exists in the corpus; it is
  * decoded with the same codecs.
  *
- * <p><b>48</b> (1.27, also written by 1.25 servers announcing protocol 46) is not supported; see
- * {@link #Q3_1_27}.
+ * <p><b>48</b> (1.27, also written by 1.25 servers announcing protocol 46) and <b>43</b> ({@code
+ * .dm3}, the 1999 releases) have their own message layouts, decoded onto the same canonical states
+ * and snapshot structures; see {@link #Q3_1_27} and {@link #Q3_1_09}.
  */
 public enum DemoProtocol {
   /**
-   * Protocol 48. Measured on {@code pak4.pk3:demos/demo000.dm_48}, {@code demo001.dm_48} (both
-   * written by 1.25 servers announcing protocol 46) and {@code pak5.pk3:demos/demo127.dm_48}
-   * (announcing 48). Everything below was derived from those files, using map item and speaker
-   * origins, server times and entity numbers as anchors.
+   * Protocol 43, the {@code .dm3} demos of the 1999 releases, decoded by {@link
+   * dev.bluevista.craftq3.engine.net.msg.LegacyServerMessageCodec} with {@link
+   * dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec.Variant#PROTOCOL_43}. Measured on
+   * {@code pak0.pk3:demos/demo001.dm3} and {@code demo002.dm3} (servers announcing protocol 43,
+   * version "Q3 1.09"): with the layout below every message of both demos (2747 snapshots) parses
+   * to its end-of-message padding and every delta finds its base. It is the protocol-48 layout
+   * ({@link #Q3_1_27}) with these differences:
+   *
+   * <ul>
+   *   <li>The container framing is identical, but a message does not start with the reliable
+   *       acknowledge word: the first byte is an opcode. A snapshot opcode is followed by a 32-bit
+   *       word before the snapshot header (constant within a demo: 3 in demo001, 0 in demo002),
+   *       which is reported as the message's acknowledge.
+   *   <li>Entity states have 50 fields: no {@code generic1}, and {@code eFlags} is 16 bits wide.
+   *       The explicit mask has 50 bits.
+   *   <li>The player state's {@code externalEvent} is 8 bits wide, and three change bits follow
+   *       {@code damageCount} (never set in the demos).
+   *   <li>Players are interpolated: their updates carry positions and view angles but no trajectory
+   *       times. Most of them use the table masks the 1.27 demos never do; with the seven entries
+   *       those demos fix, the rest of the 31-entry table was resolved here (see {@link
+   *       dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec}).
+   * </ul>
+   *
+   * <p>The configstring layout is the 1.32 one (server info 0, system info 1, CS_SOUNDS 288,
+   * CS_PLAYERS 544, locations 672) without model configstrings.
+   */
+  Q3_1_09(43, true),
+  /**
+   * Protocol 48, decoded by {@link dev.bluevista.craftq3.engine.net.msg.LegacyServerMessageCodec}
+   * and {@link dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec}. Measured on {@code
+   * pak4.pk3:demos/demo000.dm_48}, {@code demo001.dm_48} (both written by 1.25 servers announcing
+   * protocol 46) and {@code pak5.pk3:demos/demo127.dm_48} (announcing 48): with the layout below,
+   * every message of the three demos (5491 snapshots) parses to its end-of-message padding, every
+   * delta finds its base, and player and missile motion is continuous from snapshot to snapshot.
+   * Map item and speaker origins, server times, entity numbers and that continuity were the
+   * anchors.
    *
    * <p><b>Messages.</b>
    *
@@ -37,13 +70,12 @@ public enum DemoProtocol {
    *       MessageReader.Coding#RAW}). The acknowledge word, the svc opcode numbers (nop 1,
    *       gamestate 2, configstring 3, baseline 4, server command 5, snapshot 7), configstrings and
    *       the snapshot header (serverTime, deltaNum, snapFlags, area mask) are as in 68.
-   *   <li>No message carries {@code svc_EOF}: a snapshot message ends when fewer than 8 bits, all
-   *       zero, are left after its entity list. The gamestate's baseline list ends with a zero byte
-   *       and then the message ends: no client number and no checksum feed.
+   *   <li>No message carries {@code svc_EOF}: a message ends when fewer than 8 bits, all zero, are
+   *       left. The gamestate's records end with a zero byte and then the message ends: no client
+   *       number and no checksum feed. The recorded client is the player state's {@code clientNum}.
    * </ul>
    *
-   * <p><b>Player state</b> (every snapshot of the three demos that is not blocked by an entity
-   * selector below parses to its end with this layout).
+   * <p><b>Player state.</b>
    *
    * <ul>
    *   <li>Each scalar field has its own change bit followed, when set, by the value: no field count
@@ -52,50 +84,58 @@ public enum DemoProtocol {
    *   <li>The order is {@code playerState_t} declaration order with 1.32 widths, except that the
    *       two animation timers come before the animations ({@code groundEntityNum, legsTimer,
    *       torsoTimer, legsAnim, torsoAnim, movementDir}) and {@code grapplePoint} is absent; it
-   *       ends at {@code damageCount} (42 fields). Decoded values: commandTime equal to serverTime,
-   *       gravity 800, speed 320, groundEntityNum 1022, LEGS_IDLE/LEGS_RUN with the toggle bit,
-   *       TORSO_STAND, machinegun, viewheight 26.
-   *   <li>Then further change bits whose fields are unknown: five in the protocol-46 demos, six in
-   *       demo127. They are clear in every delta snapshot; demo127's first full snapshot sets one,
-   *       so its position and width there are unresolved.
+   *       ends at {@code damageCount} (42 fields).
+   *   <li>Then further change bits: five when the server announces protocol 46, six for 48. In
+   *       protocol 48 the fourth is a 10-bit field that is set to a trigger_push entity number and
+   *       cleared again in the next snapshot, i.e. {@code jumppad_ent}. The others are never set in
+   *       the demos and their widths are unknown; a message setting one is rejected.
    *   <li>Then the arrays stats, persistant, ammo, powerups, each as a change bit, a 16-bit mask
-   *       and one signed 16-bit value per set mask bit (decoded: health 123, weapons 6, max health
-   *       100; PERS_ATTACKER 1022; ammo -1, 100 ... -1).
+   *       and one value per set mask bit: signed 16 bits, but 32 bits for powerups (the CTF demo's
+   *       flag carriers hold large expiry times there). There is no overall arrays-changed bit.
    * </ul>
    *
    * <p><b>Entity state</b>.
    *
    * <ul>
-   *   <li>Entity number (10 bits, 1023 ends the list) and a remove bit, as in 68. A kept entity
-   *       continues with a 6-bit <i>mask selector</i>, then the values of the fields it selects in
-   *       field order, with no per-field bits. Field values use the 1.32 widths and the float
-   *       encoding above; a field changed to zero is sent as a zero value.
+   *   <li>Entity number (10 bits, 1023 ends the list) and a remove bit, as in 68, then a change
+   *       bit: 0 resends the entity unchanged. When set, a 5-bit mask index follows, then the
+   *       values of the fields the mask selects in field order, with no per-field bits. Field
+   *       values use the 1.32 widths and the float encoding above; a field changed to zero is sent
+   *       as a zero.
    *   <li>Field order is {@code entityState_t} declaration order with {@code frame} before {@code
    *       clientNum} (51 fields: eType, eFlags, pos, apos, time, time2, origin, origin2, angles,
    *       angles2, otherEntityNum, otherEntityNum2, groundEntityNum, constantLight, loopSound,
    *       modelindex, modelindex2, frame, clientNum, solid, event, eventParm, powerups, weapon,
-   *       legsAnim, torsoAnim, generic1).
-   *   <li>Selector 63 is followed by an explicit 51-bit change mask in that order. Every gamestate
-   *       baseline of demo000 (81), demo001 (48) and demo127 (44) decodes this way, ending exactly
-   *       at the message end: items, speakers, triggers, movers, all with plausible values.
-   *   <li>Selectors 0 to 62 name masks from a fixed table that the message does not carry. Measured
-   *       entries: 7 = eType, pos.trBase, eventParm (bullet impact without a shooter number); 15 =
-   *       event; 23 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, weapon (new missile);
-   *       39 = eType, pos.trBase, otherEntityNum, eventParm (bullet impact); 41 = eType,
-   *       pos.trBase, origin, loopSound, eventParm (looped speaker). With these five, 1344 of
-   *       demo000's 1691 snapshots parse structurally to their end. About thirty other selectors
-   *       occur (most often 29, which carries a single float, and 27, both on corpses and exploding
-   *       missiles; then 58, 32, 46, 0, 44, 40, 60, 52). Each unresolved selector stops its
-   *       snapshot's parse and later deltas lose their base, so baselines decode but complete
-   *       snapshot playback is not possible and the reader refuses the protocol.
+   *       legsAnim, torsoAnim, generic1). The field in {@code constantLight}'s position is 8 bits
+   *       wide; the demos set it only to 1, on dead players reaching the ground. It is stored in
+   *       {@code constantLight}.
+   *   <li>Index 31 is followed by an explicit 51-bit change mask in that order (every gamestate
+   *       baseline but the looped speakers uses it).
+   *   <li>Indexes 0 to 30 name masks from a fixed table that the message does not carry. Seven
+   *       occur in these demos: 3 = eType, pos.trBase, eventParm (bullet impact without a shooter
+   *       number); 7 = event; 11 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, weapon
+   *       (new missile); 13 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, event,
+   *       eventParm (missile explosion); 14 = pos.trBase[2] (corpse settling); 19 = eType,
+   *       pos.trBase, otherEntityNum, eventParm (bullet impact); 20 = eType, pos.trBase, origin,
+   *       loopSound, eventParm (looped speaker). Each was fixed by the bit length its occurrences
+   *       must have for their messages to parse to the end, then checked against the states before
+   *       and after. The same seven decode the 1.09 demos, which use all 31 entries; the other 24
+   *       (player movement masks) were resolved there ({@link #Q3_1_09}).
    * </ul>
+   *
+   * <p>Event numbers, entity types and configstring indexes are those of 1.32 as far as the demos
+   * show (missile bounce and miss events, item and mover types, CS_PLAYERS and CS_SOUNDS); the
+   * decoded states are not renumbered.
    */
-  Q3_1_27(48, false),
+  Q3_1_27(48, true),
   Q3_1_30(66, true),
   Q3_1_31(67, true),
   Q3_1_32(68, true);
 
   private static final Pattern EXTENSION = Pattern.compile("\\.dm_(\\d{1,3})$");
+
+  /** The extension of the 1999 releases' demos, which do not name their protocol. */
+  private static final String RETAIL_1999_EXTENSION = ".dm3";
 
   private final int number;
   private final boolean supported;
@@ -116,7 +156,9 @@ public enum DemoProtocol {
 
   /** Bit encoding of this protocol's messages. */
   public MessageReader.Coding coding() {
-    return this == Q3_1_27 ? MessageReader.Coding.RAW : MessageReader.Coding.HUFFMAN;
+    return this == Q3_1_27 || this == Q3_1_09
+        ? MessageReader.Coding.RAW
+        : MessageReader.Coding.HUFFMAN;
   }
 
   public static Optional<DemoProtocol> fromNumber(int number) {
@@ -125,8 +167,9 @@ public enum DemoProtocol {
     return Optional.empty();
   }
 
-  /** The protocol named by a {@code .dm_NN} file name (case-insensitive), if known. */
+  /** The protocol named by a {@code .dm_NN} or {@code .dm3} file name (case-insensitive). */
   public static Optional<DemoProtocol> fromFileName(String name) {
+    if (name.toLowerCase(Locale.ROOT).endsWith(RETAIL_1999_EXTENSION)) return Optional.of(Q3_1_09);
     var matcher = EXTENSION.matcher(name.toLowerCase(Locale.ROOT));
     return matcher.find() ? fromNumber(Integer.parseInt(matcher.group(1))) : Optional.empty();
   }
@@ -134,13 +177,16 @@ public enum DemoProtocol {
   /**
    * Infers the message encoding from a demo's first record, which always starts with a gamestate:
    * returns the Huffman family (68) when the Huffman reading gives {@code svc_gamestate}, 48 when
-   * the raw reading does, and empty otherwise.
+   * the raw reading does, 43 when the first raw byte is {@code svc_gamestate} (no acknowledge
+   * word), and empty otherwise.
    */
   public static Optional<DemoProtocol> sniff(byte[] firstPayload) {
     if (opcodeAfterAcknowledge(firstPayload, MessageReader.Coding.HUFFMAN)
         == Protocol68.SVC_GAMESTATE) return Optional.of(Q3_1_32);
     if (opcodeAfterAcknowledge(firstPayload, MessageReader.Coding.RAW) == Protocol68.SVC_GAMESTATE)
       return Optional.of(Q3_1_27);
+    if (firstPayload.length > 0 && firstPayload[0] == Protocol68.SVC_GAMESTATE)
+      return Optional.of(Q3_1_09);
     return Optional.empty();
   }
 

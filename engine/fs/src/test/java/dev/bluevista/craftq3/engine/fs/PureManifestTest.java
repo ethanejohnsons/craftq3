@@ -291,4 +291,16 @@ final class PureManifestTest {
     assertEquals(modpak + " " + pak0 + " ", fs.referencedPakChecksums());
     assertEquals("mymod/modpak baseq3/pak0", fs.referencedPakNames());
   }
+
+  @Test
+  void markReferencedRecordsThePackWithoutReading() throws Exception {
+    pack("pak0", "maps/a.bsp", "map");
+    pack("other", "textures/b.tga", "pixels");
+    var fs = mount();
+    fs.restart(7);
+    assertEquals("", fs.referencedPakNames());
+    fs.view().markReferenced(VirtualPath.of("maps/a.bsp"));
+    fs.view().markReferenced(VirtualPath.of("maps/missing.bsp"));
+    assertEquals("baseq3/pak0", fs.referencedPakNames());
+  }
 }

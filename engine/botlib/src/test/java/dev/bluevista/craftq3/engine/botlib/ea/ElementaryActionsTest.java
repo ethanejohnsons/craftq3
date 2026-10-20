@@ -13,6 +13,13 @@ class ElementaryActionsTest {
       new ElementaryActions(4, (client, text) -> commands.add(client + ":" + text));
 
   @Test
+  void acceptsAbsoluteLevelTimesBeyondAnHour() {
+    // The original qagame passes level time in seconds; a soak test ran past 3600.
+    assertEquals(7200.5f, actions.getInput(0, 7200.5f).thinkTime());
+    actions.endRegular(0, 86400);
+  }
+
+  @Test
   void combinesActionsAndOverwritesMovementWithoutNormalizingIt() {
     actions.attack(0);
     actions.use(0);
@@ -158,7 +165,7 @@ class ElementaryActionsTest {
     assertThrows(
         IllegalArgumentException.class, () -> actions.move(0, new Vec3f(1000001, 0, 0), 100));
     assertThrows(IllegalArgumentException.class, () -> actions.view(0, new Vec3f(1e10f, 0, 0)));
-    assertThrows(IllegalArgumentException.class, () -> actions.getInput(0, -1));
+    assertThrows(IllegalArgumentException.class, () -> actions.getInput(0, Float.NaN));
     assertThrows(
         IllegalArgumentException.class, () -> actions.endRegular(0, Float.POSITIVE_INFINITY));
     assertEquals(previous, actions.snapshot(0));

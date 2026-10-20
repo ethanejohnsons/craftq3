@@ -1,4 +1,4 @@
-// A rewrite module under engine/, mc/ or tools/. Artifacts are named after the
+// A module under engine/, mc/ or tools/. Artifacts are named after the
 // project path (":engine:vm-abi" -> "craftq3-engine-vm-abi") so jars never collide.
 plugins { id 'craftq3.java-conventions' }
 

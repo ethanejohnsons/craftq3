@@ -1,2 +1,0 @@
-plugins { id 'craftq3.java-conventions' }
-dependencies { api project(':craftq3-core'); implementation project(':craftq3-assets'); testImplementation testFixtures(project(':craftq3-assets')) }

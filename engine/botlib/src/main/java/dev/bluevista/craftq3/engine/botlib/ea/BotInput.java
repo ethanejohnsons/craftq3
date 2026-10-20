@@ -6,7 +6,6 @@ import java.util.Objects;
 /** Immutable original bot_input_t value; movement is in Q3 units and view angles in degrees. */
 public record BotInput(
     float thinkTime, Vec3f direction, float speed, Vec3f viewAngles, int actionFlags, int weapon) {
-  public static final float MAX_THINK_TIME = 3600;
   public static final double MAX_DIRECTION_COMPONENT = 1_000_000;
   public static final double MAX_VIEW_COMPONENT = 1_000_000_000;
 
@@ -22,9 +21,13 @@ public record BotInput(
     return (actionFlags & flag) != 0;
   }
 
+  /**
+   * The original qagame passes absolute level time in seconds, so any finite value is valid; a
+   * level may run for hours.
+   */
   static void checkThinkTime(float thinkTime) {
-    if (!Float.isFinite(thinkTime) || thinkTime < 0 || thinkTime > MAX_THINK_TIME)
-      throw new IllegalArgumentException("Bot think time outside [0, 3600] seconds");
+    if (!Float.isFinite(thinkTime))
+      throw new IllegalArgumentException("Bot think time is not finite");
   }
 
   static Vec3f vector(Vec3f vector, double maxComponent) {

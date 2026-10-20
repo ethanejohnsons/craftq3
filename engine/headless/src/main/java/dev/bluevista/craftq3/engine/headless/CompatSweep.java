@@ -211,7 +211,7 @@ public final class CompatSweep {
                 game.profile.name,
                 game.maps.getOrDefault("loaded", "-") + "/" + game.maps.getOrDefault("total", "-"),
                 matchSummary(game),
-                passed(game.demos) + "/" + game.demos.size(),
+                demoSummary(game),
                 passed(game.cinematics) + "/" + game.cinematics.size(),
                 game.degradations,
                 game.failures()));
@@ -222,6 +222,16 @@ public final class CompatSweep {
   private static String matchSummary(GameReport game) {
     if (game.matches.isEmpty()) return "-";
     return passed(game.matches) + "/" + game.matches.size();
+  }
+
+  /** Demo results that 1.32 refuses as well: neither passes nor failures. */
+  static final String UNSUPPORTED = "unsupported";
+
+  /** {@code passed/playable}, plus the unsupported ones: {@code 6/6 (+3 unsupported)}. */
+  static String demoSummary(GameReport game) {
+    long unsupported = game.demos.stream().filter(e -> UNSUPPORTED.equals(e.get("result"))).count();
+    String text = passed(game.demos) + "/" + (game.demos.size() - unsupported);
+    return unsupported == 0 ? text : text + " (+" + unsupported + " unsupported)";
   }
 
   private static long passed(List<Map<String, Object>> entries) {
@@ -651,14 +661,13 @@ public final class CompatSweep {
     entry.put("frames", client.frames().frames() - frames);
     entry.put("wallSeconds", (System.nanoTime() - start) / 1e9);
     String lower = demo.toLowerCase(Locale.ROOT);
-    if (lower.endsWith(".dm_48") || lower.endsWith(".dm3")) {
-      // Quake III 1.27 (48) and pre-1.17 (.dm3) demos: 1.32 cannot play them either.
-      boolean refused = !error.isEmpty() && client.session().demosFinished() == finished;
-      entry.put("result", refused ? "ok" : "unexpected");
-      entry.put("note", "refused by design: " + error);
-      if (!refused) game.problem("demo", demo, "an unsupported demo protocol was accepted");
-    } else if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
+    if (ended && error.isEmpty() && client.session().demosFinished() > finished) {
       entry.put("result", "ok");
+    } else if (lower.endsWith(".dm3") && error.contains("game mismatch")) {
+      // A 1.09 (.dm3) gamestate is refused by a 1.32 cgame, as in the original; these demos play
+      // under the retail pak0 profile.
+      entry.put("result", UNSUPPORTED);
+      entry.put("reason", "1.09 demo refused by this game's 1.32 cgame: " + error);
     } else
       fail(
           game, entry, "demo", demo, error.isEmpty() ? "did not finish: " + client.state() : error);
@@ -802,9 +811,7 @@ public final class CompatSweep {
           .append(" | ")
           .append(matchSummary(game))
           .append(" | ")
-          .append(passed(game.demos))
-          .append('/')
-          .append(game.demos.size())
+          .append(demoSummary(game))
           .append(" | ")
           .append(passed(game.cinematics))
           .append('/')

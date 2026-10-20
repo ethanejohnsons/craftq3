@@ -1,2 +1,0 @@
-plugins { id 'craftq3.java-conventions' }
-// Host-independent common types and virtual filesystem contract.

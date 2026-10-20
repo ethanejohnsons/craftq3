@@ -26,10 +26,9 @@ final class DemoProtocolTest {
     assertEquals(DemoProtocol.Q3_1_31, DemoProtocol.fromFileName("x.dm_67").orElseThrow());
     assertEquals(DemoProtocol.Q3_1_27, DemoProtocol.fromFileName("demo000.dm_48").orElseThrow());
     assertTrue(DemoProtocol.fromFileName("ql.dm_73").isEmpty());
-    assertTrue(DemoProtocol.fromFileName("demo.dm3").isEmpty());
+    assertEquals(DemoProtocol.Q3_1_09, DemoProtocol.fromFileName("DEMO001.DM3").orElseThrow());
     assertTrue(DemoProtocol.fromFileName("four.dm_68.txt").isEmpty());
-    for (var protocol : DemoProtocol.values())
-      assertEquals(protocol.number() != 48, protocol.supported());
+    for (var protocol : DemoProtocol.values()) assertTrue(protocol.supported());
   }
 
   /** Protocols 66, 67 and 68 share the message layout: one recording decodes identically. */
@@ -60,7 +59,7 @@ final class DemoProtocolTest {
   }
 
   @Test
-  void protocol48IsRefusedWithItsReasonAndClosesTheStream() {
+  void unknownProtocolIsRefusedAndClosesTheStream() {
     var closed = new boolean[1];
     var input =
         new ByteArrayInputStream(new byte[0]) {
@@ -72,9 +71,8 @@ final class DemoProtocolTest {
     var failure =
         assertThrows(
             UnsupportedDemoProtocolException.class,
-            () -> DemoReader.open("demo000.dm_48", input, DemoRecordReader.Policy.PLAYBACK));
-    assertEquals(48, failure.protocol());
-    assertTrue(failure.getMessage().contains("not supported"));
+            () -> DemoReader.open("demo000.dm_45", input, DemoRecordReader.Policy.PLAYBACK));
+    assertEquals(-1, failure.protocol());
     assertTrue(closed[0]);
     assertThrows(
         UnsupportedDemoProtocolException.class,
@@ -94,6 +92,9 @@ final class DemoProtocolTest {
     // The first bytes of a protocol-48 gamestate: ack 14, svc_gamestate, command sequence 117.
     byte[] raw = HexFormat.of().parseHex("0e0000000275000000030000");
     assertEquals(DemoProtocol.Q3_1_27, DemoProtocol.sniff(raw).orElseThrow());
+    // Protocol 43 has no acknowledge word: svc_gamestate, command sequence 56.
+    byte[] retail = HexFormat.of().parseHex("023800000003000000");
+    assertEquals(DemoProtocol.Q3_1_09, DemoProtocol.sniff(retail).orElseThrow());
     assertTrue(DemoProtocol.sniff(new byte[3]).isEmpty());
   }
 

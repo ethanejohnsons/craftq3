@@ -34,9 +34,6 @@ mc:fabric          the Fabric mod: common/server and client source sets
 mc:devharness      non-shipped mod with client and server game tests
 ```
 
-`legacy/` holds the previous implementation while the rewrite is verified; nothing in the rewrite
-depends on it.
-
 ## Threads
 
 | Thread | Owns |

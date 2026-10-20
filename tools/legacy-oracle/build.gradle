@@ -1,4 +1,0 @@
-plugins { id 'craftq3.engine-module' }
-dependencies {
-    api project(':tools:trace-format')
-}

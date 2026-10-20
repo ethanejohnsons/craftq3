@@ -24,7 +24,7 @@ jobs:
           name: test-reports-${{ matrix.os }}
           path: '**/build/reports/tests/'
 
-  # Full build: legacy oracle, rewrite and the Fabric mod.
+  # Full build, including the Fabric mod.
   build:
     runs-on: ubuntu-latest
     steps:

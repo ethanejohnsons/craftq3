@@ -1,62 +1,80 @@
-# Compatibility status
+# Compatibility
 
-> Describes the legacy engine. Scripts and guides referenced here (`scripts/`, `docs/*.md`) were
-> removed on the `rewrite` branch and remain on `main`; this file is regenerated in Phase 9 of
-> [the rewrite](docs/REWRITE.md).
+CraftQ3 aims to run user-supplied Quake III Arena data exactly as the original 1.32 engine does:
+the same search order, the same QVMs, the same network protocol, the same behaviour. Deliberate
+differences are listed in [docs/DIVERGENCES.md](docs/DIVERGENCES.md).
 
-Target: Quake III Arena / ioquake3, BSP46 and standard QVM mods. Host: Minecraft **26.2**, Java **25**, Fabric Loader **0.19.3**, Fabric API **0.156.0+26.2**.
+## Reference installation
 
-| Area | Current implementation | Remaining validation / work |
-| --- | --- | --- |
-| Foundation | Pinned multi-module Fabric client, `/q3`, configuration, worker loading, logging, build/tests | See docs/VALIDATION.md for current build, corpus and GPU results |
-| PK3 VFS | ZIP read, loose files, normalized case-insensitive paths, mod/base fallback, descending lexical PK3 precedence, loose-first default lookup, pure checksums, reference accounting, server-restricted reads/order, enumeration, origin lookup, reload/close | Multi-root home/base/CD paths; live inventory rescans; native NULL-handle existence and directory-list API differences |
-| BSP46 | All 17 lumps, entities, finite floats, bounded offsets/counts, cross-references, cycle checks, patch grids, PVS bit lookup | All pak0 maps load; broader mod corpus and sustained fuzzing remain |
-| BSP rendering | World triangles and interpolated patches; leaf/PVS/frustum filtering; 11 material/geometry debug views; FPS panel | Adaptive patch LOD/stitching across separately authored edges and optional flares |
-| Vulkan | Blaze3D backend and backend-aware clip depth; no raw OpenGL dependency | OpenGL/Vulkan synthetic captures match exactly on Apple A18 Pro; gameplay captures pass with explicit one-unit color tolerance (strict comparison differs by 0.497%); expanded driver testing remains |
-| Lightmaps | 128×128 RGBA upload, UV interpolation, two-bit map overbright restoration with hue-preserving saturation, trilinear light-grid sampling | Hardware gamma configurations and additional native-engine comparisons |
-| Shader stages/effects | Bounded script parser; implicit and multistage materials; TGA/JPEG/mips; blend/alpha/depth/cull/offset; generators/tcMods; sky masks, fog, deforms, sprites, one-level portals and dynamic-light passes | Entity-driven text/shadow deforms, animated portal-camera timing, cinematic video textures, exact noise-table/legacy fog quantization parity |
-| Collision | BSP brushes and tessellated patches, ray/swept AABB traces, point contents, start/all-solid, transformed inline models, linked entities | Capsules, native trace oracles, wider patch edge coverage; no Minecraft block dependency |
-| Models/animation | MD3 frames/tags/surfaces, skins, animation.cfg, interpolated meshes, cgame ref entities, inline models, GPU materials/lighting and viewmodels | Native animation/lighting comparisons, projected model shadows and remaining deform state |
-| Audio | PCM WAV; 591 original sounds decode; native channels, positional/entity audio, loops, listener and volume; bounded PCM streaming with renderer-independent native refills and verified stop/reset/close | Exact Q3 attenuation/doppler/DSP and broader device coverage |
-| Cinematics | RoQ decoder and bounded soundtrack producer; all eleven original soundtrack hashes match; synchronized idlogo video/audio passes on Vulkan, including EOF/loop/hold/cleanup; fullscreen commands, original retail/1.32 Cinematics menu, skip and nextmap transitions; CPU CIN syscall coverage | Shader videoMap, startup intro/campaign transition coverage, retail UI extension ABI and broader movie/mod timing coverage |
-| QVM / syscalls | Bounded v1/v2 reader, checked Java interpreter, qagame/cgame/UI hosts, explicit retail/1.32 profiles, local/remote snapshot sources and shared renderer/audio services | Remaining botlib, networking and broader mods |
-| Player movement/gameplay | Original VMs supply local movement, prediction, weapons, pickups, camera/HUD; death/respawn and deterministic replay pass; Vulkan screen-input smoke passes; default tutorial win, original unlock movie, next-arena selection and saved progress replay pass; two-versus-two TDM/CTF earned victory and restart pass both VM profiles | Full campaign/team coverage, remaining network compatibility and menu actions; not a complete Quake game yet |
-| UI / console | Original main/in-game menus, settings navigation, HUD, original-material console with editing/history/completion, shared cvars/bindings/home config, map/restart/disconnect lifecycle; Vulkan pause/resume and map-transition tests pass; original Single Player introduction starts Crash; retail/1.32 multiplayer lists, filters, sorting, pings, status, persistent favorites and private menu-to-match joins | CD-key storage/verification and all single-player/campaign cinematic flows |
-| Demos / networking | Protocol-68 netchan, connectionless command envelopes, fields, deltas, client/server payload codecs, keyed commands and payload XOR pass native comparisons; streaming protocol-68 demo recording/playback retains level/snapshot history and runs original cgame/UI, with original Demos menus, freeze/timescale/timedemo and tested failure recovery; adaptive connect, pinned UDP and bounded client sessions pass a real native server exchange with movement, reliable ring wrap, packet loss and map transition; direct connect runs original cgame/UI with verified clock/ping, pure PK3 verification and CPU application lifecycle including filtered client-only overrides; server-side connection framing/reliability and two-phase original-game admission have component and two-player QVM checks | Protocol-43 decoding/presentation, broader demo render fidelity, server-side session integration, public/mod browser compatibility, IPv6 multicast LAN discovery, HTTP downloads and automatic game-directory switching |
-| Q3 server / bots | Local qagame server, entity links, configstrings, userinfo, server commands, canonical snapshots with PVS/area/portal filtering; botlib lifecycle, AAS, actions, scripts, characters, weights, initial/reply chat, LTG/NBG item selection, reachable-area queries, movement state/avoidance, grounded WALK/CROUCH/jump-pad/ledge/teleport/barrier/swim/water-jump/ordinary-jump/weapon-jump/bobbing-platform approach and cached airborne completion, movement views, visible route positions, route prediction and bounded directional prediction; retail addbot passes strict sixty-second movement and stationary-target combat audits on q3dm1 and q3dm17; modern qagame passes q3dm1; both profiles pass startup/player connection on all 30 maps; ordinary local bots enabled, Vulkan bot/respawn smoke passes, retail and matching-modern fraglimit/restart/continued-play audits pass | Elevator travel integration, failed run-up prediction, downward/non-unit step landings and remaining bot services; broader campaign/team match coverage |
-| Team Arena / mods | Asset directory switching only | QVM execution and compatibility diagnostics; native modules unsupported |
-| Minecraft interop | Experimental `/q3 bridge` in local Minecraft worlds: original qagame/cgame movement and prediction over block shapes, fluids, original weapon/HUD overlay, two-way mob combat with original Quake armor/death/respawn, independent camera/body positioning, shared world depth with GPU-tested native-wall occlusion, cgame vertical FOV/basis, Vulkan capture and return to prior game mode; `/q3 build <map>` supplies native Creative building over immutable BSP geometry with persistent block regions, shared reversed depth, native per-axis collision/step selection verified process-crash return recovery, and BSP/native face support with live floor/wall torches, retained region support/collision after leave or map switching, exact saved-BSP restoration before world ticking and forced-chunk reload verification; native arrow/thrown-projectile BSP impacts with nearer block/entity ordering and live arrow embedding/mob cover; native explosion entity/block cover over immutable BSP; ground-mob BSP path queries with live fractional-floor walking, placed-block detours and body-sized tight-passage traversal with swept wall checks; BSP sight with native sensing-cache/cover checks and live zombie pursuit/attack | Player targets, complete damage attribution/status/knockback policy, multiplayer, forward-bridge transparency/sub-viewports/third-person cameras; broader building movement/support/lighting and original Quake entities in building mode |
+Compatibility is measured against the maintainer's installation, which is never committed: retail
+`pak0`–`pak8`, 185 community PK3s, and nine mods (CPMA, Jailbreak, True Combat, Combat, Q3Rally,
+Alternate Fire, Superheroes Arena, Q3Pinball, CorkScrew). It holds 278 PK3s, 29,505 archive
+entries, 314 BSPs and about 67 distinct QVM builds.
 
-## Intentional filesystem differences
+Run the sweep against your own installation with:
 
-One installation root is mounted; selected mod (if any) precedes baseq3. Legacy ZIP entry names preserve raw bytes through the same ISO-8859-1 mapping as guest VM strings; explicitly UTF-8-marked ZIP entries retain UTF-8 decoding. Malformed UTF-8 is rejected with the archive path in the error. PK3 filenames sort case-insensitively **lexically**, so `pak9.pk3` outranks `pak10.pk3`; numbering is not interpreted. Loose files precede PK3s within each game directory by default, matching the native filesystem oracle; selected-mod paths precede base paths. A pure restart promotes allowed packs in server order and restricts reads, with the native loose-file exemptions. Listing is a deduplicated, sorted recursive list of files under a directory, not Q3's extension/glob syscall ABI. Case-insensitive loose lookup is made deterministic on all host filesystems. Duplicate normalized archive members or loose paths are rejected; native Q3 can choose differently. Unsafe members fail the whole mount. Base/mod directory names use lowercase canonical spelling. Uppercase `BASEQ3` on a case-sensitive host must be renamed by the user. Missing game directories are reported rather than silently selected.
+```bash
+CRAFTQ3_Q3ROOT="/path/to/Quake III Arena" ./gradlew :engine:headless:compatSweep
+```
 
-The engine VM file service supports read/write/append/seek handles and an isolated saved-file capability. Writes use descriptor-relative traversal and replacement, quotas, and a host-provisioned game root. They cannot replace packs or native/VM executables; VM-created directories are unsupported. Filesystems without Java secure directory streams fail closed. Original archives remain read-only. Pure checksum/reference transcripts and eligible reads pass native comparisons; see [docs/NETWORK_PURE_FILESYSTEM.md](docs/NETWORK_PURE_FILESYSTEM.md). Pure sessions reload QVM/render/audio registrations when changing indexed pack views. A view restart does not rescan changed archives; a fresh mount is required. Complete homepath/basepath/cdpath layering, ZIP64 and multi-volume archives remain unsupported. Opt-in UDP download, verified cache installation, cancellation, cached reconnect and pure resumption of referenced non-official PK3s now pass both game profiles; see [download support and limits](docs/NETWORK_DOWNLOADS.md). Pure or allowlist changes without a new gamestate require reconnecting. File-size/entry limits may reject unusually large community mods.
+It writes `engine/headless/build/compat/report.md` and `report.json`. For every game directory it
+mounts every PK3, loads every map (BSP, AAS, collision model, render scene and materials), boots
+the effective ui, cgame and qagame, plays a local match with four bots under
+`vm_strictSyscalls 1`, plays every demo and RoQ, and counts any import that had to degrade.
 
-## Rendering scope
+## Latest sweep (30 s matches, 4 bots)
 
-The viewer retains Q3 surface/content flags and uses original assets without converting geometry to blocks. Material stages remain ordered; translucent surfaces sort back to front. Fog adjusts blended stages after sampling and uses a depth-equal overlay for opaque stacks so alpha-test holes remain open. Sky domes are restricted to each material's visible BSP sky polygons. One visible portal transform is rendered per frame at half resolution, including linked-camera views and reflected camera bases; coplanar faces share that view. Recursive portal surfaces use their ordinary stages. Native Q3's unused `nearBox` parameter is retained but not drawn.
+| Game | PK3s | Maps | ui | Match | Demos | RoQ | Degradations |
+| --- | ---: | --- | --- | --- | --- | --- | ---: |
+| baseq3 (1.32) | 194 | 209/209 | 1.32 | pass | 7/7 (+2 `.dm3`, see below) | 12/12 | 0 |
+| baseq3, pak0 only (1999 retail) | 1 | 31/31 | retail | pass | 2/2 | 11/11 | 0 |
+| CorkScrew | 195 (15 empty, skipped) | – | 1.32 | pass | – | – | 0 |
+| alternatefire | 195 | – | 1.32 | pass | – | – | 0 |
+| combat | 205 | 11/11 | 1.32 | pass | – | – | 0 |
+| cpma | 237 | – | 1.32 | pass | 1/1 | – | 0 |
+| jailbreak | 197 | 17/17 | 1.32 | pass | – | – | 0 |
+| q3pinball | 195 | – | 1.32 | pass | – | – | 0 |
+| q3rally | 196 | 8/8 | 1.32 | pass | – | – | 0 |
+| sha | 195 | 1/1 | 1.32 | pass | – | 1/1 | 0 |
+| truecombat | 200 | 23/23 | 1.32 | pass | – | 1/1 | 0 |
 
-Dynamic lights use a bounded scene API and a vertex-lit Lambert/radius approximation; F10 adds a camera light. Cgame now supplies gameplay lights and model lighting state; exact native light response still needs comparison. Portal-camera slow/fast rotation flags are recognized but static in this viewer. `deformVertexes text*` and `projectionShadow` need entity text/shadow state; they are parsed but do not fabricate that state. Procedural noise is independently deterministic rather than bit-identical to Q3's seeded table. Standalone `tcGen fog` is approximate; BSP volume fog uses convex brush clipping and Q3's square-root ramp without historical texture-table quantization.
+Mod rows mount the mod over baseq3, so their PK3 counts include baseq3's. Every QVM build in the
+installation, including the older builds shadowed by `pak8.pk3`, also parses and validates
+(`engine:vm` real-data test).
 
-Blaze3D 26.2 reports narrow mip extents without clamping them to one. GPU uploads stop before either dimension becomes zero; the CPU mip generator supports the complete chain. CPU stage evaluation caches static attributes; dense animated maps and portal views may need further batching/GPU evaluation. Version-pinned hooks disable Minecraft world extraction/rendering while a Quake view is active and exclude vanilla HUD/toasts/subtitles. No claim of complete ioquake3 pixel identity or full gameplay compatibility is made.
+Notes on the data itself:
 
-## Validation record
+- **Missing textures** (199 in baseq3, 36 in pak0 alone) are references to files the installation
+  does not contain, mostly Team Arena assets used by community maps. The original engine shows its
+  default texture for these, and so does CraftQ3.
+- **Legacy demos**: the three `.dm_48` demos (Quake III 1.25–1.27, in `pak4`/`pak5`) and pak0's
+  two `.dm3` demos (1.09, protocol 43) all play; the original 1.32 engine plays neither format.
+  The `.dm3` demos need the retail cgame (pak0-only profile): the 1.32 cgame rejects their
+  gamestate, exactly as it would on the original engine.
+- **Empty PK3s**: 15 zero-byte `CorkScrew_*.pk3` files are skipped with a warning, as the original
+  engine skips archives it cannot open.
+- **`almostlost.bsp`** is an IBSP version 47 map (RTCW layout); CraftQ3 loads it, the original 1.32
+  engine refuses it.
+- **Loose `baseq3/qagame.qvm`** is outside `vm/`, so it is never loaded as the game module.
+- **`cpma/cpma baseq3/`** holds map PK3s one level too deep to be a game directory; copy them into
+  `baseq3/` to use them, as with the original engine.
+- **Mod quirks reproduced faithfully**: Jailbreak's bot AI crashes when a team has a single bot,
+  and Combat's deathmatch maps have no items (its bots idle there).
 
-The user's original `pak0.pk3` was tested locally and remains ignored. All 31 maps, 1,819 TGA/JPEG images and 1,399 shader definitions load. `q3dm12` and `q3dm17` have no missing stage textures. GPU captures, synthetic semantic regression checks and an independent ioquake3 visual comparison are recorded in [docs/VALIDATION.md](docs/VALIDATION.md).
+## Feature coverage
 
-The original multiplayer browser uses bounded nonblocking IPv4/IPv6 unicast sockets, IPv4 LAN discovery, asynchronous DNS and a versioned isolated cache. Both UI profiles have CPU private-server menu-to-match coverage; no public-master reachability or new browser GPU capture is claimed. See [browser services and limits](docs/SERVER_BROWSER.md).
+| Area | Status |
+| --- | --- |
+| Filesystem | PK3 and loose files with original precedence, pure servers, UDP downloads of referenced non-official PK3s, portable home store (Windows, Linux, macOS) |
+| QVMs | All qagame, cgame, ui and botlib imports bound for the 1.32 and 1999 retail ABIs; see [docs/SYSCALLS.md](docs/SYSCALLS.md) |
+| Single player | Local matches with bots, original menus, map changes, restarts, pause |
+| Multiplayer | Protocol 68 client and server, server browser (LAN, masters, favourites), rcon, dedicated headless server |
+| Bots | Full botlib: routing, all travel types (ladders, elevators, jump pads, bobbing platforms, rocket/BFG jumps, grapple), chat, goals, weapons, alternative route goals for CTF |
+| Demos | Record and play protocol 66/67/68; play 1.09 (`.dm3`) and 1.25–1.27 (`.dm_48`) demos; timedemo |
+| Cinematics | RoQ with audio, menu cinematics, `videoMap` surfaces |
+| Rendering | All shader stage features on the GPU, lightmaps, sky boxes and clouds, fog, dynamic lights, portals and mirrors, MD3 models, beams/rails/lightning, HUD, fonts from `fonts/fontImage_N.dat`; Vulkan and OpenGL through Minecraft's Blaze3D |
+| Audio | Original channel and loop semantics through Minecraft's OpenAL device, background music, cinematic audio |
+| Minecraft | Pure Quake III from the title screen; bridge mode (Quake over Minecraft terrain with mobs); building mode (Minecraft blocks inside original maps); dedicated Minecraft servers |
 
-Original Create Server menus now launch hosted UDP matches in both UI profiles.
-Private CPU sessions cover pure joins, map/restart continuity, dedicated mode,
-background ticking and shutdown recovery. Unchanged native established-client wire operations now pass both game profiles;
-per-peer byte pacing, live rate changes and measured player/status ping also
-pass private delayed-UDP tests. Complete native application coverage and server
-policy gaps remain; see
-[hosting evidence and limits](docs/NETWORK_SERVER_SESSION.md).
-
-## Next concrete tasks
-
-1. Extend playable-loop/native-oracle validation and expand device/fidelity comparisons.
-2. Expand campaign/team-match coverage, complete remaining bot movement and menu services, and complete server hosting and legacy demo compatibility and remaining pure lifecycle coverage.
-3. Per the user’s latest priority, extend the playable Minecraft bridge and implement the reverse building mode; remaining standalone Quake compatibility stays in scope.
+Not supported: Team Arena (`missionpack`), native game modules (`.so`, `.dll`), stencil shadows
+(`cg_shadows 2`) and FreeType font rendering.

@@ -1,0 +1,44 @@
+# Divergence ledger
+
+Places where the rewrite deliberately behaves differently from the original Quake III 1.32
+engine or from the legacy CraftQ3 code. Each entry says why. Anything not listed here is meant to
+match the original; a mismatch found against the original is a bug.
+
+## Collision (`engine:collision`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Capsule vs capsule | Pairs top-with-top and bottom-with-bottom spheres; stacked capsules can sink up to 26 units | True combined (Minkowski) capsule, vertical only | Original is a known bug; baseq3 does not use capsule traces |
+| Transformed trace plane distance | Reported in model space | Reported in world space | Callers compare against world positions |
+| Rotated capsule axis | Rotation error in the original | Correct rotation | Bug fix; no retail content relies on it |
+| Box vs capsule bounds | Swept bounds not recomputed after swapping roles | Recomputed | Bug fix |
+| Point contents of a capsule model | Tests the bounding box | Tests the capsule | Consistency with capsule traces |
+| Oversized patches | Map load fails (`Com_Error`) | Patch skipped with a warning | Never kill a session over one surface |
+| Patch hit plane type/signbits | Taken from facet plane as stored | Recomputed | Consistency |
+
+## Filesystem (`engine:fs`)
+
+| Behaviour | Legacy CraftQ3 | Rewrite | Why |
+| --- | --- | --- | --- |
+| Loose files vs PK3s in one game directory | Loose first | PK3s first (original 1.32); `SearchOrder.LOOSE_FIRST` available | Matches the original engine |
+| Unreadable or empty PK3 | Mount fails | Archive skipped with a warning | Matches the original engine |
+
+## Console (`engine:console`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Command buffer capacity | 16 KiB | 128 KiB | Mod configs in the corpus exceed 16 KiB |
+| Writing configs with quotes or newlines in values | Written verbatim | Entry skipped and reported | Prevents command injection through archived values |
+
+## Audio (`engine:audio`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| Doppler, underwater filter, identical-loop merging | Present | Not implemented | Not observable at Minecraft's mixer quality; tracked as gaps |
+
+## Rendering (`engine:render-ir`)
+
+| Behaviour | Original | Rewrite | Why |
+| --- | --- | --- | --- |
+| `noise` wave function | Engine noise table | 32-bit GPU-reproducible hash | Must evaluate identically in GLSL |
+| Patch tessellation | Error-based LOD (`r_subdivisions`) | Uniform 8 subdivisions | Static upload once per map; tracked as a gap |

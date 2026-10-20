@@ -26,7 +26,7 @@ final class DemoProtocolTest {
     assertEquals(DemoProtocol.Q3_1_31, DemoProtocol.fromFileName("x.dm_67").orElseThrow());
     assertEquals(DemoProtocol.Q3_1_27, DemoProtocol.fromFileName("demo000.dm_48").orElseThrow());
     assertTrue(DemoProtocol.fromFileName("ql.dm_73").isEmpty());
-    assertTrue(DemoProtocol.fromFileName("demo.dm3").isEmpty());
+    assertEquals(DemoProtocol.Q3_1_09, DemoProtocol.fromFileName("DEMO001.DM3").orElseThrow());
     assertTrue(DemoProtocol.fromFileName("four.dm_68.txt").isEmpty());
     for (var protocol : DemoProtocol.values()) assertTrue(protocol.supported());
   }
@@ -92,6 +92,9 @@ final class DemoProtocolTest {
     // The first bytes of a protocol-48 gamestate: ack 14, svc_gamestate, command sequence 117.
     byte[] raw = HexFormat.of().parseHex("0e0000000275000000030000");
     assertEquals(DemoProtocol.Q3_1_27, DemoProtocol.sniff(raw).orElseThrow());
+    // Protocol 43 has no acknowledge word: svc_gamestate, command sequence 56.
+    byte[] retail = HexFormat.of().parseHex("023800000003000000");
+    assertEquals(DemoProtocol.Q3_1_09, DemoProtocol.sniff(retail).orElseThrow());
     assertTrue(DemoProtocol.sniff(new byte[3]).isEmpty());
   }
 

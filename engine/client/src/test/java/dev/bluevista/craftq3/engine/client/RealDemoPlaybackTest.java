@@ -25,8 +25,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Plays every demo the installation's search paths expose (baseq3 and CPMA: protocols 48, 66 and
- * 68) through the real cgame to its end, as a timedemo, under {@code vm_strictSyscalls 1}. The
- * protocol-48 demos (1.25 and 1.27) play through pak8's 1.32 cgame. Writes {@code
+ * 68, and the retail pak0's {@code .dm3} demos, protocol 43) through the real cgame to its end, as
+ * a timedemo, under {@code vm_strictSyscalls 1}. The protocol-48 demos (1.25 and 1.27) play through
+ * pak8's 1.32 cgame, the {@code .dm3} demos through pak0's retail cgame. Writes {@code
  * build/reports/client/demos.txt}.
  */
 @RealData
@@ -39,12 +40,16 @@ final class RealDemoPlaybackTest {
     Path install = RealDataRoot.require();
     List<DynamicTest> tests = new ArrayList<>();
     for (RealInstall.Build build : RealInstall.builds(install, scratch)) {
-      if (!build.name().equals("baseq3 (pak8)") && !build.name().equals("cpma")) continue;
+      boolean retail = build.name().equals("baseq3 (pak0 retail)");
+      if (!build.name().equals("baseq3 (pak8)") && !build.name().equals("cpma") && !retail)
+        continue;
       List<String> demos;
       try (SearchPath path = build.mount()) {
         demos =
             path.view().list("demos", "").stream()
-                .filter(n -> n.toLowerCase(Locale.ROOT).matches(".*\\.dm_\\d+"))
+                .filter(n -> n.toLowerCase(Locale.ROOT).matches(".*\\.dm(_\\d+|3)"))
+                // The retail build's cgame expects the 1999 demos; the others play everything else.
+                .filter(n -> retail == n.toLowerCase(Locale.ROOT).endsWith(".dm3"))
                 .filter(n -> build.game().equals("baseq3") || !inBase(install, n))
                 .toList();
       }

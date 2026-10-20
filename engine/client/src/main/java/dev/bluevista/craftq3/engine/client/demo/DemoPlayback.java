@@ -14,15 +14,15 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
- * Plays a {@code .dm_48}/{@code .dm_66}/{@code .dm_67}/{@code .dm_68} demo into a {@link
- * SnapshotPipeline}: each record is decoded by {@link DemoReader} (playback policy, so a snapshot
- * whose delta base is lost is skipped rather than ending the demo) and fed to the pipeline, and the
- * {@link DemoServerClock} decides the cgame time and how far to read ahead each frame ({@code
- * CL_ReadDemoMessage}).
+ * Plays a {@code .dm3}/{@code .dm_48}/{@code .dm_66}/{@code .dm_67}/{@code .dm_68} demo into a
+ * {@link SnapshotPipeline}: each record is decoded by {@link DemoReader} (playback policy, so a
+ * snapshot whose delta base is lost is skipped rather than ending the demo) and fed to the
+ * pipeline, and the {@link DemoServerClock} decides the cgame time and how far to read ahead each
+ * frame ({@code CL_ReadDemoMessage}).
  *
- * <p>Protocol-48 demos (Quake III 1.25 and 1.27) decode into the same snapshot structures; {@link
- * #open} reports an unknown protocol with a user-facing {@link DemoException}. Owned by the render
- * thread.
+ * <p>Protocol-43 and -48 demos (1999 releases, 1.25 and 1.27) decode into the same snapshot
+ * structures; {@link #open} reports an unknown protocol with a user-facing {@link DemoException}.
+ * Owned by the render thread.
  */
 public final class DemoPlayback implements AutoCloseable {
   /** A demo that cannot be played; the message is meant for the user. */

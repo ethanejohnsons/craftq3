@@ -2,12 +2,12 @@ package dev.bluevista.craftq3.engine.net.demo;
 
 import dev.bluevista.craftq3.engine.common.info.InfoString;
 import dev.bluevista.craftq3.engine.net.Protocol68;
+import dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec;
 import dev.bluevista.craftq3.engine.net.delta.PlayerDeltaCodec;
-import dev.bluevista.craftq3.engine.net.delta.Protocol48Codec;
 import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Baselines;
 import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Snapshot;
+import dev.bluevista.craftq3.engine.net.msg.LegacyServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.msg.MessageReader;
-import dev.bluevista.craftq3.engine.net.msg.Protocol48MessageCodec;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.Frame;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.GameState;
@@ -21,13 +21,14 @@ import java.util.TreeMap;
 
 /**
  * Incremental decoding of a {@code .dm_NN} demo: container framing ({@link DemoRecordReader}) plus
- * the server-message stream of a {@link DemoProtocol} (48, 66, 67 and 68). Each record yields its
- * decoded message; gamestates and snapshots update the level view, with snapshot deltas resolved
- * against the exact retained frame they name. Commands are returned as data, never executed.
+ * the server-message stream of a {@link DemoProtocol} (43, 48, 66, 67 and 68). Each record yields
+ * its decoded message; gamestates and snapshots update the level view, with snapshot deltas
+ * resolved against the exact retained frame they name. Commands are returned as data, never
+ * executed.
  *
- * <p>Protocol 48 decodes into the same structures as 68. Its gamestate carries no client number, so
- * the reader decodes ahead to the level's first snapshot and reports that player state's {@code
- * clientNum} in the {@link GameState} it returns.
+ * <p>Protocols 43 and 48 decode into the same structures as 68. Their gamestates carry no client
+ * number, so the reader decodes ahead to the level's first snapshot and reports that player state's
+ * {@code clientNum} in the {@link GameState} it returns.
  */
 public final class DemoReader implements AutoCloseable {
   public record DecodedRecord(int sequence, ServerMessageCodec.Message message) {
@@ -46,9 +47,9 @@ public final class DemoReader implements AutoCloseable {
   private GameState gameState;
   private Snapshot latest;
   private boolean failed, closed;
-  private Protocol48Codec.Variant variant = Protocol48Codec.Variant.PROTOCOL_48;
+  private LegacyDeltaCodec.Variant variant;
 
-  /** Records decoded ahead while resolving a protocol-48 client number, and a deferred failure. */
+  /** Records decoded ahead while resolving a legacy client number, and a deferred failure. */
   private final ArrayDeque<DecodedRecord> pending = new ArrayDeque<>();
 
   private IOException deferred;
@@ -77,6 +78,12 @@ public final class DemoReader implements AutoCloseable {
     records = new DemoRecordReader(input, policy);
     playback = policy == DemoRecordReader.Policy.PLAYBACK;
     reader.coding(protocol.coding());
+    variant =
+        switch (protocol) {
+          case Q3_1_09 -> LegacyDeltaCodec.Variant.PROTOCOL_43;
+          case Q3_1_27 -> LegacyDeltaCodec.Variant.PROTOCOL_48;
+          default -> null;
+        };
   }
 
   /**
@@ -154,13 +161,13 @@ public final class DemoReader implements AutoCloseable {
     }
     if (failed) throw new IOException("Demo reader is closed or failed");
     var record = decodeNext();
-    if (record.isPresent() && protocol == DemoProtocol.Q3_1_27)
+    if (record.isPresent() && variant != null)
       return Optional.of(resolveClientNumber(record.get()));
     return record;
   }
 
   /**
-   * A protocol-48 gamestate has no client number: decode ahead (at most {@link
+   * A legacy (43 or 48) gamestate has no client number: decode ahead (at most {@link
    * Protocol68#PACKET_BACKUP} records) to the level's first snapshot and report its player's {@code
    * clientNum}, or 0 when none follows. A failure while decoding ahead is reported after the
    * records before it.
@@ -227,11 +234,12 @@ public final class DemoReader implements AutoCloseable {
       int sequence = records.sequence();
       reader.reset(payload, 0, length);
       var decoded =
-          protocol == DemoProtocol.Q3_1_27
+          variant != null
               ? playback
-                  ? Protocol48MessageCodec.readForPlayback(
+                  ? LegacyServerMessageCodec.readForPlayback(
                       reader, sequence, baselines, history::get, variant)
-                  : Protocol48MessageCodec.read(reader, sequence, baselines, history::get, variant)
+                  : LegacyServerMessageCodec.read(
+                      reader, sequence, baselines, history::get, variant)
               : playback
                   ? ServerMessageCodec.readForPlayback(reader, sequence, baselines, history::get)
                   : ServerMessageCodec.read(reader, sequence, baselines, history::get);
@@ -257,7 +265,7 @@ public final class DemoReader implements AutoCloseable {
     for (var operation : decoded.operations()) {
       if (operation instanceof GameState level) {
         gameState = level;
-        if (protocol == DemoProtocol.Q3_1_27) variant = Protocol48MessageCodec.variant(level);
+        if (protocol == DemoProtocol.Q3_1_27) variant = LegacyServerMessageCodec.variant(level);
         baselines = level.baselines();
         latest = null;
         history.clear();

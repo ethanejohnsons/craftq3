@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 /**
  * Demo protocols found in Quake III installations, named by the {@code .dm_NN} extension the engine
- * writes ({@code demos/<name>.dm_<protocol>}).
+ * writes ({@code demos/<name>.dm_<protocol>}), or {@code .dm3} for the 1999 releases.
  *
  * <p><b>66, 67 and 68</b> (1.29/1.30, 1.31, 1.32) share one server-message layout: fixed-Huffman
  * bit fields, svc opcodes 1 to 8, the field-count ({@code lc}) entity and player deltas of {@link
@@ -19,13 +19,42 @@ import java.util.regex.Pattern;
  * handshake, not the message stream a demo stores. No {@code .dm_67} exists in the corpus; it is
  * decoded with the same codecs.
  *
- * <p><b>48</b> (1.27, also written by 1.25 servers announcing protocol 46) has its own message
- * layout, decoded onto the same canonical states and snapshot structures; see {@link #Q3_1_27}.
+ * <p><b>48</b> (1.27, also written by 1.25 servers announcing protocol 46) and <b>43</b> ({@code
+ * .dm3}, the 1999 releases) have their own message layouts, decoded onto the same canonical states
+ * and snapshot structures; see {@link #Q3_1_27} and {@link #Q3_1_09}.
  */
 public enum DemoProtocol {
   /**
-   * Protocol 48, decoded by {@link dev.bluevista.craftq3.engine.net.msg.Protocol48MessageCodec} and
-   * {@link dev.bluevista.craftq3.engine.net.delta.Protocol48Codec}. Measured on {@code
+   * Protocol 43, the {@code .dm3} demos of the 1999 releases, decoded by {@link
+   * dev.bluevista.craftq3.engine.net.msg.LegacyServerMessageCodec} with {@link
+   * dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec.Variant#PROTOCOL_43}. Measured on
+   * {@code pak0.pk3:demos/demo001.dm3} and {@code demo002.dm3} (servers announcing protocol 43,
+   * version "Q3 1.09"): with the layout below every message of both demos (2747 snapshots) parses
+   * to its end-of-message padding and every delta finds its base. It is the protocol-48 layout
+   * ({@link #Q3_1_27}) with these differences:
+   *
+   * <ul>
+   *   <li>The container framing is identical, but a message does not start with the reliable
+   *       acknowledge word: the first byte is an opcode. A snapshot opcode is followed by a 32-bit
+   *       word before the snapshot header (constant within a demo: 3 in demo001, 0 in demo002),
+   *       which is reported as the message's acknowledge.
+   *   <li>Entity states have 50 fields: no {@code generic1}, and {@code eFlags} is 16 bits wide.
+   *       The explicit mask has 50 bits.
+   *   <li>The player state's {@code externalEvent} is 8 bits wide, and three change bits follow
+   *       {@code damageCount} (never set in the demos).
+   *   <li>Players are interpolated: their updates carry positions and view angles but no trajectory
+   *       times. Most of them use the table masks the 1.27 demos never do; with the seven entries
+   *       those demos fix, the rest of the 31-entry table was resolved here (see {@link
+   *       dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec}).
+   * </ul>
+   *
+   * <p>The configstring layout is the 1.32 one (server info 0, system info 1, CS_SOUNDS 288,
+   * CS_PLAYERS 544, locations 672) without model configstrings.
+   */
+  Q3_1_09(43, true),
+  /**
+   * Protocol 48, decoded by {@link dev.bluevista.craftq3.engine.net.msg.LegacyServerMessageCodec}
+   * and {@link dev.bluevista.craftq3.engine.net.delta.LegacyDeltaCodec}. Measured on {@code
    * pak4.pk3:demos/demo000.dm_48}, {@code demo001.dm_48} (both written by 1.25 servers announcing
    * protocol 46) and {@code pak5.pk3:demos/demo127.dm_48} (announcing 48): with the layout below,
    * every message of the three demos (5491 snapshots) parses to its end-of-message padding, every
@@ -83,14 +112,15 @@ public enum DemoProtocol {
    *   <li>Index 31 is followed by an explicit 51-bit change mask in that order (every gamestate
    *       baseline but the looped speakers uses it).
    *   <li>Indexes 0 to 30 name masks from a fixed table that the message does not carry. Seven
-   *       occur in the demos and are known: 3 = eType, pos.trBase, eventParm (bullet impact without
-   *       a shooter number); 7 = event; 11 = eType, pos.trType, pos.trTime, pos.trBase,
-   *       pos.trDelta, weapon (new missile); 13 = eType, pos.trType, pos.trTime, pos.trBase,
-   *       pos.trDelta, event, eventParm (missile explosion); 14 = pos.trBase[2] (corpse settling);
-   *       19 = eType, pos.trBase, otherEntityNum, eventParm (bullet impact); 20 = eType,
-   *       pos.trBase, origin, loopSound, eventParm (looped speaker). Each was fixed by the bit
-   *       length its occurrences must have for their messages to parse to the end, then checked
-   *       against the states before and after. Another index is rejected.
+   *       occur in these demos: 3 = eType, pos.trBase, eventParm (bullet impact without a shooter
+   *       number); 7 = event; 11 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, weapon
+   *       (new missile); 13 = eType, pos.trType, pos.trTime, pos.trBase, pos.trDelta, event,
+   *       eventParm (missile explosion); 14 = pos.trBase[2] (corpse settling); 19 = eType,
+   *       pos.trBase, otherEntityNum, eventParm (bullet impact); 20 = eType, pos.trBase, origin,
+   *       loopSound, eventParm (looped speaker). Each was fixed by the bit length its occurrences
+   *       must have for their messages to parse to the end, then checked against the states before
+   *       and after. The same seven decode the 1.09 demos, which use all 31 entries; the other 24
+   *       (player movement masks) were resolved there ({@link #Q3_1_09}).
    * </ul>
    *
    * <p>Event numbers, entity types and configstring indexes are those of 1.32 as far as the demos
@@ -103,6 +133,9 @@ public enum DemoProtocol {
   Q3_1_32(68, true);
 
   private static final Pattern EXTENSION = Pattern.compile("\\.dm_(\\d{1,3})$");
+
+  /** The extension of the 1999 releases' demos, which do not name their protocol. */
+  private static final String RETAIL_1999_EXTENSION = ".dm3";
 
   private final int number;
   private final boolean supported;
@@ -123,7 +156,9 @@ public enum DemoProtocol {
 
   /** Bit encoding of this protocol's messages. */
   public MessageReader.Coding coding() {
-    return this == Q3_1_27 ? MessageReader.Coding.RAW : MessageReader.Coding.HUFFMAN;
+    return this == Q3_1_27 || this == Q3_1_09
+        ? MessageReader.Coding.RAW
+        : MessageReader.Coding.HUFFMAN;
   }
 
   public static Optional<DemoProtocol> fromNumber(int number) {
@@ -132,8 +167,9 @@ public enum DemoProtocol {
     return Optional.empty();
   }
 
-  /** The protocol named by a {@code .dm_NN} file name (case-insensitive), if known. */
+  /** The protocol named by a {@code .dm_NN} or {@code .dm3} file name (case-insensitive). */
   public static Optional<DemoProtocol> fromFileName(String name) {
+    if (name.toLowerCase(Locale.ROOT).endsWith(RETAIL_1999_EXTENSION)) return Optional.of(Q3_1_09);
     var matcher = EXTENSION.matcher(name.toLowerCase(Locale.ROOT));
     return matcher.find() ? fromNumber(Integer.parseInt(matcher.group(1))) : Optional.empty();
   }
@@ -141,13 +177,16 @@ public enum DemoProtocol {
   /**
    * Infers the message encoding from a demo's first record, which always starts with a gamestate:
    * returns the Huffman family (68) when the Huffman reading gives {@code svc_gamestate}, 48 when
-   * the raw reading does, and empty otherwise.
+   * the raw reading does, 43 when the first raw byte is {@code svc_gamestate} (no acknowledge
+   * word), and empty otherwise.
    */
   public static Optional<DemoProtocol> sniff(byte[] firstPayload) {
     if (opcodeAfterAcknowledge(firstPayload, MessageReader.Coding.HUFFMAN)
         == Protocol68.SVC_GAMESTATE) return Optional.of(Q3_1_32);
     if (opcodeAfterAcknowledge(firstPayload, MessageReader.Coding.RAW) == Protocol68.SVC_GAMESTATE)
       return Optional.of(Q3_1_27);
+    if (firstPayload.length > 0 && firstPayload[0] == Protocol68.SVC_GAMESTATE)
+      return Optional.of(Q3_1_09);
     return Optional.empty();
   }
 

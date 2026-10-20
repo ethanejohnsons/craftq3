@@ -56,8 +56,8 @@ final class DemoCorpusTest {
     }
     assertEquals(List.of(), failures);
     assertTrue(
-        parsed >= 7,
-        "expected the retail, freefall, moteof, CPMA and three protocol-48 demos, got " + parsed);
+        parsed >= 9,
+        "expected the retail, freefall, moteof, CPMA, protocol-48 and .dm3 demos, got " + parsed);
   }
 
   @Test
@@ -69,28 +69,39 @@ final class DemoCorpusTest {
   }
 
   /**
-   * Protocol 48 (see {@link DemoProtocol#Q3_1_27}): every message of demo000, demo001 (1.25,
-   * announcing 46) and demo127 (1.27) decodes to its end-of-message padding with the strict reader,
-   * every delta finds its exact base, and the decoded states move continuously: a player entity's
-   * position follows from the previous snapshot's position and velocity except at the few teleports
-   * and respawns, and the player state's command time tracks the server time.
+   * Protocols 48 and 43 (see {@link DemoProtocol#Q3_1_27} and {@link DemoProtocol#Q3_1_09}): every
+   * message of demo000, demo001 (1.25, announcing 46), demo127 (1.27) and pak0's demo001.dm3 and
+   * demo002.dm3 (1.09) decodes to its end-of-message padding with the strict reader, every delta
+   * finds its exact base, and the decoded states move continuously: a player entity's position
+   * follows from the previous snapshot's position and velocity except at the few teleports and
+   * respawns, and the player state's command time tracks the server time.
    */
   @Test
-  void protocol48DemosDecodeEveryMessageWithContinuousMotion() throws Exception {
-    var expectedBaselines = java.util.Map.of("demo000", 81, "demo001", 48, "demo127", 44);
-    var expectedProtocol = java.util.Map.of("demo000", 46, "demo001", 46, "demo127", 48);
+  void legacyDemosDecodeEveryMessageWithContinuousMotion() throws Exception {
+    var expectedBaselines =
+        java.util.Map.of(
+            "demo000.dm_48", 81,
+            "demo001.dm_48", 48,
+            "demo127.dm_48", 44,
+            "demo001.dm3", BASELINES_DEMO001_DM3,
+            "demo002.dm3", BASELINES_DEMO002_DM3);
+    var expectedProtocol =
+        java.util.Map.of(
+            "demo000.dm_48", 46,
+            "demo001.dm_48", 46,
+            "demo127.dm_48", 48,
+            "demo001.dm3", 43,
+            "demo002.dm3", 43);
     int checked = 0;
     for (var demo : demos()) {
-      if (DemoProtocol.fromFileName(demo.name()).orElse(null) != DemoProtocol.Q3_1_27) continue;
+      var protocol = DemoProtocol.fromFileName(demo.name()).orElse(null);
+      if (protocol != DemoProtocol.Q3_1_27 && protocol != DemoProtocol.Q3_1_09) continue;
       checked++;
-      String key =
-          demo.name().substring(demo.name().lastIndexOf('/') + 1, demo.name().indexOf('.'));
+      String key = demo.name().substring(demo.name().lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
       int frames = 0, deltas = 0, playerPairs = 0, discontinuities = 0;
       try (var reader =
           new DemoReader(
-              new ByteArrayInputStream(demo.bytes()),
-              DemoProtocol.Q3_1_27,
-              DemoRecordReader.Policy.STRICT)) {
+              new ByteArrayInputStream(demo.bytes()), protocol, DemoRecordReader.Policy.STRICT)) {
         for (var next = reader.next(); next.isPresent(); next = reader.next()) {
           for (var operation : next.get().message().operations()) {
             if (operation instanceof ServerMessageCodec.GameState game) {
@@ -119,7 +130,9 @@ final class DemoCorpusTest {
               playerPairs++;
               double dx = real(entity, 24) - real(previous, 24) - real(previous, 36) * seconds;
               double dy = real(entity, 28) - real(previous, 28) - real(previous, 40) * seconds;
-              if (Math.hypot(dx, dy) > PLAYER_MOTION_TOLERANCE) discontinuities++;
+              double dz = real(entity, 32) - real(previous, 32) - real(previous, 44) * seconds;
+              if (Math.hypot(dx, dy) > PLAYER_MOTION_TOLERANCE
+                  || Math.abs(dz) > PLAYER_MOTION_TOLERANCE) discontinuities++;
             }
           }
         }
@@ -129,7 +142,9 @@ final class DemoCorpusTest {
       System.out.println(
           "demo "
               + demo
-              + " protocol 48: "
+              + " protocol "
+              + protocol.number()
+              + ": "
               + frames
               + " snapshots, "
               + deltas
@@ -138,15 +153,16 @@ final class DemoCorpusTest {
               + " player moves, "
               + discontinuities
               + " jumps");
-      assertTrue(frames > 1500, key + " snapshots");
+      assertTrue(frames > 1200, key + " snapshots");
       assertEquals(frames - 1, deltas, key + " every snapshot after the first is a resolved delta");
-      assertTrue(playerPairs > 5000, key + " player moves");
+      assertTrue(playerPairs > 2000, key + " player moves");
       assertTrue(discontinuities * 200 < playerPairs, key + " teleports and respawns only");
     }
-    assertEquals(3, checked, "expected demo000, demo001 and demo127");
+    assertEquals(5, checked, "expected demo000, demo001, demo127, demo001.dm3 and demo002.dm3");
   }
 
   private static final int ET_PLAYER = 1;
+  private static final int BASELINES_DEMO001_DM3 = 84, BASELINES_DEMO002_DM3 = 27;
 
   /** Units a player may deviate from linear extrapolation over one snapshot. */
   private static final double PLAYER_MOTION_TOLERANCE = 40;

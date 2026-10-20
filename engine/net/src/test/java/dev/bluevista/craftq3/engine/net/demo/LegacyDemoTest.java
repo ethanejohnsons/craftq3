@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import org.junit.jupiter.api.Test;
 
 /** Synthetic protocol-48 demos through {@link DemoReader}. */
-final class Protocol48DemoTest {
+final class LegacyDemoTest {
   private static final int PLAYER_FIELDS = 42, PLAYER_CLIENT_NUM = 31;
 
   @Test
@@ -67,6 +67,45 @@ final class Protocol48DemoTest {
       reader.next();
       var failure = assertThrows(IOException.class, reader::next);
       assertTrue(failure.getMessage().contains("padding"), failure.getMessage());
+    }
+  }
+
+  @Test
+  void protocol43HasNoLeadingAcknowledgeAndAWordAfterTheSnapshotOpcode() throws Exception {
+    var game = new RawBitWriter().byteValue(2).intValue(56);
+    game.byteValue(3).shortValue(0).string("\\protocol\\43\\mapname\\q3dm7");
+    game.byteValue(4).bits(70, 10).bit(false).bit(true).bits(31, 5).bits(1, 50).bits(2, 8);
+    game.byteValue(0);
+    var snapshot = new RawBitWriter().byteValue(5).intValue(57).string("cs 6 \"11\"");
+    snapshot.byteValue(7).intValue(3).intValue(663450).byteValue(0).byteValue(4).byteValue(0);
+    for (int i = 0; i < PLAYER_FIELDS; i++) {
+      snapshot.bit(i == PLAYER_CLIENT_NUM);
+      if (i == PLAYER_CLIENT_NUM) snapshot.bits(2, 8);
+    }
+    for (int i = 0; i < 3 + 4; i++) snapshot.bit(false);
+    snapshot.bits(5, 10).bit(false).bit(true).bits(1, 5).floatValue(1805).floatValue(-1040);
+    snapshot.bits(1023, 10);
+    var bytes = new ByteArrayOutputStream();
+    try (var writer = new DemoWriter(bytes)) {
+      writer.append(new DemoRecord(8380, game.toByteArray()));
+      writer.append(new DemoRecord(8382, snapshot.toByteArray()));
+    }
+    try (var reader =
+        DemoReader.open(
+            "demos/demo001.dm3",
+            new ByteArrayInputStream(bytes.toByteArray()),
+            DemoRecordReader.Policy.STRICT)) {
+      assertEquals(DemoProtocol.Q3_1_09, reader.protocol());
+      var level = reader.next().orElseThrow().message();
+      assertEquals(2, ((GameState) level.operations().getFirst()).clientNumber());
+      var message = reader.next().orElseThrow().message();
+      assertEquals(3, message.reliableAcknowledge());
+      assertEquals(new Command(57, "cs 6 \"11\""), message.operations().getFirst());
+      var frame = (Frame) message.operations().get(1);
+      assertEquals(663450, frame.current().time());
+      assertEquals(1, frame.current().entities().size());
+      assertTrue(reader.next().isEmpty());
+      assertEquals(43, reader.announcedProtocol().orElseThrow());
     }
   }
 

@@ -24,8 +24,8 @@ import java.util.function.IntUnaryOperator;
  *       (duplicates of already received sequences are dropped), and configstring commands also
  *       update {@link #configStrings()} (the wire view; the cgame consumes its own copy as it
  *       executes commands);
- *   <li>snapshots go into a history of {@value Protocol68#PACKET_BACKUP} by message number with
- *       the command sequence at their arrival and their ping;
+ *   <li>snapshots go into a history of {@value Protocol68#PACKET_BACKUP} by message number with the
+ *       command sequence at their arrival and their ping;
  *   <li>downloads go to the listeners.
  * </ul>
  *

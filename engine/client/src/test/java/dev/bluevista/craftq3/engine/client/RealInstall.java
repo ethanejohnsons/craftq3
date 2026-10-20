@@ -33,8 +33,13 @@ final class RealInstall {
     }
     Path cpma = install.resolve("cpma/cpma");
     if (Files.isDirectory(cpma)) {
+      // CPMA ships its maps in "cpma baseq3/"; they load once placed in baseq3, so baseq3 is
+      // presented as links to its own packs plus those.
       Path root = Files.createDirectories(scratch.resolve("cpma"));
-      Files.createSymbolicLink(root.resolve("baseq3"), install.resolve("baseq3").toRealPath());
+      Path base = Files.createDirectories(root.resolve("baseq3"));
+      linkPacks(install.resolve("baseq3"), base);
+      Path maps = install.resolve("cpma/cpma baseq3");
+      if (Files.isDirectory(maps)) linkPacks(maps, base);
       Files.createSymbolicLink(root.resolve("cpma"), cpma.toRealPath());
       builds.add(new Build("cpma", root, "cpma"));
     }
@@ -50,5 +55,16 @@ final class RealInstall {
             "q3pinball"))
       if (Files.isDirectory(install.resolve(mod))) builds.add(new Build(mod, install, mod));
     return builds;
+  }
+
+  private static void linkPacks(Path from, Path into) throws IOException {
+    try (var files = Files.list(from)) {
+      for (Path file : (Iterable<Path>) files::iterator) {
+        String name = file.getFileName().toString();
+        if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".pk3")) continue;
+        if (!Files.isRegularFile(file) || Files.exists(into.resolve(name))) continue;
+        Files.createSymbolicLink(into.resolve(name), file.toRealPath());
+      }
+    }
   }
 }

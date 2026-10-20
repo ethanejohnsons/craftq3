@@ -9,7 +9,8 @@ import java.util.Objects;
  *
  * @param deltaBase the message number its delta referenced, or 0 for a full snapshot
  */
-public record ClientSnapshot(Snapshot snapshot, int serverCommandSequence, int ping, int deltaBase) {
+public record ClientSnapshot(
+    Snapshot snapshot, int serverCommandSequence, int ping, int deltaBase) {
   public ClientSnapshot {
     Objects.requireNonNull(snapshot);
   }

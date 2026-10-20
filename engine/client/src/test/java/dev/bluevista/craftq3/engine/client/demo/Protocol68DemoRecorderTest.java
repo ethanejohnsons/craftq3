@@ -2,6 +2,8 @@ package dev.bluevista.craftq3.engine.client.demo;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Baselines;
+import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Snapshot;
 import dev.bluevista.craftq3.engine.net.demo.DemoReader;
 import dev.bluevista.craftq3.engine.net.demo.DemoRecord;
 import dev.bluevista.craftq3.engine.net.demo.DemoRecordReader;
@@ -9,8 +11,6 @@ import dev.bluevista.craftq3.engine.net.msg.MessageReader;
 import dev.bluevista.craftq3.engine.net.msg.MessageWriter;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.*;
-import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Baselines;
-import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Snapshot;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -94,7 +94,7 @@ class Protocol68DemoRecorderTest {
       assertTrue(recorder.accept(record(13, command), command));
       assertEquals(3, recorder.recordsWritten());
     }
-    try (var reader = new DemoReader(new ByteArrayInputStream(data.toByteArray()))) {
+    try (var reader = new DemoRecordReader(new ByteArrayInputStream(data.toByteArray()))) {
       reader.next();
       var saved = reader.next().orElseThrow();
       assertEquals(12, saved.sequence());

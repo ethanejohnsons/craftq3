@@ -1,5 +1,6 @@
 package dev.bluevista.craftq3.engine.client.demo;
 
+import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Baselines;
 import dev.bluevista.craftq3.engine.net.demo.DemoRecord;
 import dev.bluevista.craftq3.engine.net.demo.DemoWriter;
 import dev.bluevista.craftq3.engine.net.msg.MessageWriter;
@@ -7,7 +8,6 @@ import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.Frame;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.GameState;
 import dev.bluevista.craftq3.engine.net.msg.ServerMessageCodec.Message;
-import dev.bluevista.craftq3.engine.net.delta.SnapshotDeltaCodec.Baselines;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;

@@ -248,6 +248,36 @@ public final class HostServices implements AutoCloseable {
     }
   }
 
+  private ClientWorld world;
+
+  /**
+   * The map {@code name} for {@code trap_CM_LoadMap} and {@code trap_R_LoadWorldMap}, read once and
+   * shared by collision and the renderer until another map is loaded.
+   *
+   * @throws IOException when the map is missing or malformed
+   */
+  public ClientWorld loadWorld(String name) throws IOException {
+    String normalized = dev.bluevista.craftq3.engine.formats.QPath.normalize(name);
+    if (world != null && world.name().equals(normalized)) return world;
+    VirtualPath path = VirtualPath.of(normalized);
+    byte[] bytes = view.read(path);
+    var map = dev.bluevista.craftq3.engine.formats.bsp.BspReader.read(bytes, normalized);
+    world = new ClientWorld(normalized, map, assets.library());
+    renderer.loadWorld(normalized, map);
+    return world;
+  }
+
+  /** The loaded map, if any. */
+  public Optional<ClientWorld> world() {
+    return Optional.ofNullable(world);
+  }
+
+  /** Forgets the loaded map (disconnect). */
+  public void unloadWorld() {
+    world = null;
+    renderer.loadWorld("", null);
+  }
+
   /** A script or text file, ISO-8859-1, for the precompiler. */
   public Optional<String> readText(String path) {
     Optional<VirtualPath> parsed = VirtualPath.parse(path);

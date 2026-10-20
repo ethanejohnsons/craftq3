@@ -104,7 +104,8 @@ public final class DemoPlayback implements AutoCloseable {
     for (int i = 0; i < DemoServerClock.MAX_READS_PER_FRAME; i++) {
       read();
       if (pipeline.gameState().isPresent()) return;
-      if (ended) throw new DemoException("Demo " + name + " ended before its first gamestate", null);
+      if (ended)
+        throw new DemoException("Demo " + name + " ended before its first gamestate", null);
     }
     throw new DemoException("Demo " + name + " has no gamestate in its first records", null);
   }

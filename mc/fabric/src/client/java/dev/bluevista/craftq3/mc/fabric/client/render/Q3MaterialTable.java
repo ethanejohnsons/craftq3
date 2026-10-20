@@ -257,7 +257,7 @@ final class Q3MaterialTable implements AutoCloseable {
                     BlendFactor.ONE,
                     BlendFactor.ZERO,
                     false,
-                    Q3Pipelines.Depth.ALWAYS,
+                    Q3Pipelines.Depth.LEQUAL,
                     false,
                     false),
                 white);
@@ -286,7 +286,7 @@ final class Q3MaterialTable implements AutoCloseable {
                 state.sourceBlend(),
                 state.destinationBlend(),
                 false,
-                Q3Pipelines.Depth.ALWAYS,
+                Q3Pipelines.Depth.LEQUAL,
                 false,
                 false)
             : key(

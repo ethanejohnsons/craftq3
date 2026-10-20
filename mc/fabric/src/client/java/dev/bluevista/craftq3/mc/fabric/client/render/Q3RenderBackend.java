@@ -87,6 +87,9 @@ public final class Q3RenderBackend implements AutoCloseable {
   private static final Vector4f CLEAR = new Vector4f(0, 0, 0, 1);
   private static final float DEPTH_NEAR = (float) ViewDefinition.NEAR;
 
+  /** {@code MaterialProgram.sortRank()} of Q3's opaque sort (3). */
+  private static final long OPAQUE_RANK = 3 * 64;
+
   // Item kinds.
   private static final int WORLD = 0, DYNAMIC = 1, INLINE = 2;
   // Geometry kinds of a command.
@@ -382,7 +385,11 @@ public final class Q3RenderBackend implements AutoCloseable {
    * width}×{@code height} screen (Q3's vidWidth/vidHeight), scaled to the target.
    */
   public void beginFrame(RenderTarget target, int width, int height, int timeMillis) {
-    if (inFrame) throw new IllegalStateException("beginFrame without endFrame");
+    if (inFrame) {
+      // A previous frame failed between beginFrame and endFrame; drop what it staged.
+      LOGGER.warn("CraftQ3: frame abandoned before endFrame; discarding it");
+      inFrame = false;
+    }
     frameStart = System.nanoTime();
     stats.reset();
     inFrame = true;
@@ -687,9 +694,15 @@ public final class Q3RenderBackend implements AutoCloseable {
     GpuTextureView black = context.textures().black(encoder);
     List<DynamicLight> lights = cgView.lights();
 
-    if (skyMaterial >= 0) emitSky(table.get(encoder, skyMaterial), definition, seconds);
-
-    for (int k = 0; k < items.count; k++) {
+    // Q3 order: portals and opaque surfaces, then the sky (at the far plane, so only where nothing
+    // was drawn), then everything blended in sort order.
+    boolean skyDone = skyMaterial < 0;
+    for (int k = 0; k <= items.count; k++) {
+      if (!skyDone && (k == items.count || items.keys[k] >>> 40 > OPAQUE_RANK)) {
+        emitSky(table.get(encoder, skyMaterial), definition, seconds);
+        skyDone = true;
+      }
+      if (k == items.count) break;
       int item = (int) (items.keys[k] & 0xfffff);
       Q3MaterialTable.Material material = table.get(encoder, items.material[item]);
       MaterialProgram program = material.program;
@@ -830,7 +843,9 @@ public final class Q3RenderBackend implements AutoCloseable {
             ShadingInputs.UP,
             0,
             -1,
-            0,
+            RenderSystem.getDevice().getDeviceInfo().isZZeroToOne()
+                ? Q3Blocks.DRAW_FAR_ZERO_TO_ONE
+                : Q3Blocks.DRAW_FAR_MINUS_ONE_TO_ONE,
             0,
             0);
     GpuTextureView white = context.textures().white(encoder);

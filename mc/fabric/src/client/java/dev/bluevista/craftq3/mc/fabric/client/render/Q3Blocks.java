@@ -33,6 +33,9 @@ final class Q3Blocks {
   /** Draw flag bits in {@code LightDir.w}. */
   static final int DRAW_DEPTH_HACK = 1;
 
+  /** Places the draw on the far plane (reversed-Z depth 0) for 0..1 and -1..1 clip depth. */
+  static final int DRAW_FAR_ZERO_TO_ONE = 2, DRAW_FAR_MINUS_ONE_TO_ONE = 4;
+
   private Q3Blocks() {}
 
   /** The static block of one stage of {@code material}, or of a synthetic pass when null. */

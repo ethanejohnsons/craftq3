@@ -156,5 +156,8 @@ void main() {
     vec4 clip = ViewProj * world;
     int flags = int(LightDir.w + 0.5);
     if ((flags & 1) != 0) clip.z = clip.w - (clip.w - clip.z) * 0.3;
+    // The sky sits on the far plane, so it only fills what the opaque world left empty.
+    if ((flags & 2) != 0) clip.z = 0.0;
+    if ((flags & 4) != 0) clip.z = -clip.w;
     gl_Position = clip;
 }

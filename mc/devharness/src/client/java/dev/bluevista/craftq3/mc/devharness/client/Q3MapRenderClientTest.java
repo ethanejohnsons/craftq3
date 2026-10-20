@@ -44,11 +44,16 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The Quake III renderer on the real GPU with the maintainer's installation ({@code
- * CRAFTQ3_Q3ROOT}; skipped when unset). For each map: the spawn view (info_player_deathmatch), a
- * view facing the largest sky surface, a portal or mirror surface and a fogged surface where the
- * map has them. Screenshots must not be flat, sky views must not be black, and the backend's CPU
- * time over 200 frames at 1920×1080 is reported. Reloading a map must leave the same GPU objects
- * resident, and closing the backend must release the map's textures.
+ * CRAFTQ3_Q3ROOT}; skipped when unset; {@code CRAFTQ3_TEST_MAPS=a,b} limits the maps). For each
+ * map: the spawn view (info_player_deathmatch) with every inline model, a view pitched up 25°, a
+ * view facing the largest skybox surface, a portal or mirror surface and a fogged surface where the
+ * map has them. On q3dm17 the spawn frame is a whole {@link CgameFrame}: an MD3 item, a sprite, a
+ * rail, a poly, a dynamic light, a world-less HUD view in a corner, 2D quads and a cinematic frame.
+ *
+ * <p>Screenshots must not be flat and skybox views must not be black. The backend's CPU time
+ * (beginFrame..endFrame) over 200 frames at 1920×1080 must have a p99 within 8 ms; the numbers go
+ * to {@code craftq3-map-report-<backend>.txt} in the run directory. Reloading a map must leave the
+ * same textures and map objects resident, and closing the backend must release them.
  */
 public final class Q3MapRenderClientTest implements FabricClientGameTest {
   private static final Logger LOGGER = LoggerFactory.getLogger(Q3MapRenderClientTest.class);
@@ -56,6 +61,10 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
       List.of("q3dm17", "q3dm1", "q3tourney2", "q3dm0", "q3ctf1", "q3dm11", "simpsons_q3");
   private static final int WIDTH = 1920, HEIGHT = 1080;
   private static final int TIMED_FRAMES = 200;
+
+  /** REWRITE.md §3: in-game p99 under 8 ms at 1080p. */
+  private static final double BUDGET_P99_MILLIS = 8;
+
   private static final double MIN_DEVIATION = 12;
   private static final double MAX_SKY_BLACK = 0.05;
 
@@ -119,6 +128,9 @@ public final class Q3MapRenderClientTest implements FabricClientGameTest {
         context.waitFor(c -> screen.framesRendered() >= before + TIMED_FRAMES, 20 * 60);
         long[] cpu = screen.recentCpuNanos(TIMED_FRAMES);
         String stats = context.computeOnClient(c -> backend.stats().toString());
+        double p99 = Q3MapViewScreen.percentileMillis(cpu, 99);
+        if (p99 > BUDGET_P99_MILLIS)
+          failures.add(map + " render submission p99 " + p99 + " ms exceeds " + BUDGET_P99_MILLIS);
         report.append(
             String.format(
                 Locale.ROOT,

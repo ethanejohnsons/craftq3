@@ -150,6 +150,13 @@ Each phase ends with CI green and its exit criteria met.
   - ring-buffered dynamic draws;
   - portals rendered with PVS from the portal camera;
   - one shared `Q3RenderContext` across all screens.
+
+  Done: `mc/fabric` `client/render/Q3RenderBackend` (facade: `loadMap`, `beginFrame`,
+  `render(CgameFrame | ViewDefinition + submissions)`, `drawOverlay`, `endFrame`, `close`) with
+  `Q3WorldRenderer` (static buffers per map), `Q3MaterialTable` (per-stage static blocks, lazily
+  built pipeline variants, lightmap collapse), `Q3TextureCache` and the `q3_material` shaders.
+  `Q3MapRenderClientTest` covers seven maps on both backends; backend CPU p99 at 1080p was 0.3–3.2
+  ms (OpenGL) and 0.2–1.4 ms (Vulkan) on the maintainer's RTX 3080. `/q3debug map <name>` views a map.
 - Audio: pooled buffers and an executor owned by the lifecycle.
 - Turn the smoke classes into devharness client tests.
 - Exit: screenshots within tolerance of the Phase 0 references on Vulkan and OpenGL; a dedicated Minecraft server boots with the mod; the frame-time budget is met.

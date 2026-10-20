@@ -44,6 +44,11 @@ import org.slf4j.Logger;
  *   <li>Dynamic vertices go into a triple-buffered {@link MappableRingBuffer} reused across frames.
  * </ul>
  *
+ * <p>For {@link Q3RenderBackend} it also owns the client-wide {@link Q3TextureCache} (one upload
+ * per image for every screen and map), the {@code q3_material} pipeline variants ({@link
+ * Q3Pipelines}), its samplers, the per-frame rings ({@code Q3FrameBuffers}) and the offscreen depth
+ * and portal targets.
+ *
  * <p>All GPU objects are created lazily on the render thread, because the device does not exist yet
  * when the client initialises. {@link #endFrame()} must be called once after each frame's CraftQ3
  * passes.

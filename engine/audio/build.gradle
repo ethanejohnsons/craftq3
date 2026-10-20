@@ -1,4 +1,6 @@
 plugins { id 'craftq3.engine-module' }
 dependencies {
     api project(':engine:formats')
+    testImplementation testFixtures(project(':engine:formats'))
+    testImplementation project(':engine:testkit')
 }
